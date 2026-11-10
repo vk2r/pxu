@@ -430,3 +430,18 @@ Un caso declara solo lo que cambia (distro, encendido/apagado, storage con o sin
 - Integración: `check` y `update` completos contra `MockHost`; se comprueba la secuencia exacta de comandos, lo que también prueba que el modo solo lectura nunca emite `apt-get update`/`apk update`/etc. (`check_path_is_read_only`).
 - TUI: capturas de `TestBackend` contra `tests/snapshots/`.
 - `mise run test` corre los tests en los perfiles dev y `mock`; `mise run check` además comprueba que el binario de producción rechaza `--mock`. Ver [development.md](../development.es.md).
+
+## 9. Página Storage (`share/storage.rs`, `tui/storage.rs`)
+
+- `share/storage.rs`: parsers (`parse_storage_list`, `parse_content`, `parse_api_guests`, `parse_lvs`, `parse_storage_cfg`), `read_base` + `read_content` (solo E/S; el content en paralelo), `build` (puro: datos crudos + guests → `StorageData`, alertas, orden, filtro) y `load` / `load_progressive` (envía primero un `StorageData` parcial y luego el completo). Los umbrales son constantes: `OLD_BACKUP_DAYS=30`, `FULL_DISK_PCT=98`, `FULL_STORAGE_PCT=90`.
+- `tui/storage.rs`: `StorageState` (selección, orden, filtro de alertas, detalle) y teclas; el dibujo está en `tui/views.rs` (`draw_storage`, `storage_detail_lines`).
+- Sin bloquear: `tui/mod.rs::spawn_storage` ejecuta `load` en un hilo de `std::thread::scope` y devuelve el resultado por un canal `mpsc`; `Action::OpenStorage` / `RefreshStorage`.
+- Lecturas nuevas, todas en la allowlist de `ReadOnlyHost` (`share/host/readonly.rs`) con validación de argumentos (nodo e ids de storage verificados, vmids con `is_pve_id`; lo demás se rechaza, ver `storage_page_reads_are_exact_and_validated`):
+  - `pvesh get /nodes/<node>/storage --output-format json`
+  - `pvesh get /nodes/<node>/lxc --output-format json` y `…/qemu` (`disk`/`maxdisk` por guest: la fuente de USED/% y de la alerta de disco lleno, igual que la GUI de Proxmox)
+  - `pvesh get /nodes/<node>/storage/<storage>/status --output-format json`
+  - `pvesh get /nodes/<node>/storage/<storage>/content --output-format json`
+  - `lvs --reportformat json --units b --nosuffix -o vg_name,lv_name,lv_size,data_percent,pool_lv,lv_attr`
+  - más lectura de `/etc/pve/storage.cfg` y de los `.conf` de los guests (archivos ya legibles).
+- Sin `pct exec`/`df` dentro de los CT: el uso de disco sale solo de `pvesh` (`disk`/`maxdisk`). El `Data%` de `lvs` son bloques del thin pool (incluye archivos borrados sin trim), así que va aparte (`DiskUse.thin_pct`) y solo alimenta el aviso de trim del detalle, nunca USED/%, el orden ni las alertas. Un guest apagado informa `disk = 0`: `—`. Una lectura fallida da `—`, no una pantalla de error.
+- Mock: `share/mock/storage.rs` arma un fixture (dir `local`, `local-lvm` lvmthin, `local-zfs`, `remote-backup-3` con dedup) a partir del escenario con `World::storage_demo()`; `demo` incluye un CT sin backup, uno con backup viejo, uno al 99% (CT 133), uno con bloques thin al 99.8% pero uso real 66% (CT 131, el aviso de trim), uno apagado y uno con snapshot `pxu-*`.

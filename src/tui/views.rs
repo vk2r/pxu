@@ -124,6 +124,7 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
         View::Update => draw_update(f, app, th, area),
         View::Config => draw_config(f, app, th, area),
         View::Logs => draw_logs(f, app, th, area),
+        View::Storage => draw_storage(f, app, th, area),
     }
     if app.modal.is_some() {
         draw_modal(f, app, th, area);
@@ -309,7 +310,7 @@ fn cell(g: &Guest, app: &App, title: &str, w: usize) -> String {
             }
         }
         // `yes` = pxu hace backup antes de actualizar (auto/snapshot/vzdump); `-` = ninguno (none), VM y host. El modo exacto está en el detalle y en `b`.
-        "BACKUP" => if g.kind == GuestKind::Lxc && g.backup != "none" { "yes".into() } else { "-".into() },
+        "BACKUP" => backup_cell(g.kind, &g.backup).into(),
         _ => String::new(),
     }
 }
@@ -370,9 +371,9 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let w = area.width;
     // Teclas: una sola línea si caben; si no, dos (la fila sobrante va a la tabla).
     let keys = if w < 112 {
-        keybar_wrap(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("b", "bkp"), ("o", "cols"), ("g", "cfg"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update"), ("r", "reload"), ("a", "auto"), ("b", "bkp"), ("o", "cols"), ("g", "cfg"), ("d", "space"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     } else {
-        keybar_wrap(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("b", "backup"), ("o", "columns"), ("l", "logs"), ("g", "config"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("b", "backup"), ("o", "columns"), ("d", "storage"), ("l", "logs"), ("g", "config"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     };
     let parts = Layout::vertical([
         Constraint::Length(1), // header
@@ -1116,6 +1117,22 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         ],
         View::Logs if app.logs.viewer.is_some() => vec!["↑↓ / j k     scroll · PgUp PgDn / Space page · mouse wheel", "g / G        top / end", "n / p        next (older) / previous (newer) log", "q / Esc      back to the list of logs", "?            this help"],
         View::Logs => vec!["↑↓ / j k     select · PgUp PgDn 10 · g / G first / last", "Enter        open the log (or double click)", "Esc / l      back to the main screen", "?            this help · q quit"],
+        View::Storage if app.storage.detail.is_some() => vec!["↑↓ / j k     scroll · PgUp PgDn page · g / G top / end", "r            refresh", "Esc / q      back to the guests", "?            this help"],
+        View::Storage => vec![
+            "↑↓ / j k     select · PgUp PgDn page · g / G first / last",
+            "Enter / d    space detail: disks, snapshots, backups, pre-update mode",
+            "S            cycle sort: used · alloc · % · last backup (oldest first) · id",
+            "f            show only guests with alerts",
+            "r            refresh (reads again; the screen keeps working)",
+            "Esc / q      back to the main screen",
+            "Used / % = what Proxmox shows (disk / maxdisk of the guest), not the thin-pool blocks.",
+            "— = stopped guest or not readable. * in SNAPS = has pxu-* snapshots. Last backup ignores pxu pre-update leftovers.",
+            "The detail shows thin-pool blocks and suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu never runs it).",
+            "Alerts: no backup · last backup > 30 d · disk >= 98% · thin pool overcommitted or >= 90% full",
+            "        pxu backup target without room for the biggest CT (like the pre-vzdump check)",
+            "Dedup (PBS) = logical size of the backups / space used in the datastore",
+            "?            this help",
+        ],
         View::Config => vec!["S            change the update schedule (asks first; server time)", "L            change log_retention_days (0 = never delete)", "l            run logs", "N            edit [apprise] (api_url, key or urls, events; secrets masked; asks first)", "t            send a test notice (like `pxu notify-test`)", "r            re-read the timer state", "Esc          back to the list", "?            this help · q quit"],
         View::Update => vec!["x / Esc      cancel: finish the CT in progress, then stop", "↑↓ PgUp PgDn scroll the log · f / End follow · Home oldest", "Esc          back to the list (when the run is over)", "?            this help"],
         View::Check => vec!["↑↓ / j k     select CT (packages shown below)", "u            update the CTs with updates (asks first)", "c            re-check (refreshes the indexes) · C / R read-only check", "Enter        guest detail", "Esc          cancel a running check, then back", "?            this help · q quit"],
@@ -1569,6 +1586,342 @@ fn draw_logs(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(keys), parts[7]);
 }
 
+// ---------------------------------------------------------------- storage (DESIGN §5.7)
+
+fn sz(b: Option<u64>) -> String {
+    b.map_or("—".into(), pxu::share::storage::fmt_gb)
+}
+
+fn pct_text(p: Option<u64>) -> String {
+    p.map_or("—".into(), |p| format!("{p}%"))
+}
+
+fn use_style(th: &Theme, p: Option<u64>) -> Style {
+    match p {
+        Some(p) if p >= 90 => th.fg(Color::LightRed),
+        Some(p) if p >= 70 => th.warn(),
+        Some(_) => th.ok(),
+        None => th.muted(),
+    }
+}
+
+/// `[████░░░░]` de `w` celdas.
+fn bar(p: Option<u64>, w: usize) -> String {
+    let full = (p.unwrap_or(0).min(100) as usize * w).div_ceil(100).min(w);
+    format!("[{}{}]", "█".repeat(full), "░".repeat(w - full))
+}
+
+fn left(s: &str, w: usize) -> String {
+    format!("{:<w$}", trunc(s, w))
+}
+
+fn right(s: &str, w: usize) -> String {
+    format!("{:>w$}", trunc(s, w))
+}
+
+fn alert_text(a: &pxu::share::storage::Alert) -> String {
+    use pxu::share::storage::Alert;
+    match a {
+        Alert::NoBackup => "no backup".into(),
+        Alert::OldBackup(d) => format!("last backup {d} d ago"),
+        Alert::DiskFull(p) => format!("disk {p}% full"),
+    }
+}
+
+fn alert_tag(a: &pxu::share::storage::Alert) -> &'static str {
+    use pxu::share::storage::Alert;
+    match a {
+        Alert::NoBackup => "no-bk",
+        Alert::OldBackup(_) => "old-bk",
+        Alert::DiskFull(_) => "full",
+    }
+}
+
+fn storage_info(s: &pxu::share::storage::StorageInfo, wide: bool, partial: bool) -> String {
+    let mut v: Vec<String> = vec![];
+    if !s.active {
+        return "inactive".into();
+    }
+    if partial {
+        v.push("backups…".into());
+    }
+    if let Some(e) = &s.error {
+        v.push(format!("content unreadable ({e})"));
+    }
+    if let Some(d) = s.dedup {
+        v.push(format!("dedup {d:.1}×"));
+    }
+    if let Some(a) = s.allocated {
+        v.push(format!("alloc {} ({})", pxu::share::storage::fmt_gb(a), pct_text(s.alloc_pct())));
+    }
+    if s.has_backups && s.error.is_none() && !partial {
+        v.push(if s.kind == "pbs" && wide { format!("{} bk · {} logical", s.backups, pxu::share::storage::fmt_gb(s.logical)) } else { format!("{} bk · {}", s.backups, pxu::share::storage::fmt_gb(s.logical)) });
+    }
+    if s.pxu_target {
+        v.push(if wide { "pxu pre-update target" } else { "pxu target" }.into());
+    }
+    if s.templates > 0 {
+        v.push(format!("tmpl {}", pxu::share::storage::fmt_gb(s.templates)));
+    }
+    v.join(" · ")
+}
+
+fn draw_storage(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+    use pxu::share::storage::{Alert, GuestUse};
+    let w = area.width as usize;
+    let st = &app.storage;
+    let detail = st.detail.and_then(|id| st.data.as_ref().and_then(|d| d.guests.iter().find(|g| g.vmid == id)));
+    let keys = if detail.is_some() {
+        keybar_wrap(th, &[("↑↓/PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("r", "refresh"), ("Esc/q", "back"), ("?", "help")], 2, w, 2)
+    } else {
+        keybar_wrap(th, &[("↑↓", "move"), ("Enter", "detail"), ("S", "sort"), ("f", "filter (alerts)"), ("r", "refresh"), ("?", "help"), ("q", "back")], 2, w, 2)
+    };
+    let data = st.data.as_ref();
+    let n_st = data.map_or(0, |d| d.storages.len().min(6));
+    let n_al = data.map_or(0, |d| d.storage_alerts.len().min(2));
+    let head = Constraint::Length(1);
+    let parts = if detail.is_some() {
+        Layout::vertical([head, head, head, Constraint::Min(1), head, head, head, Constraint::Length(keys.len() as u16)]).split(area)
+    } else {
+        Layout::vertical([head, head, Constraint::Length(1 + n_st as u16 + n_al as u16), head, head, Constraint::Min(1), head, head, head, head, Constraint::Length(keys.len() as u16)]).split(area)
+    };
+    let title = match detail {
+        Some(g) => format!("pxu · storage · {} {}", g.vmid, g.name),
+        None => "pxu · storage".to_string(),
+    };
+    f.render_widget(Paragraph::new(two_sided(vec![Span::styled(title, th.bold()), Span::styled(badges(app), th.warn())], app.clock.clone(), area.width)), parts[0]);
+    let loading = if st.loading { " · reading…" } else { "" };
+    let sub = match data {
+        Some(d) => format!("node {} · {} storages · {} guests{loading}", d.node, d.storages.len(), d.guests.len()),
+        None => format!("node {}{}", app.inv.node, if st.loading { " · reading storages…" } else { "" }),
+    };
+    let rule_line = || Paragraph::new("─".repeat(w)).style(th.muted());
+    let status_text = |fallback: String| if app.status.is_empty() { fallback } else { app.status.clone() };
+
+    if let Some(g) = detail {
+        let d = data.unwrap();
+        let alerts = if g.alerts.is_empty() { "no alerts".to_string() } else { g.alerts.iter().map(alert_text).collect::<Vec<_>>().join(" · ") };
+        let kind = match g.kind {
+            GuestKind::Lxc => "LXC",
+            GuestKind::Vm => "VM",
+            GuestKind::Host => "host",
+        };
+        let span = Line::from(vec![Span::styled(trunc(&format!("{kind} · {}{loading} · ", state_label_of(g.state)), w), th.muted()), Span::styled(trunc(&alerts, w.saturating_sub(14)), if g.alerts.is_empty() { th.ok() } else { th.warn() })]);
+        f.render_widget(Paragraph::new(span), parts[1]);
+        f.render_widget(rule_line(), parts[2]);
+        let lines = storage_detail_lines(g, d, th, w);
+        let h = parts[3].height as usize;
+        st.body_h.set(h);
+        st.detail_len.set(lines.len());
+        let top = st.top.min(lines.len().saturating_sub(h));
+        f.render_widget(Paragraph::new(lines.iter().skip(top).take(h).cloned().collect::<Vec<_>>()), parts[3]);
+        f.render_widget(rule_line(), parts[4]);
+        f.render_widget(Paragraph::new(trunc(&status_text(format!("lines {}-{} of {}", top + 1, (top + h).min(lines.len()), lines.len())), w)).style(th.accent()), parts[5]);
+        f.render_widget(rule_line(), parts[6]);
+        f.render_widget(Paragraph::new(keys), parts[7]);
+        return;
+    }
+
+    f.render_widget(Paragraph::new(trunc(&sub, w)).style(th.muted()), parts[1]);
+    let Some(d) = data else {
+        f.render_widget(Paragraph::new(if st.loading { " reading storages, backups and thin pools…" } else { " no data yet (r reads again)" }).style(th.muted()), parts[5]);
+        f.render_widget(rule_line(), parts[8]);
+        f.render_widget(Paragraph::new(keys), parts[10]);
+        return;
+    };
+
+    // --- Storages
+    let mut lines: Vec<Line> = vec![rule_spans(&[("Storages", th.accent())], w, th)];
+    let barw = if w >= 100 { 12 } else { 8 };
+    let nw = d.storages.iter().take(6).map(|s| s.name.chars().count()).max().unwrap_or(0).clamp(10, 18);
+    for s in d.storages.iter().take(6) {
+        let p = s.pct();
+        let used = if s.active { format!("{}/{}", sz(s.used), sz(s.total)) } else { "—".into() };
+        let mut spans = vec![Span::raw(format!(" {} {} ", left(&s.name, nw), left(&s.kind, 7)))];
+        if s.active {
+            spans.push(Span::styled(bar(p, barw), use_style(th, p)));
+        } else {
+            spans.push(Span::styled(format!("[{}]", "·".repeat(barw)), th.muted()));
+        }
+        spans.push(Span::raw(format!(" {} {}  ", right(&used, 11), right(&if s.active { pct_text(p) } else { "—".into() }, 4))));
+        let used_w: usize = 1 + nw + 1 + 7 + 1 + barw + 2 + 1 + 11 + 1 + 4 + 2;
+        spans.push(Span::styled(trunc(&storage_info(s, w >= 100, d.partial), w.saturating_sub(used_w)), if s.active { Style::default() } else { th.muted() }));
+        lines.push(Line::from(spans));
+    }
+    for a in d.storage_alerts.iter().take(2) {
+        lines.push(Line::styled(trunc(&format!(" ! {a}"), w), th.warn()));
+    }
+    f.render_widget(Paragraph::new(lines), parts[2]);
+
+    // --- Guests
+    let wide = w >= 100;
+    let alerts_only = if st.only_alerts { " · alerts only" } else { "" };
+    f.render_widget(
+        Paragraph::new(rule_spans(&[("Guests", th.accent()), (" · sort: ", th.muted()), (st.sort.label(), th.fg(Color::White)), (alerts_only, th.muted())], w, th)),
+        parts[3],
+    );
+    // ancho fijo de la fila: 65 con STATE, 57 sin él (+ nombre y alerta); la alerta se queda con lo que sobra
+    let longest = d.guests.iter().map(|g| g.name.chars().count()).max().unwrap_or(0);
+    let name_w = if wide { longest.clamp(8, 20).min(w.saturating_sub(65 + 30).max(8)) } else { longest.clamp(8, 16).min(w.saturating_sub(64).max(8)) };
+    let row_text = |marker: &str, id: &str, name: &str, state: &str, disk: &str, pct: &str, snaps: &str, last: &str, bsize: &str, bk: &str, alert: &str| {
+        let alert_w = if wide { w.saturating_sub(65 + name_w) } else { 6 };
+        let mut s = format!("{marker}{} {}", right(id, 4), left(name, name_w));
+        if wide {
+            s += &format!(" {}", left(state, 7));
+        }
+        s += &format!(" {} {} {} {} {} {} {}", right(disk, 11), right(pct, 4), right(snaps, 5), left(last, 11), right(bsize, 7), left(bk, 6), left(alert, alert_w));
+        trunc(&s, w)
+    };
+    f.render_widget(Paragraph::new(row_text(" ", "ID", "NAME", "STATE", "USED/ALLOC", "%", "SNAPS", "LAST BACKUP", "BK SIZE", "BACKUP", "ALERT")).style(th.bold()), parts[4]);
+    let list = d.view(st.sort, st.only_alerts);
+    let h = parts[5].height as usize;
+    st.rows_h.set(h);
+    if list.is_empty() {
+        st.off.set(0);
+        f.render_widget(Paragraph::new(if st.only_alerts { " no guest has alerts" } else { " no guests on this node" }).style(th.muted()), parts[5]);
+    } else {
+        let sel = st.sel.min(list.len() - 1);
+        let mut off = st.off.get().min(list.len() - 1);
+        if sel < off {
+            off = sel;
+        } else if sel >= off + h {
+            off = sel + 1 - h;
+        }
+        st.off.set(off);
+        for (n, (i, g)) in list.iter().enumerate().skip(off).take(h).enumerate() {
+            let g: &GuestUse = g;
+            let row = Rect { x: parts[5].x, y: parts[5].y + n as u16, width: parts[5].width, height: 1 };
+            let last = g.last_backup();
+            let alert = if wide { g.alerts.iter().map(alert_text).collect::<Vec<_>>().join(", ") } else { g.alerts.first().map_or(String::new(), |a| alert_tag(a).into()) };
+            let disk = format!("{}/{}", sz(g.used), sz(g.alloc));
+            let snaps = if g.snaps.is_empty() { "0".to_string() } else { format!("{}{}", g.snaps.len(), if g.pxu_snaps > 0 { "*" } else { "" }) };
+            let line = row_text(
+                if g.has_alert() { "!" } else { " " },
+                &g.vmid.to_string(),
+                &g.name,
+                state_label_of(g.state),
+                &disk,
+                &pct_text(g.pct()),
+                &snaps,
+                &if d.partial { "…".to_string() } else { last.and_then(|b| b.ctime).map_or("—".to_string(), |t| pxu::share::storage::when(Some(t), d.now)[..10].to_string()) },
+                &if d.partial { "…".to_string() } else { last.map_or("—".to_string(), |b| pxu::share::storage::fmt_gb(b.size)) },
+                backup_cell(g.kind, &g.pre_update),
+                &alert,
+            );
+            let style = if i == sel {
+                th.sel()
+            } else if g.has_alert() {
+                th.warn()
+            } else if g.state != RunState::Running {
+                th.muted()
+            } else {
+                Style::default()
+            };
+            f.render_widget(Paragraph::new(line).style(style), row);
+        }
+    }
+
+    // --- resumen de alertas
+    let count = |f: fn(&Alert) -> bool| d.count(f);
+    let sum = if d.any_alert() {
+        let mut v: Vec<String> = vec![];
+        for (n, label, ids) in [
+            (count(|a| matches!(a, Alert::NoBackup)), "no backup".to_string(), d.ids(|a| matches!(a, Alert::NoBackup))),
+            (count(|a| matches!(a, Alert::OldBackup(_))), format!("backup > {} d", pxu::share::storage::OLD_BACKUP_DAYS), d.ids(|a| matches!(a, Alert::OldBackup(_)))),
+            (count(|a| matches!(a, Alert::DiskFull(_))), format!("disk >= {}%", pxu::share::storage::FULL_DISK_PCT), d.ids(|a| matches!(a, Alert::DiskFull(_)))),
+        ] {
+            if n > 0 {
+                let ids = ids.iter().take(3).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                v.push(format!("{label}: {n} ({ids}{})", if n > 3 { ",…" } else { "" }));
+            }
+        }
+        if !d.storage_alerts.is_empty() {
+            v.push(format!("storage: {}", d.storage_alerts.len()));
+        }
+        format!("alerts · {}", v.join(" · "))
+    } else if d.guests.is_empty() && d.storages.is_empty() {
+        format!("nothing readable{}", d.errors.first().map_or(String::new(), |e| format!(" · {e}")))
+    } else {
+        "no alerts".to_string()
+    };
+    let sum_style = if d.any_alert() { th.warn() } else if d.storages.is_empty() { th.muted() } else { th.ok() };
+    f.render_widget(Paragraph::new(trunc(&format!(" {sum}"), w)).style(sum_style), parts[6]);
+    f.render_widget(rule_line(), parts[7]);
+    let ind = if list.is_empty() { String::new() } else { format!("{} / {}", st.sel.min(list.len() - 1) + 1, list.len()) };
+    let ind = match d.errors.first() {
+        Some(e) if app.status.is_empty() => format!("{ind}   unreadable: {e}"),
+        _ => ind,
+    };
+    f.render_widget(Paragraph::new(trunc(&status_text(ind), w)).style(th.accent()), parts[8]);
+    f.render_widget(rule_line(), parts[9]);
+    f.render_widget(Paragraph::new(keys), parts[10]);
+}
+
+/// Celda BACKUP (¿pxu hace backup antes de actualizar?): la usan la lista principal y Storage.
+pub(crate) fn backup_cell(kind: GuestKind, mode: &str) -> &'static str {
+    if kind == GuestKind::Lxc && mode != "none" {
+        "yes"
+    } else {
+        "-"
+    }
+}
+
+fn state_label_of(s: RunState) -> &'static str {
+    match s {
+        RunState::Running => "running",
+        RunState::Stopped => "stopped",
+        _ => "unknown",
+    }
+}
+
+/// Detalle de espacio de un guest: discos, snapshots (`pxu-*` marcados), backups de todos los storages y el modo previo al update.
+fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::storage::StorageData, th: &Theme, w: usize) -> Vec<Line<'static>> {
+    use pxu::share::storage::{fmt_gb, when};
+    const SNAP_PREFIX_NOTE: &str = "(pxu pre-update snapshot)";
+    let mut v: Vec<Line<'static>> = vec![];
+    let l = |s: String| Line::raw(trunc(&s, w));
+    v.push(Line::styled(rule(&format!("Disks · rootfs {} used of {} · {}", sz(g.used), sz(g.alloc), pct_text(g.pct())), w), th.muted()));
+    if g.disks.is_empty() {
+        v.push(l("  no disk on a storage (bind mounts and CD-ROMs do not use one)".into()));
+    }
+    for k in &g.disks {
+        let p = k.pct();
+        let mount = k.mount.as_deref().map_or(String::new(), |m| format!("  mp={m}"));
+        v.push(Line::styled(trunc(&format!("  {:<7} {}  {} / {}  {}{mount}", k.slot, k.volid, sz(k.used), sz(k.alloc), pct_text(p)), w), use_style(th, p)));
+        // bloques del thin pool: dato secundario (incluye archivos borrados sin trim), solo aquí
+        if let Some((t, tu)) = k.thin_pct.zip(k.thin_used).filter(|_| k.untrimmed() || k.used.is_none()) {
+            let hint = if k.untrimmed() && g.kind == GuestKind::Lxc && k.slot == "rootfs" { format!(" — reclaim with `pct fstrim {}`", g.vmid) } else { String::new() };
+            v.push(Line::styled(trunc(&format!("          thin blocks {t:.1}% ({}){hint}", fmt_gb(tu)), w), if k.untrimmed() { th.warn() } else { th.muted() }));
+        }
+    }
+    v.push(Line::default());
+    v.push(Line::styled(rule(&format!("Snapshots ({})", g.snaps.len()), w), th.muted()));
+    if g.snaps.is_empty() {
+        v.push(l("  none".into()));
+    }
+    for s in &g.snaps {
+        v.push(if s.starts_with(pxu::share::update::backup::SNAP_PREFIX) { Line::styled(trunc(&format!("  {s}  {SNAP_PREFIX_NOTE}"), w), th.accent()) } else { l(format!("  {s}")) });
+    }
+    v.push(Line::default());
+    v.push(Line::styled(rule(&format!("Backups ({}, all backup storages)", g.backups.len()), w), th.muted()));
+    if g.backups.is_empty() {
+        v.push(l("  none found".into()));
+    }
+    for b in &g.backups {
+        let tag = if b.pxu { "(pxu pre-update) " } else { "" };
+        v.push(l(format!("  {:<18} {:>7}  {:<10} {tag}{}", when(b.ctime, d.now), fmt_gb(b.size), b.storage, b.volid.split_once(':').map_or(b.volid.as_str(), |x| x.1))));
+    }
+    v.push(Line::default());
+    v.push(Line::styled(rule("Pre-update backup (pxu)", w), th.muted()));
+    if g.kind == GuestKind::Lxc {
+        v.push(l(format!("  mode: {}", g.pre_update)));
+        v.push(l(format!("  origin: {}", g.pre_update_why)));
+    } else {
+        v.push(l("  n/a: pxu updates LXC containers only".into()));
+    }
+    v
+}
+
 /// `L` en Config: días de retención (0 = no borrar nunca).
 fn draw_log_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let Some(t) = &app.log_modal else { return };
@@ -1722,6 +2075,19 @@ fn rule(title: &str, w: usize) -> String {
     let t = format!("── {title} ");
     let n = t.chars().count();
     format!("{t}{}", "─".repeat(w.saturating_sub(n)))
+}
+
+/// Como `rule`, pero con estilo por tramo del título; `──` y el relleno van en `muted`. Mismo ancho que `rule`.
+fn rule_spans(parts: &[(&str, Style)], w: usize, th: &Theme) -> Line<'static> {
+    let mut spans = vec![Span::styled("── ", th.muted())];
+    let mut n = 3;
+    for (t, st) in parts {
+        n += t.chars().count();
+        spans.push(Span::styled(t.to_string(), *st));
+    }
+    n += 1;
+    spans.push(Span::styled(format!(" {}", "─".repeat(w.saturating_sub(n))), th.muted()));
+    Line::from(spans)
 }
 
 fn mmss(s: u64) -> String {

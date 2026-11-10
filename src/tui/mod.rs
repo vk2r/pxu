@@ -3,6 +3,7 @@ pub mod app;
 pub mod apprise;
 pub mod logs;
 pub mod sched;
+pub mod storage;
 pub mod views;
 #[cfg(test)]
 mod tests;
@@ -297,6 +298,21 @@ fn spawn_notify_test<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host)
     rx
 }
 
+/// `d`/`r` en Storage: lee storages, contenido y `lvs` en un hilo (puede tardar con un PBS lento); la TUI sigue respondiendo.
+fn spawn_storage<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, app: &App) -> Receiver<pxu::share::storage::StorageData> {
+    let (tx, rx) = mpsc::channel();
+    let (guests, node) = (app.inv.guests.clone(), app.inv.node.clone());
+    sc.spawn(move || {
+        let cfg = Config::load(host).unwrap_or_default();
+        let first = tx.clone();
+        let full = pxu::share::storage::load_progressive(host, &guests, &node, &cfg, move |d| {
+            let _ = first.send(d);
+        });
+        let _ = tx.send(full);
+    });
+    rx
+}
+
 fn notify_test(host: &dyn Host) -> Result<String, String> {
     let mut cfg = Config::load(host).map_err(|e| format!("test not sent: {e}"))?;
     cfg.apprise.apply_env(std::env::var("APPRISE_URLS").ok().as_deref());
@@ -425,6 +441,7 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
     let res = std::thread::scope(|sc| -> io::Result<()> {
         let mut rx: Option<Receiver<Msg>> = None;
         let mut trx: Option<Receiver<Result<String, String>>> = None;
+        let mut srx: Option<Receiver<pxu::share::storage::StorageData>> = None;
         let mut mouse_on = false;
         let res = (|| -> io::Result<()> {
             loop {
@@ -475,12 +492,30 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                         }
                     }
                 }
+                if let Some(r) = &srx {
+                    match r.try_recv() {
+                        Ok(d) => {
+                            // el primer envío es parcial (sin backups): la lectura sigue hasta el segundo
+                            let partial = d.partial;
+                            app.storage.set_data(d);
+                            if !partial {
+                                srx = None;
+                            }
+                        }
+                        Err(TryRecvError::Empty) => {}
+                        Err(TryRecvError::Disconnected) => {
+                            app.storage.loading = false;
+                            app.status = "storage: worker ended unexpectedly".into();
+                            srx = None;
+                        }
+                    }
+                }
                 app.now_epoch = epoch(host);
                 app.clock = hhmm(app.now_epoch);
                 sync_mouse(&mut mouse_on, app.view == View::Logs);
                 term.draw(|f| views::draw(f, &app, &th))?;
                 let until_cpu = next_cpu.saturating_duration_since(Instant::now());
-                let wait = if rx.is_some() || trx.is_some() { until_cpu.min(Duration::from_millis(150)) } else { until_cpu };
+                let wait = if rx.is_some() || trx.is_some() || srx.is_some() { until_cpu.min(Duration::from_millis(150)) } else { until_cpu };
                 let ev = if event::poll(wait)? { Some(event::read()?) } else { None };
                 if Instant::now() >= next_cpu {
                     cpu_tick(host, &mut app, wall_us());
@@ -516,6 +551,12 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                         Action::SetNvidiaAuto { vmid } => save_nvidia_auto(host, &mut app, vmid),
                         Action::OpenConfig => open_config(host, &mut app),
                         Action::OpenLogs => open_logs(host, &mut app),
+                        Action::OpenStorage | Action::RefreshStorage => {
+                            if srx.is_none() {
+                                app.storage.loading = true;
+                                srx = Some(spawn_storage(sc, host, &app));
+                            }
+                        }
                         Action::OpenLog(p) => open_log(host, &mut app, &p),
                         Action::SaveLogRetention(d) => save_log_retention(host, &mut app, d),
                         Action::AskSchedule => ask_schedule_modal(host, &mut app),

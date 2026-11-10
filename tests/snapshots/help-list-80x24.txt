@@ -20,5 +20,5 @@ px┌ help · any key closes ─────────────────
 ──│?            this help · q quit                                           │──
 > │Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)  │
 ──│                                                                          │──
-[↑│read-only: no command that writes can run                                 │
-[r└──────────────────────────────────────────────────────────────────────────┘
+[↑│read-only: no command that writes can run                                 │ad
+[a└──────────────────────────────────────────────────────────────────────────┘

@@ -27,3 +27,6 @@ keys Enter;    shot 02-detail
 run demo;      keys b; shot 03-backup
 run demo;      keys o; shot 04-columns
 run demo;      keys u; keys Enter; sleep 1; shot 05-update
+run demo;      keys d; sleep 2; keys S; keys S; keys S; keys g; shot 06-storage
+# 07: CT 131 (caso arr: disco real al 66% pero bloques del thin al 99.8%) → id ↑, g, 31 veces abajo, Enter
+keys S; keys g; keys $(printf 'Down %.0s' {1..31}); keys Enter; sleep 1; shot 07-storage-detail

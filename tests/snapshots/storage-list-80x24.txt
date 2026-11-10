@@ -1,0 +1,24 @@
+pxu · storage [RO] [MOCK]                                                  00:16
+node server · 4 storages · 37 guests
+── Storages ────────────────────────────────────────────────────────────────────
+ local           dir     [██░░░░░░]  20.5G/100G  21%  2 bk · 2.4G · pxu target …
+ local-lvm       lvmthin [████░░░░] 18.6G/40.0G  46%  alloc 25.0G (63%)
+ local-zfs       zfspool [██░░░░░░]   129G/900G  14%
+ remote-backup-3 pbs     [█░░░░░░░]  26.6G/2.0T   1%  dedup 4.2× · 47 bk · 112G
+── Guests · sort: used ↓ ───────────────────────────────────────────────────────
+   ID NAME      USED/ALLOC    % SNAPS LAST BACKUP BK SIZE BACKUP ALERT
+! 133 ct-133     4.8G/4.8G  99%     0 2026-09-24     3.0G yes    old-bk
+  114 ct-114     4.2G/5.8G  73%     0 2026-11-03     3.6G yes
+  134 ct-134     3.7G/5.8G  63%     0 2026-11-03     3.6G yes
+  128 ct-128     3.4G/4.8G  71%     0 2026-11-04     3.0G yes
+  113 ct-113     3.2G/4.8G  66%     0 2026-11-04     3.0G yes
+  104 ct-104     3.1G/5.8G  53%     0 2026-11-03     3.6G yes
+  107 ct-107     2.9G/3.9G  74%     0 2026-11-05     2.4G yes
+  124 ct-124     2.5G/5.8G  43%     0 2026-11-03     3.6G yes
+  127 ct-127     2.5G/3.9G  64%     0 2026-11-05     2.4G yes
+ alerts · no backup: 1 (100) · backup > 30 d: 2 (101,133) · disk >= 98%: 1 (133)
+────────────────────────────────────────────────────────────────────────────────
+1 / 37
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [Enter] detail  [S] sort  [f] filter (alerts)  [r] refresh  [?] help
+[q] back

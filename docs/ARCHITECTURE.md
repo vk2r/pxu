@@ -430,3 +430,19 @@ A case declares only what changes (distro, running/stopped, storage with or with
 - Integration: full `check` and `update` against `MockHost`; the exact sequence of commands is checked, which also proves that read-only mode never emits `apt-get update`/`apk update`/etc. (`check_path_is_read_only`).
 - TUI: `TestBackend` captures against `tests/snapshots/`.
 - `mise run test` runs the tests in the dev and `mock` profiles; `mise run check` additionally checks that the production binary rejects `--mock`. See [development.md](../development.md).
+
+## 9. Storage page (`share/storage.rs`, `tui/storage.rs`)
+
+- `share/storage.rs`: parsers (`parse_storage_list`, `parse_content`, `parse_api_guests`, `parse_lvs`, `parse_storage_cfg`), `read_base` + `read_content` (I/O only; content read in parallel), `build` (pure: raw data + guests → `StorageData`, alerts, sort, filter) and `load` / `load_progressive` (sends a partial `StorageData` first, then the full one). Thresholds are constants: `OLD_BACKUP_DAYS=30`, `FULL_DISK_PCT=98`, `FULL_STORAGE_PCT=90`.
+- `tui/storage.rs`: `StorageState` (selection, sort, alert filter, detail) and key handling; drawing lives in `tui/views.rs` (`draw_storage`, `storage_detail_lines`).
+- Non-blocking: `tui/mod.rs::spawn_storage` runs `load` in a `std::thread::scope` worker and returns the result over an `mpsc` channel; `Action::OpenStorage` / `RefreshStorage`.
+- New reads, all in the `ReadOnlyHost` allowlist (`share/host/readonly.rs`) with argument validation (node name and storage ids are checked, vmids via `is_pve_id`; anything else is rejected, see `storage_page_reads_are_exact_and_validated`):
+  - `pvesh get /nodes/<node>/storage --output-format json`
+  - `pvesh get /nodes/<node>/lxc --output-format json` and `…/qemu` (`disk`/`maxdisk` per guest: the source of USED/% and of the full-disk alert, same as the Proxmox GUI)
+  - `pvesh get /nodes/<node>/storage/<storage>/status --output-format json`
+  - `pvesh get /nodes/<node>/storage/<storage>/content --output-format json`
+  - `lvs --reportformat json --units b --nosuffix -o vg_name,lv_name,lv_size,data_percent,pool_lv,lv_attr`
+  - plus reading `/etc/pve/storage.cfg` and the guests' `.conf` (already readable files).
+- No `pct exec`/`df` inside CTs: disk usage comes from `pvesh` only (`disk`/`maxdisk`). `lvs` `Data%` is thin-pool blocks (it includes deleted, untrimmed files), so it is kept apart (`DiskUse.thin_pct`) and only feeds the detail's trim notice, never USED/%, sort or alerts. Stopped guests report `disk = 0`: `—`. A failed read yields `—`, not an error screen.
+- Mock: `share/mock/storage.rs` builds a fixture (dir `local`, `local-lvm` lvmthin, `local-zfs`, `remote-backup-3` with dedup) from the scenario via `World::storage_demo()`; `demo` includes a CT without backup, one with an old backup, one at 99% (CT 133), one with thin blocks at 99.8% but real use 66% (CT 131, the trim notice), a stopped one and one with a `pxu-*` snapshot.
+

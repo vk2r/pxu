@@ -1,0 +1,24 @@
+pxu · storage · 131 ct-131 [RO] [MOCK]                                     00:16
+LXC · running · no alerts
+────────────────────────────────────────────────────────────────────────────────
+── Disks · rootfs 1.9G used of 2.9G · 66% ──────────────────────────────────────
+  rootfs  local-lvm:vm-131-disk-0  1.9G / 2.9G  66%
+          thin blocks 99.8% (3.0G) — reclaim with `pct fstrim 131`
+
+── Snapshots (1) ───────────────────────────────────────────────────────────────
+  pxu-20261107-043000  (pxu pre-update snapshot)
+
+── Backups (1, all backup storages) ────────────────────────────────────────────
+  2026-11-06            1.8G  remote-backup-3 backup/ct/131/2026-11-06T03:05:00Z
+
+── Pre-update backup (pxu) ─────────────────────────────────────────────────────
+  mode: auto
+  origin: auto by [backup] mode (global)
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+lines 1-13 of 13
+────────────────────────────────────────────────────────────────────────────────
+[↑↓/PgUp/PgDn] scroll  [g/G] top/end  [r] refresh  [Esc/q] back  [?] help

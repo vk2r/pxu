@@ -8,6 +8,8 @@ pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué
 
 ![Resultado de una actualización](screenshots/05-update.png)
 
+![Página Storage: espacio por storage y por contenedor, con alertas](screenshots/06-storage.png)
+
 Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en segundo plano.
 
 > Versión 0.1, en desarrollo. Probado en Proxmox VE 9.2.

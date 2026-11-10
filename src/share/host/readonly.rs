@@ -68,6 +68,8 @@ pub fn host_cmd_is_read_only(argv: &[&str]) -> bool {
         ["pvesh", "get", path, "--feature", "snapshot", "--output-format", "json"] => feature_path(path),
         // espacio libre del storage donde irá un vzdump (`avail`/`total`): consulta pura
         ["pvesh", "get", path, "--output-format", "json"] => storage_status_path(path),
+        // página Storage: `lvs` con argumentos fijos (uso real de los discos thin)
+        a if a == crate::share::storage::LVS => true,
         _ => false,
     }
 }
@@ -83,10 +85,15 @@ fn feature_path(p: &str) -> bool {
     matches!(parts.as_slice(), ["", "nodes", node, "lxc", id, "feature"] if crate::share::update::backup::is_pve_id(node) && numeric(id))
 }
 
-/// `/nodes/<nodo>/storage/<storage>/status`, con nodo y storage validados.
+/// `/nodes/<nodo>/storage`, `/nodes/<nodo>/lxc` y `/qemu` (`disk`/`maxdisk` por guest), `…/storage/<storage>/status` y `…/storage/<storage>/content` (página Storage), con nodo y storage validados.
 fn storage_status_path(p: &str) -> bool {
+    use crate::share::update::backup::is_pve_id;
     let parts: Vec<&str> = p.split('/').collect();
-    matches!(parts.as_slice(), ["", "nodes", node, "storage", st, "status"] if crate::share::update::backup::is_pve_id(node) && crate::share::update::backup::is_pve_id(st))
+    match parts.as_slice() {
+        ["", "nodes", node, "storage" | "lxc" | "qemu"] => is_pve_id(node),
+        ["", "nodes", node, "storage", st, "status" | "content"] => is_pve_id(node) && is_pve_id(st),
+        _ => false,
+    }
 }
 
 /// Dentro de un CT solo se permite el script de sondeo embebido (nunca otro `sh -c`):
@@ -455,6 +462,36 @@ mod tests {
         let mut sink = Vec::<String>::new();
         let _ = h.host_cmd(&["pvesh", "get", "/nodes/server/lxc/103/feature", "--feature", "snapshot", "--output-format", "json"], &ExecOpts::default(), &mut sink);
         assert_eq!(h.inner().recorded().len(), 1);
+    }
+
+    #[test]
+    fn storage_page_reads_are_exact_and_validated() {
+        let q = |p: &str| host_cmd_is_read_only(&["pvesh", "get", p, "--output-format", "json"]);
+        assert!(q("/nodes/server/storage"));
+        assert!(q("/nodes/server/storage/local-lvm/content"));
+        assert!(q("/nodes/server/storage/local-lvm/status"));
+        // disk/maxdisk por guest
+        assert!(q("/nodes/server/lxc") && q("/nodes/server/qemu"));
+        assert!(!q("/nodes/se rver/lxc") && !q("/nodes/../qemu") && !q("/nodes/server/qemu/100") && !q("/nodes/server/lxc/"));
+        assert!(!host_cmd_is_read_only(&["pvesh", "create", "/nodes/server/lxc", "--output-format", "json"]));
+        assert!(!host_cmd_is_read_only(&["pvesh", "get", "/nodes/server/lxc", "--output-format", "text"]));
+        assert!(!q("/nodes/server/storage/local-lvm"));
+        assert!(!q("/nodes/server/storage/local-lvm/content/x"));
+        assert!(!q("/nodes/server/storage/lo cal/content"));
+        assert!(!q("/nodes/server/storage/../content"));
+        assert!(!q("/nodes/../storage"));
+        assert!(!q("/nodes/server/storage/-x/content"));
+        assert!(!q("/nodes/server/lxc/121/config"));
+        assert!(!host_cmd_is_read_only(&["pvesh", "create", "/nodes/server/storage/local/content", "--output-format", "json"]));
+        assert!(!host_cmd_is_read_only(&["pvesh", "delete", "/nodes/server/storage/local/content", "--output-format", "json"]));
+        // lvs: solo el argv exacto, sin variantes
+        assert!(host_cmd_is_read_only(crate::share::storage::LVS));
+        assert!(!host_cmd_is_read_only(&["lvs"]));
+        assert!(!host_cmd_is_read_only(&["lvs", "-o", "all"]));
+        let mut more = crate::share::storage::LVS.to_vec();
+        more.push("/dev/pve/data");
+        assert!(!host_cmd_is_read_only(&more));
+        assert!(!host_cmd_is_read_only(&["lvremove", "-f", "pve/data"]));
     }
 
     #[test]

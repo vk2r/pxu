@@ -10,4 +10,5 @@ pub mod notify;
 pub mod proxmox;
 pub mod schedule;
 pub mod state;
+pub mod storage;
 pub mod update;

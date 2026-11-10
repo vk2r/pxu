@@ -20,5 +20,5 @@ pxu [MOCK]                                       server · 5/6 up · 1 upd   00:
 ─│ [Space] check  [Enter] save  [Esc] close                                   │─
 C└────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit

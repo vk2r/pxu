@@ -1686,7 +1686,7 @@ fn list_table_keeps_two_space_gaps_and_tags_use_extra_width() {
 
 #[test]
 fn footer_key_bars_single_line_left_aligned() {
-    let keys = ["[↑↓/jk] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[b] backup", "[o] columns", "[l] logs", "[g] config", "[S] schedule", "[?] help", "[q] quit"];
+    let keys = ["[↑↓/jk] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[b] backup", "[o] columns", "[d] storage", "[l] logs", "[g] config", "[S] schedule", "[?] help", "[q] quit"];
     let a = app("basic-37");
     // 230 columnas: todas las teclas en una sola línea, con huecos de 2 espacios.
     let (out, _) = render(&a, 230, 40, true);
@@ -1697,7 +1697,7 @@ fn footer_key_bars_single_line_left_aligned() {
     assert!(!out.lines().any(|l| l.contains("[r] reload") && !l.contains("[q] quit")), "no second key line at 230");
     // 80 columnas: ninguna tecla queda cortada.
     let (out, _) = render(&a, 80, 24, true);
-    for k in ["[↑↓] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[b] bkp", "[o] cols", "[g] cfg", "[l] logs", "[?] help", "[q] quit"] {
+    for k in ["[↑↓] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update", "[r] reload", "[a] auto", "[b] bkp", "[o] cols", "[g] cfg", "[d] space", "[l] logs", "[?] help", "[q] quit"] {
         assert!(out.contains(k), "80 cols: missing {k}");
     }
     for w in [80u16, 120, 160, 230] {
@@ -1908,4 +1908,176 @@ fn the_backup_column_is_a_dash_with_global_none() {
     let cell = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} "))).unwrap()[col..].split_whitespace().next().unwrap().to_string();
     assert_eq!(cell("100"), "-");
     assert_eq!(cell("105"), "yes");
+}
+
+// ---------------------------------------------------------------- página Storage (`d`)
+
+/// La lista con `d` ya abierta y los datos leídos del mock (lo que hace el bucle en un hilo).
+fn storage_app() -> App {
+    let h = fixture("basic-37");
+    let mut a = app("basic-37");
+    let cfg = pxu::share::config::Config::load(&h).unwrap();
+    assert_eq!(a.on_key(key(KeyCode::Char('d'))), Action::OpenStorage);
+    assert_eq!(a.view, View::Storage);
+    a.storage.set_data(pxu::share::storage::load(&h, &a.inv.guests, &a.inv.node, &cfg));
+    a
+}
+
+#[test]
+fn storage_backup_column_is_the_pre_update_yes_dash_and_nothing_is_cut_at_120() {
+    let h = fixture("basic-37");
+    let mut a = app("basic-37");
+    let cfg = pxu::share::config::Config::load(&h).unwrap();
+    a.on_key(key(KeyCode::Char('d')));
+    for g in a.inv.guests.iter_mut().filter(|g| g.vmid == 100) {
+        g.backup = "none".into();
+    }
+    a.storage.set_data(pxu::share::storage::load(&h, &a.inv.guests, &a.inv.node, &cfg));
+    press(&mut a, "f");
+    let (out, _) = render(&a, 120, 40, true);
+    let row = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} ct-"))).unwrap_or_else(|| panic!("row {id}\n{out}")).to_string();
+    assert!(row("100").contains("— ") && row("100").contains(" -   ") && row("100").contains("no backup"), "{out}");
+    assert!(row("101").contains(" yes ") && !row("101").contains("local"), "{out}");
+    // nombre de storage largo y dos alertas enteros
+    assert!(out.contains("remote-backup-3 pbs"), "{out}");
+    assert!(row("133").contains("last backup 44 d ago, disk 99% full"), "{out}");
+}
+
+#[test]
+fn storage_section_titles_use_accent_and_white_sort_value() {
+    let a = storage_app();
+    let (out, t) = render(&a, 120, 40, true);
+    let buf = t.backend().buffer();
+    let fg_at = |needle: &str| -> Vec<Color> {
+        let (y, line) = out.lines().enumerate().find(|(_, l)| l.contains(needle)).expect(needle);
+        let x = line[..line.find(needle).unwrap()].chars().count();
+        (0..needle.chars().count()).map(|i| buf[((x + i) as u16, y as u16)].fg).collect()
+    };
+    assert!(fg_at("Storages").iter().all(|c| *c == Color::Cyan));
+    assert!(fg_at("Guests ·").iter().take(6).all(|c| *c == Color::Cyan));
+    assert!(fg_at("· sort:").iter().all(|c| *c == Color::DarkGray));
+    let sort = a.storage.sort.label();
+    assert!(fg_at(&format!("sort: {sort}")).iter().rev().take(sort.chars().count()).all(|c| *c == Color::White));
+    let (_, t) = render(&a, 120, 40, false);
+    assert!(t.backend().buffer().content.iter().all(|c| c.fg == Color::Reset));
+}
+
+#[test]
+fn d_opens_storage_and_shows_it_loading_before_the_data_arrives() {
+    let mut a = app("basic-37");
+    a.on_key(key(KeyCode::Char('d')));
+    a.storage.loading = true;
+    let (out, _) = render(&a, 80, 24, true);
+    assert!(out.contains("pxu · storage") && out.contains("reading storages"), "{out}");
+    assert_eq!(a.on_key(key(KeyCode::Char('r'))), Action::RefreshStorage);
+    assert_eq!(a.on_key(key(KeyCode::Char('q'))), Action::None);
+    assert_eq!(a.view, View::List);
+}
+
+#[test]
+fn storage_page_snapshots() {
+    let mut a = storage_app();
+    snap("storage-list", &a);
+    let (out, _) = render(&a, 120, 40, true);
+    for want in ["Storages", "local-lvm", "lvmthin", "alloc 25.0G", "dedup 4.2×", "pxu pre-update target", "Guests · sort: used ↓", "USED/ALLOC", "LAST BACKUP", "alerts · no backup: 1 (100)"] {
+        assert!(out.contains(want), "{want} missing:\n{out}");
+    }
+    let mut f = storage_app();
+    press(&mut f, "f");
+    let (out, _) = render(&f, 120, 40, true);
+    for want in ["no backup", "disk 99% full", "last backup 199 d ago"] {
+        assert!(out.contains(want), "{want} missing:\n{out}");
+    }
+    // ordenado por % real: el 133 (99%) primero; el 131 (thin 99.8% pero real 66%) no sube
+    press(&mut a, "S");
+    press(&mut a, "S");
+    assert_eq!(a.storage.ids()[0], 133, "sorted by the real % the fullest first");
+    assert!(a.storage.ids().iter().position(|i| *i == 131).unwrap() > 5);
+    // detalle del CT 131 (caso arr): 66% real + aviso de trim
+    a.storage.detail = Some(131);
+    snap("storage-detail", &a);
+    let (out, _) = render(&a, 120, 40, true);
+    for want in ["Disks", "local-lvm:vm-131-disk-0", "66%", "thin blocks 99.8% (3.0G) — reclaim with `pct fstrim 131`", "Snapshots (1)", "pxu-20261107-043000", "Backups (", "Pre-update backup (pxu)", "origin:"] {
+        assert!(out.contains(want), "{want} missing:\n{out}");
+    }
+    assert!(!out.contains("99% full"), "{out}");
+    // encabezado, fila del rootfs y lista: mismo usado/asignado (maxdisk 2.9G ≠ .conf 3.0G) y mismo %
+    assert!(out.contains("rootfs 1.9G used of 2.9G · 66%") || out.contains("rootfs 2.0G used of 2.9G · 66%"), "{out}");
+    let row = out.lines().find(|l| l.contains("local-lvm:vm-131-disk-0")).unwrap();
+    assert!(row.contains("/ 2.9G") && row.contains("66%") && !row.contains("3.0G"), "{row}");
+    let (lst, _) = render(&storage_app(), 120, 40, true);
+    let lrow = lst.lines().find(|l| l.contains(" 131 ct-131")).unwrap();
+    assert!(lrow.contains("/2.9G") && lrow.contains("66%"), "{lrow}");
+    // el aviso de trim es solo del detalle: ni la lista ni el resumen lo mencionan
+    let (list, _) = render(&storage_app(), 120, 40, true);
+    assert!(!list.contains("fstrim") && !list.contains("thin blocks"), "{list}");
+    // CT apagado: `—` en usado y %, sin 0%
+    let mut z = storage_app();
+    for _ in 0..4 {
+        press(&mut z, "S");
+    }
+    let (out, _) = render(&z, 120, 40, true);
+    let r = out.lines().find(|l| l.contains(" 117 ct-")).unwrap_or_else(|| panic!("row 117\n{out}"));
+    assert!(r.contains("stopped") && r.contains("—/3.9G") && !r.contains(" 0%") && !r.contains("full"), "{r}");
+    // CT 106: snapshot pxu marcado
+    let mut b = storage_app();
+    b.storage.detail = Some(106);
+    let (out, _) = render(&b, 120, 40, true);
+    assert!(out.contains("pxu-20261107-043000  (pxu pre-update snapshot)"), "{out}");
+    // CT 103: backup de pxu en `local` marcado y último backup en pbs
+    b.storage.detail = Some(103);
+    let (out, _) = render(&b, 120, 40, true);
+    assert!(out.contains("(pxu pre-update) backup/vzdump-lxc-103") && out.contains("remote-backup-3"), "{out}");
+}
+
+#[test]
+fn storage_keys_sort_filter_and_back() {
+    let mut a = storage_app();
+    assert_eq!(a.storage.sort.label(), "used ↓");
+    press(&mut a, "f");
+    assert!(a.storage.only_alerts);
+    let mut ids = a.storage.ids();
+    ids.sort();
+    assert_eq!(ids, vec![100, 101, 133]);
+    let (out, _) = render(&a, 80, 24, true);
+    assert!(out.contains("alerts only") && out.contains("no-bk") && out.contains("old-bk"), "{out}");
+    press(&mut a, "f");
+    assert_eq!(a.storage.ids().len(), 37);
+    for _ in 0..5 {
+        press(&mut a, "S");
+    }
+    assert_eq!(a.storage.sort.label(), "used ↓", "five sorts make a full cycle");
+    press(&mut a, "G");
+    assert_eq!(a.storage.sel, 36);
+    press(&mut a, "g");
+    assert_eq!(a.storage.sel, 0);
+    // Enter abre, Esc cierra el detalle y otro Esc sale a la lista
+    a.on_key(key(KeyCode::Enter));
+    assert!(a.storage.detail.is_some());
+    a.on_key(key(KeyCode::Esc));
+    assert!(a.storage.detail.is_none() && a.view == View::Storage);
+    a.on_key(key(KeyCode::Esc));
+    assert_eq!(a.view, View::List);
+    // ayuda propia
+    let mut a = storage_app();
+    press(&mut a, "?");
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("cycle sort: used") && out.contains("Dedup (PBS)"), "{out}");
+}
+
+#[test]
+fn storage_page_without_data_or_with_nothing_readable() {
+    // sin lecturas (escenario sin storage): la página no falla y dice qué no pudo leer
+    let h = ReadOnlyHost::new(World::new().build());
+    let mut a = App::new(guests::load(&h), true, true);
+    a.clock = "00:16".into();
+    a.on_key(key(KeyCode::Char('d')));
+    let cfg = pxu::share::config::Config::load(&h).unwrap();
+    a.storage.set_data(pxu::share::storage::load(&h, &a.inv.guests, &a.inv.node, &cfg));
+    for (w, hh) in [(120, 40), (80, 24)] {
+        let (out, _) = render(&a, w, hh, true);
+        assert!(out.contains("nothing readable") && out.contains("no guests on this node"), "{out}");
+    }
+    a.on_key(key(KeyCode::Enter));
+    assert!(a.storage.detail.is_none(), "no guest, no detail");
 }

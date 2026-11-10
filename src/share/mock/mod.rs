@@ -1,6 +1,7 @@
 //! MockHost: host simulado en memoria (archivos armados por `scenario::World`); responde comandos según el `Scenario`.
 //! Compilado solo en debug/tests o con `--features mock` (nunca en el release por defecto).
 pub mod scenario;
+pub mod storage;
 use crate::share::host::*;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ pub struct Scenario {
     /// Espacio libre / total del storage de backups (GB) que informa `pvesh get …/storage/<s>/status` (por defecto 800 / 1000).
     pub storage_avail_gb: Option<f64>,
     pub storage_total_gb: Option<f64>,
+    /// Datos de la página Storage (`pvesh get …/storage`, `…/content`, `lvs`); sin esto esas lecturas fallan.
+    pub storage: Option<storage::Fixture>,
 }
 
 /// Timer simulado: lo que `timer_status` informa y `apply_schedule` cambia.
@@ -434,6 +437,22 @@ impl Host for MockHost {
             Ok(ExitInfo { code: 0 })
         };
         match argv {
+            a if a == crate::share::storage::LVS => match &self.scenario.storage {
+                Some(f) => ok(s, &f.lvs),
+                None => Ok(ExitInfo { code: 5 }),
+            },
+            ["pvesh", "get", path, ..] if path.ends_with("/storage") => match &self.scenario.storage {
+                Some(f) => ok(s, &f.list),
+                None => Ok(ExitInfo { code: 2 }),
+            },
+            ["pvesh", "get", path, ..] if path.ends_with("/lxc") || path.ends_with("/qemu") => match &self.scenario.storage {
+                Some(f) => ok(s, if path.ends_with("/lxc") { &f.lxc } else { &f.qemu }),
+                None => Ok(ExitInfo { code: 2 }),
+            },
+            ["pvesh", "get", path, ..] if path.ends_with("/content") => match self.scenario.storage.as_ref().and_then(|f| f.content.get(path.split('/').nth(4).unwrap_or(""))) {
+                Some(j) => ok(s, j),
+                None => Ok(ExitInfo { code: 2 }),
+            },
             ["pvesh", "get", path, ..] if path.contains("/storage/") => {
                 let g = |v: Option<f64>, d: f64| (v.unwrap_or(d) * (1u64 << 30) as f64) as u64;
                 let (avail, total) = (g(self.scenario.storage_avail_gb, 800.0), g(self.scenario.storage_total_gb, 1000.0));

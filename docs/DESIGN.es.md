@@ -72,6 +72,7 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | `u` | actualizar los CT visibles con updates (pide confirmación); sobre la fila del host, actualiza el host |
 | `a` | auto-update del CT / del host (pide confirmación); en un CT con GPU, ventana del driver NVIDIA |
 | `b` | backup previo al update del CT: activado (sigue `[backup] mode`) / `none` (pide confirmación; el host no aplica) |
+| `d` | página Storage: espacio por storage, guest, snapshot y backup (solo lectura) |
 | `g` | vista Config |
 | `S` | diálogo de horario del timer |
 | `l` | logs de las corridas |
@@ -538,6 +539,37 @@ lines 1-17 of 100
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓/PgUp/PgDn] scroll  [g/G] top/end  [n/p] next/prev  [q/Esc] back  [?] help
 ```
+
+### 5.8 Storage
+
+Se abre con `d` desde la lista (no hace falta la fila del host). Solo lectura: ejecuta únicamente lecturas de la allowlist y nunca entra a un CT.
+
+```
+pxu · storage [RO]                                                    00:16
+node server · 4 storages · 37 guests
+── Storages ──────────────────────────────────────────────────────────────
+ local-lvm  lvmthin [█████░░░░░░░] 16.4G/40.0G  41%  alloc 25.0G (63%)
+ remote-backup-3   pbs     [█░░░░░░░░░░░] 26.6G/2.0T   1%  dedup 4.2× · 47 bk · 112G logical
+── Guests · sort: used ↓ ─────────────────────────────────────────────────
+   ID NAME     STATE    USED/ALLOC    % SNAPS LAST BACKUP BK SIZE BACKUP ALERT
+! 133 ct-133   running   4.9G/5.0G  99%     0 2026-09-24     3.0G yes    last backup 44 d ago, disk 99% full
+```
+
+- **Storages**: barra, usado/total, %, más info: plantillas y backups en `dir`, `alloc` (suma de los volúmenes thin, solo en `lvmthin`), `N backups · X logical · dedup N.N×` en PBS (logical = suma del contenido de backups; dedup = logical / usado) y `pxu pre-update target` en el storage que recibe los backups previos al update. Lo que no se puede leer muestra `—`.
+- **Guests**: una fila por CT/VM: disco usado/asignado y % (los números que muestra Proxmox: `disk`/`maxdisk` de `pvesh get /nodes/<n>/lxc|qemu`; un guest apagado, o una VM sin agente, informa `disk = 0`, así que muestra `—`, nunca 0% ni una alerta), snapshots (`N*` = uno es un snapshot `pxu-*`), último backup, su tamaño y storage, y una etiqueta de alerta. El último backup ignora los sobrantes de backups previos de pxu. BACKUP = igual que la lista principal: `yes` si pxu hace backup antes de actualizar, `-` si no (el storage del backup va solo en el detalle).
+- **Alertas** (umbrales fijos, `share/storage.rs`): sin backup · último backup de más de 30 días · disco del guest ≥ 98% (solo con el `disk`/`maxdisk` de Proxmox) · pool thin sobreasignado o > 90% · el storage destino de pxu no tiene espacio para el CT más grande (misma regla que el chequeo de espacio del update). Una línea resumen las cuenta.
+- **Por qué no `lvs`**: el `Data%` de un LV thin cuenta todos los bloques escritos alguna vez en el pool, también los de archivos borrados, hasta que un trim los devuelve; puede dar 99.8% en un disco que Proxmox muestra al 66%. Por eso nunca es el usado/% del guest, ni el orden, ni las alertas. Solo aparece en el detalle como `thin blocks 99.8% (20.0G) — reclaim with \`pct fstrim <id>\``, cuando supera al uso real por más de 15 puntos (`UNTRIMMED_GAP_PCT`) o no se conoce el uso real. pxu solo lee: nunca ejecuta `fstrim`.
+- **Detalle** (`Enter`): discos y mount points (volid, usado/asignado; el uso del rootfs sale de Proxmox), snapshots (`pxu-*` marcados), backups en todos los storages de backup (fecha, tamaño, storage, volid; `(pxu pre-update)` marca los backups previos) y el modo efectivo de backup previo con su origen (override del CT / global / por defecto).
+- **Carga**: un hilo trabajador lee en segundo plano; la pantalla muestra «loading…» y nunca se bloquea. `r` recarga. Funciona con 0 backups, storages inactivos y VMs. Dos fases: primero storages, `lvs` y guests (con `…` en los backups) y después el `content` de cada storage, en paralelo.
+
+| Tecla | Acción |
+|---|---|
+| `↑↓` / `j k`, `PgUp PgDn`, `Home End` | mover |
+| `Enter` | detalle de espacio del guest |
+| `S` | rota el orden: usado · asignado · % · último backup · id |
+| `f` | solo guests con alertas |
+| `r` | recargar |
+| `?` / `q` / `Esc` | ayuda / volver |
 
 ## 6. Errores
 

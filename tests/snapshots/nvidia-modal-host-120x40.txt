@@ -37,4 +37,4 @@ pxu · Proxmox Updater [MOCK]                                 node server · 6 g
 host: auto-update enabled (saved in /etc/pxu/config.toml)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
-[o] columns  [l] logs  [g] config  [S] schedule  [?] help  [q] quit
+[o] columns  [d] storage  [l] logs  [g] config  [S] schedule  [?] help  [q] quit

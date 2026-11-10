@@ -72,6 +72,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | `u` | update the visible CTs with updates (asks for confirmation); on the host row, updates the host |
 | `a` | auto-update of the CT / the host (asks for confirmation); on a CT with a GPU, NVIDIA driver window |
 | `b` | backup before the CT's update: on (follows `[backup] mode`) / `none` (asks for confirmation; not for the host) |
+| `d` | Storage page: space per storage, guest, snapshot and backup (read-only) |
 | `g` | Config view |
 | `S` | timer schedule dialog |
 | `l` | run logs |
@@ -538,6 +539,37 @@ lines 1-17 of 100
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓/PgUp/PgDn] scroll  [g/G] top/end  [n/p] next/prev  [q/Esc] back  [?] help
 ```
+
+### 5.8 Storage
+
+Opened with `d` from the list (the host row is not required). Read-only: it only runs allowlisted reads and never enters a CT.
+
+```
+pxu · storage [RO]                                                    00:16
+node server · 4 storages · 37 guests
+── Storages ──────────────────────────────────────────────────────────────
+ local-lvm  lvmthin [█████░░░░░░░] 16.4G/40.0G  41%  alloc 25.0G (63%)
+ remote-backup-3   pbs     [█░░░░░░░░░░░] 26.6G/2.0T   1%  dedup 4.2× · 47 bk · 112G logical
+── Guests · sort: used ↓ ─────────────────────────────────────────────────
+   ID NAME     STATE    USED/ALLOC    % SNAPS LAST BACKUP BK SIZE BACKUP ALERT
+! 133 ct-133   running   4.9G/5.0G  99%     0 2026-09-24     3.0G yes    last backup 44 d ago, disk 99% full
+```
+
+- **Storages**: bar, used/total, %, plus info: templates and backups on `dir`, `alloc` (sum of the thin volumes, only for `lvmthin`), `N backups · X logical · dedup N.N×` on PBS (logical = sum of the backup contents; dedup = logical / used) and `pxu pre-update target` on the storage that receives pre-update backups. What cannot be read shows `—`.
+- **Guests**: one row per CT/VM: disk used/allocated and % (the numbers Proxmox shows: `disk`/`maxdisk` of `pvesh get /nodes/<n>/lxc|qemu`; a stopped guest, or a VM without an agent, reports `disk = 0`, so it shows `—`, never 0% and never an alert), snapshots (`N*` = one is a `pxu-*` snapshot), last backup, its size, BACKUP (same as the main list: `yes` if pxu backs up before updating, `-` if not; the backup's storage is only in the detail) and an alert tag. Last backup ignores pxu pre-update leftovers.
+- **Alerts** (fixed thresholds, `share/storage.rs`): no backup · last backup older than 30 days · guest disk ≥ 98% (only from Proxmox's `disk`/`maxdisk`) · thin pool overcommitted or > 90% · the pxu target storage lacks room for the largest CT (same rule as the update space check). A summary line counts them.
+- **Why not `lvs`**: the `Data%` of a thin LV counts every block ever written to the pool, deleted files included, until a trim returns them; it can read 99.8% on a disk Proxmox shows at 66%. So it is never used as the guest's used/%, in sort or in alerts. It only appears in the detail as `thin blocks 99.8% (20.0G) — reclaim with \`pct fstrim <id>\``, when it exceeds the real use by more than 15 points (`UNTRIMMED_GAP_PCT`) or the real use is unknown. pxu only reads: it never runs `fstrim`.
+- **Detail** (`Enter`): disks and mount points (volid, used/alloc; the rootfs usage comes from Proxmox), snapshots (`pxu-*` marked), backups across every backup storage (date, size, storage, volid; `(pxu pre-update)` marks pre-update backups), and the effective pre-update mode with its origin (CT override / global / default).
+- **Load**: a worker thread reads in the background; the screen shows "loading…" and never blocks. Two phases: storages, `lvs` and guests first (backups show `…`), then each storage's `content`, read in parallel. `r` reloads. Works with 0 backups, inactive storages and VMs.
+
+| Key | Action |
+|---|---|
+| `↑↓` / `j k`, `PgUp PgDn`, `Home End` | move |
+| `Enter` | guest space detail |
+| `S` | rotate sort: used · alloc · % · last backup · id |
+| `f` | only guests with alerts |
+| `r` | reload |
+| `?` / `q` / `Esc` | help / back |
 
 ## 6. Errors
 

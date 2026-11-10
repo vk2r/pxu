@@ -20,5 +20,5 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 ────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit

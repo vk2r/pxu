@@ -353,6 +353,8 @@ pub struct World {
     host_auto: bool,
     /// `[update] host_nvidia_auto = true`.
     host_nvidia_auto: bool,
+    /// Datos de la página Storage generados a partir de los discos de los CT (`storage_demo`).
+    storage_demo: bool,
 }
 
 impl Default for World {
@@ -382,7 +384,13 @@ impl World {
             host_state: None,
             host_auto: false,
             host_nvidia_auto: false,
+            storage_demo: false,
         }
+    }
+    /// Storages `local` (dir), `local-lvm` (lvmthin), `local-zfs` y `remote-backup-3` con backups, coherentes con los discos de los CT.
+    pub fn storage_demo(mut self) -> World {
+        self.storage_demo = true;
+        self
     }
     pub fn node(mut self, n: &str) -> World {
         self.node = n.into();
@@ -550,6 +558,23 @@ impl World {
     pub fn build(mut self) -> MockHost {
         let node = self.node.clone();
         self.scenario.node = node.clone();
+        if self.storage_demo {
+            let mut vols = vec![];
+            for c in &self.cts {
+                let root = c.storage.rootfs(c.id, c.size_gb);
+                vols.push(super::storage::Vol { id: c.id, volid: root.split(',').next().unwrap_or("").to_string(), size: (c.size_gb as u64) << 30, running: c.running });
+                for l in c.extra.iter().filter(|l| l.starts_with("mp")) {
+                    let spec = l.split_once(": ").map_or("", |x| x.1);
+                    let gb = spec.split(',').find_map(|p| p.strip_prefix("size=")).and_then(|v| v.trim_end_matches('G').parse::<u64>().ok());
+                    if let (Some(v), Some(gb)) = (spec.split(',').next(), gb) {
+                        vols.push(super::storage::Vol { id: c.id, volid: v.to_string(), size: gb << 30, running: c.running });
+                    }
+                }
+            }
+            let fx = super::storage::demo(&vols, self.scenario.now_epoch);
+            self.files.insert(PathBuf::from("/etc/pve/storage.cfg"), fx.cfg.clone().into_bytes());
+            self.scenario.storage = Some(fx);
+        }
         let mut f = std::mem::take(&mut self.files);
         let mut put = |p: String, d: String| {
             f.insert(PathBuf::from(p), d.into_bytes());
@@ -778,7 +803,7 @@ impl World {
 
     /// Servidor poblado: 37 guests genéricos (34 encendidos, 3 apagados), 13 con actualizaciones, de varias distros.
     pub fn demo() -> World {
-        let mut w = World::new().ct_config(105, &["auto_update = true"]);
+        let mut w = World::new().storage_demo().ct_config(105, &["auto_update = true"]);
         for i in 0..37u32 {
             let id = 100 + i;
             let distro = match id {
@@ -787,7 +812,10 @@ impl World {
                 125 | 127 | 128 | 134 => Distro::Ubuntu,
                 _ => Distro::Debian,
             };
-            let mut c = Ct::new(id).distro(distro).mem(if i % 2 == 1 { 1024 } else { 512 }).cores(1 + i % 4).size(2 + i % 5).storage(Storage::Zfs).index_age_hours(5);
+            let mut c = Ct::new(id).distro(distro).mem(if i % 2 == 1 { 1024 } else { 512 }).cores(1 + i % 4).size(2 + i % 5).storage(if id >= 130 { Storage::LvmThin } else { Storage::Zfs }).index_age_hours(5);
+            if id == 106 || id == 131 {
+                c = c.snapshots(&["pxu-20261107-043000"]);
+            }
             c = c.tags(match id {
                 106 | 110 | 116 | 123 => "infra;auto",
                 103 | 108 | 119 | 125 => "apps;auto",

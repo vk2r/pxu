@@ -61,6 +61,8 @@ pub enum View {
     Config,
     /// `l`: lista de logs de corridas y visor (`LogsState::viewer`).
     Logs,
+    /// `d`: espacio por storage y por guest, backups y alertas (DESIGN §5.7).
+    Storage,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -111,6 +113,10 @@ pub enum Action {
     SaveColumns(Vec<String>),
     /// `l`: el bucle lee la lista de `run-*.log` y abre la página.
     OpenLogs,
+    /// `d` en la lista: abre la página Storage y la lee en un hilo.
+    OpenStorage,
+    /// `r` en Storage: vuelve a leer sin bloquear.
+    RefreshStorage,
     /// Enter / `n` / `p` / doble clic: el bucle lee ese log y lo muestra en el visor.
     OpenLog(std::path::PathBuf),
     /// Enter en el diálogo de retención: guarda `[general] log_retention_days`.
@@ -394,6 +400,7 @@ pub struct App {
     /// Último estado del timer leído para la vista Config (o el motivo por el que no se pudo leer).
     pub timer: Option<Result<TimerStatus, String>>,
     pub logs: super::logs::LogsState,
+    pub storage: super::storage::StorageState,
     /// `log_retention_days` leído para la vista Config.
     pub log_days: Option<u32>,
     /// Diálogo de retención (`L` en Config): los dígitos escritos.
@@ -438,6 +445,7 @@ impl App {
             testing: false,
             timer: None,
             logs: Default::default(),
+            storage: Default::default(),
             log_days: None,
             log_modal: None,
         }
@@ -597,7 +605,31 @@ impl App {
             View::Update => self.update_key(k),
             View::Config => self.config_key(k),
             View::Logs => self.logs_key(k),
+            View::Storage => self.storage_key(k),
         }
+    }
+
+    fn storage_key(&mut self, k: KeyEvent) -> Action {
+        use super::storage::StorageKey;
+        match self.storage.on_key(k) {
+            StorageKey::None => Action::None,
+            StorageKey::Back => {
+                self.view = View::List;
+                Action::None
+            }
+            StorageKey::Refresh => Action::RefreshStorage,
+            StorageKey::Help => {
+                self.help = true;
+                Action::None
+            }
+        }
+    }
+
+    /// `d` en la lista: abre la página al momento (con lo que haya) y el bucle lee los datos en un hilo.
+    fn open_storage(&mut self) -> Action {
+        self.view = View::Storage;
+        self.storage.detail = None;
+        Action::OpenStorage
     }
 
     fn logs_key(&mut self, k: KeyEvent) -> Action {
@@ -1112,6 +1144,7 @@ impl App {
             KeyCode::Char('r') => return Action::Reload,
             KeyCode::Char('g') => return Action::OpenConfig,
             KeyCode::Char('l') => return Action::OpenLogs,
+            KeyCode::Char('d') => return self.open_storage(),
             KeyCode::Char('S') => return self.ask_schedule(),
             KeyCode::Char('a') => {
                 let v = self.selected().map(|g| g.vmid);
