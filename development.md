@@ -1,186 +1,188 @@
-# pxu: desarrollo
+English | [Español](development.es.md)
 
-Documentación técnica de pxu: compilar, probar, instalar, estructura del código, referencia de comandos y configuración. Para instalar y usar pxu, mira el [README](README.md).
+# pxu: development
 
-Actualizador liviano de contenedores LXC para Proxmox VE, pensado como alternativa a ProxMenux. Es un único binario en Rust con TUI (ratatui) y CLI. No tiene daemon ni dependencias en el host y ocupa unos pocos MB de RAM mientras corre.
+Technical documentation for pxu: building, testing, installing, code structure, command and configuration reference. To install and use pxu, see the [README](README.md).
 
-- **Lista** los LXC y VM leyendo `/etc/pve/{lxc,qemu-server}/*.conf` y el estado desde cgroup y pidfiles, sin lanzar procesos.
-- **Chequea** actualizaciones con una sola ejecución por CT. Por defecto es de **solo lectura**: no refresca índices salvo con `--refresh`. Soporta apt, apk, pacman, dnf y zypper.
-- **Actualiza** los CT de uno en uno: backup temporal → simulación → upgrade → verificación. Si algo falla, **vuelve atrás automáticamente** al backup y luego lo borra.
-- **Notifica** por [Apprise API](https://github.com/caronc/apprise-api) con `curl`. No requiere instalar Python.
+A lightweight LXC container updater for Proxmox VE, designed as an alternative to ProxMenux. It is a single Rust binary with a TUI (ratatui) and a CLI. It has no daemon and no dependencies on the host, and uses a few MB of RAM while it runs.
 
-> Estado: v0.1, en desarrollo. Probado en PVE 9.2 (actualización y vuelta atrás reales en un CT Debian 13). Las notificaciones Apprise y la vuelta atrás de un CT que estaba apagado solo están probadas con datos simulados.
+- **Lists** LXCs and VMs by reading `/etc/pve/{lxc,qemu-server}/*.conf` and the state from cgroup and pidfiles, without launching processes.
+- **Checks** for updates with a single execution per CT. By default it is **read-only**: it doesn't refresh indexes unless you pass `--refresh`. It supports apt, apk, pacman, dnf and zypper.
+- **Updates** CTs one at a time: temporary backup → simulation → upgrade → verification. If anything fails, it **rolls back automatically** to the backup and then deletes it.
+- **Notifies** through [Apprise API](https://github.com/caronc/apprise-api) with `curl`. No need to install Python.
 
-## Compilar
+> Status: v0.1, in development. Tested on PVE 9.2 (real update and rollback on a Debian 13 CT). Apprise notifications and the rollback of a CT that was stopped are only tested with simulated data.
 
-El toolchain se maneja con [mise](https://mise.jdx.dev) (`mise.toml`: Rust 1.99.1):
+## Build
 
-```sh
-mise install                   # instala el toolchain
-mise run build                 # target/release/pxu (~1,3 MB, sin símbolos)
-mise run test                  # tests en perfil dev y mock, contra MockHost, sin Proxmox
-mise run check                 # tests + release + comprueba que el binario de producción rechaza --mock
-mise run lint                  # avisos de clippy (aún no bloqueantes)
-mise tasks                     # lista todas las tareas
-```
-
-Para desarrollar sin servidor existe un binario de pruebas con un Proxmox simulado en memoria (`World` en `src/share/mock/scenario.rs`): no hay carpetas ni datos en disco, los CT son genéricos (`ct-101`, `ct-102`…):
+The toolchain is managed with [mise](https://mise.jdx.dev) (`mise.toml`: Rust 1.99.1):
 
 ```sh
-mise run demo                             # TUI con 37 guests genéricos simulados (caso `demo`)
-mise run demo -- update-ok update --yes   # otro caso y comando
+mise install                   # installs the toolchain
+mise run build                 # target/release/pxu (~1.3 MB, stripped)
+mise run test                  # tests in dev and mock profile, against MockHost, no Proxmox needed
+mise run check                 # tests + release + checks that the production binary rejects --mock
+mise run lint                  # clippy warnings (not blocking yet)
+mise tasks                     # lists all tasks
 ```
 
-Casos predefinidos: `demo`, `update-ok`, `update-fail`, `distros`, `cluster`, `failures`, `vms`. Cada test arma el suyo con el builder (`World::new().ct(Ct::new(101).distro(Distro::Alpine).stopped())…`).
-
-`mise run demo` compila antes `target/mock/pxu` (`cargo build --profile mock --features mock`). El binario de producción rechaza `--mock` (sale con código 2), y `--release --features mock` no compila.
-
-## Instalar
-
-No hay releases publicadas: el binario se compila con `mise run build` y `install.sh` lo instala en el host.
-
-**A mano:** copia `target/release/pxu`, `install.sh` y `dist/` al host y, como root:
+To develop without a server there is a test binary with an in-memory simulated Proxmox (`World` in `src/share/mock/scenario.rs`): there are no folders or data on disk, and the CTs are generic (`ct-101`, `ct-102`…):
 
 ```sh
-sh install.sh ./pxu --timer   # --timer es opcional; sh install.sh [ruta-al-binario]
+mise run demo                             # TUI with 37 generic simulated guests (`demo` case)
+mise run demo -- update-ok update --yes   # another case and command
 ```
 
-`install.sh` instala `/usr/local/bin/pxu`, crea `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu` (0700), no sobrescribe nunca `config.toml` y se puede repetir. `--force` omite la comprobación de Proxmox; `--uninstall` quita binario y timer (con `--purge` borra también `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu`).
+Predefined cases: `demo`, `update-ok`, `update-fail`, `distros`, `cluster`, `failures`, `vms`. Each test builds its own with the builder (`World::new().ct(Ct::new(101).distro(Distro::Alpine).stopped())…`).
 
-Sin `/etc/pxu/config.toml`, `pxu` funciona en solo lectura (listar y chequear) y no actualiza nada. En la TUI, `a` sobre un CT (tabla o detalle) crea ese archivo con solo el override del CT, tras pedir confirmación, y `pxu` sale del modo solo lectura.
+`mise run demo` first builds `target/mock/pxu` (`cargo build --profile mock --features mock`). The production binary rejects `--mock` (exits with code 2), and `--release --features mock` doesn't compile.
 
-## Uso
+## Install
+
+There are no published releases: the binary is built with `mise run build` and `install.sh` installs it on the host.
+
+**By hand:** copy `target/release/pxu`, `install.sh` and `dist/` to the host and, as root:
+
+```sh
+sh install.sh ./pxu --timer   # --timer is optional; sh install.sh [path-to-binary]
+```
+
+`install.sh` installs `/usr/local/bin/pxu`, creates `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu` (0700), never overwrites `config.toml` and can be repeated. `--force` skips the Proxmox check; `--uninstall` removes the binary and the timer (with `--purge` it also deletes `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu`).
+
+Without `/etc/pxu/config.toml`, `pxu` works in read-only mode (list and check) and updates nothing. In the TUI, `a` on a CT (table or detail) creates that file with only the CT override, after asking for confirmation, and `pxu` leaves read-only mode.
+
+## Usage
 
 ```
 pxu                                   TUI
 pxu list   [--json] [--all-nodes]
 pxu check  [--json] [--refresh] [--notify] [--ct 101,103] [vmid...]
 pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
-pxu config check                      valida /etc/pxu/config.toml
-pxu notify-test                       envía un aviso de prueba por Apprise
+pxu config check                      validates /etc/pxu/config.toml
+pxu notify-test                       sends a test notification through Apprise
 ```
 
-`update` es el único comando que escribe. Solo toca CT con un `pxu check` positivo reciente (`require_fresh_check_minutes`). Sin `--ct`, actualiza los CT habilitados con `auto_update` o con un tag de `auto_update_tags`.
+`update` is the only command that writes. It only touches CTs with a recent positive `pxu check` (`require_fresh_check_minutes`). Without `--ct`, it updates the CTs enabled with `auto_update` or with a tag from `auto_update_tags`.
 
-**Teclas de la TUI:** `↑↓`/`jk` mover · `/` buscar · `s` ordenar · `1-4` filtrar · `Enter` detalle · `c` chequear · `C` refrescar y chequear (pide confirmación) · `u` actualizar (pide confirmación) · `x`/`Esc` cancelar la corrida · `?` ayuda · `q` salir.
+**TUI keys:** `↑↓`/`jk` move · `/` search · `s` sort · `1-4` filter · `Enter` detail · `c` check · `C` refresh and check (asks for confirmation) · `u` update (asks for confirmation) · `x`/`Esc` cancel the run · `?` help · `q` quit.
 
-### Códigos de salida
+### Exit codes
 
-| Código | Comando | Significado |
+| Code | Command | Meaning |
 |---|---|---|
-| 0 | todos | OK / sin actualizaciones |
-| 2 | todos | uso incorrecto, config inválida o con permisos inseguros |
-| 3 | `update` | otra corrida en curso |
-| 5 | `notify-test` | el envío falló |
-| 10 | `check` | hay actualizaciones |
-| 12 | `check` | algún CT falló al chequearse |
-| 20 | `update` | algún CT falló |
-| 30 | `update` | corrida detenida (2 fallos seguidos o Ctrl-C) |
+| 0 | all | OK / no updates |
+| 2 | all | incorrect usage, invalid config or insecure permissions |
+| 3 | `update` | another run in progress |
+| 5 | `notify-test` | sending failed |
+| 10 | `check` | there are updates |
+| 12 | `check` | some CT failed to be checked |
+| 20 | `update` | some CT failed |
+| 30 | `update` | run stopped (2 failures in a row or Ctrl-C) |
 
-## Configuración
+## Configuration
 
-`/etc/pxu/config.toml` debe ser de root con modo `0600`; si no, `pxu` se niega a usarlo. Ejemplo mínimo:
+`/etc/pxu/config.toml` must be owned by root with mode `0600`; otherwise `pxu` refuses to use it. Minimal example:
 
 ```toml
 [update]
-auto_update_tags = ["autoupdate"]   # CT con este tag de PVE se actualizan
+auto_update_tags = ["autoupdate"]   # CTs with this PVE tag get updated
 stopped          = "skip"           # "skip" | "start_and_restore"
 reboot           = "never"          # "never" | "if-required"
 
 [backup]
-mode    = "auto"     # "auto" (snapshot si el CT lo admite, si no vzdump) | "snapshot" | "vzdump" | "none"
-storage = "local"    # destino de vzdump
-keep    = 0          # backups que se conservan tras un update OK (0 = temporales)
+mode    = "auto"     # "auto" (snapshot if the CT supports it, otherwise vzdump) | "snapshot" | "vzdump" | "none"
+storage = "local"    # vzdump destination
+keep    = 0          # backups kept after a successful update (0 = temporary)
 
 [apprise]
 api_url = "http://apprise.local:8000"
 api_key = "pxu"
 on      = ["updates_found", "update_failed", "run_summary", "check_error"]
 
-[[ct]]               # override por CT
+[[ct]]               # per-CT override
 vmid        = 101
 auto_update = true
 ```
 
-La TUI también escribe esos overrides: `a` alterna el `auto_update` del CT seleccionado (modal con «hoy: … → nuevo estado»; `y`/Enter confirma, Esc cancela). Solo cambia la línea `auto_update` del bloque `[[ct]]` de ese vmid, o añade un bloque al final; comentarios y orden se conservan. Se valida el TOML resultante y se escribe de forma atómica (root, `0600`). Un override `false` gana sobre el tag del CT.
+The TUI also writes those overrides: `a` toggles the `auto_update` of the selected CT (modal with "today: … → new state"; `y`/Enter confirms, Esc cancels). It only changes the `auto_update` line of that vmid's `[[ct]]` block, or adds a block at the end; comments and order are preserved. The resulting TOML is validated and written atomically (root, `0600`). An override of `false` wins over the CT's tag.
 
-`pxu update` y la TUI validan la config igual que `pxu config check` antes de usarla: valores desconocidos (`on_failure = "Stop"`, `apt_mode = "Upgrade"`) o claves mal escritas (`on_falure`) son errores. `pxu update` sale con código 2 y los muestra; la TUI arranca en solo lectura con el motivo en la barra de estado. Los avisos (warnings) no bloquean.
+`pxu update` and the TUI validate the config the same way as `pxu config check` before using it: unknown values (`on_failure = "Stop"`, `apt_mode = "Upgrade"`) or misspelled keys (`on_falure`) are errors. `pxu update` exits with code 2 and shows them; the TUI starts in read-only mode with the reason in the status bar. Warnings don't block.
 
-### Aviso y log de cada corrida
+### Notification and log of each run
 
-Cada corrida de update (timer, `pxu update` o la TUI) termina con **un solo aviso**: una tabla Markdown (`Upgrades | Result | Packages | GPU driver | Time | Details | Manual`, el host primero y luego cada CT, también los fallidos y omitidos) bajo el título `pxu: update run on <host> — N ok, N warn, N failed · <dur>` (+ `STOPPED` si se detuvo, + `· NVIDIA failed`). Con más de 25 filas van primero las que no están ok, luego hasta 25 ok y `+N more ok (see log)`. El nivel del aviso es success, warning o failure según el peor resultado.
+Each update run (timer, `pxu update` or the TUI) ends with **a single notification**: a Markdown table (`Upgrades | Result | Packages | GPU driver | Time | Details | Manual`, the host first and then each CT, including failed and skipped ones) under the title `pxu: update run on <host> — N ok, N warn, N failed · <dur>` (+ `STOPPED` if it was stopped, + `· NVIDIA failed`). With more than 25 rows, the ones that are not ok come first, then up to 25 ok and `+N more ok (see log)`. The notification level is success, warning or failure according to the worst result.
 
-- Evento `run_summary`: se envía siempre al acabar la corrida. Evento `update_failed`: si solo está este (sin `run_summary`), el mismo aviso se envía solo cuando algún CT o el driver NVIDIA falló. Las configs viejas siguen valiendo.
-- Cada corrida escribe **un log**: `/var/log/pxu/run-AAAAMMDD-HHMM.log` (UTC en el nombre; `-SS` si ya existe uno de ese minuto; `0600`). Se crea al empezar y crece mientras corre: una sección por host, driver NVIDIA y CT, con la hora de cada línea, y al terminar el resumen igual que el aviso; también se escribe si la corrida se detiene o se cancela (con el motivo). Ya no se crean `/var/log/pxu/<vmid>/…`, `host-….log` ni `nvidia-….log`. Un corte brusco (SIGKILL, caída del host) deja el log parcial, que la página Logs lista como `⛔ INCOMPLETE`.
-- `[general] log_retention_days = 30` (por defecto): al acabar cada corrida se borran los logs de pxu con más de N días, incluidos los formatos viejos y las carpetas `<vmid>` vacías; `0` = no borrar nunca (máx. 3650). Solo se tocan archivos normales con nombre de pxu dentro de `/var/log/pxu` (no se siguen enlaces simbólicos). `logs_per_ct` ya no existe: se acepta y se ignora (aviso de config obsoleta).
-- TUI: `l` abre la página **Logs** (fecha, duración, resultado y tamaño, del más nuevo al más viejo; ↑↓/jk, clic para elegir, doble clic o Enter para abrir). En el visor: flechas, PgUp/PgDn y rueda para desplazar, `g`/`G` principio/final, `n`/`p` log siguiente/anterior, `q`/Esc vuelve a la lista con el mismo log elegido. `L` en la vista Config edita `log_retention_days`.
+- `run_summary` event: always sent when the run ends. `update_failed` event: if it is the only one (without `run_summary`), the same notification is sent only when some CT or the NVIDIA driver failed. Old configs remain valid.
+- Each run writes **one log**: `/var/log/pxu/run-YYYYMMDD-HHMM.log` (UTC in the name; `-SS` if one from that minute already exists; `0600`). It is created at the start and grows while it runs: one section per host, NVIDIA driver and CT, with the time of each line, and at the end the summary identical to the notification; it is also written if the run is stopped or cancelled (with the reason). `/var/log/pxu/<vmid>/…`, `host-….log` and `nvidia-….log` are no longer created. An abrupt cut (SIGKILL, host crash) leaves the log partial, which the Logs page lists as `⛔ INCOMPLETE`.
+- `[general] log_retention_days = 30` (default): when each run ends, pxu logs older than N days are deleted, including the old formats and empty `<vmid>` folders; `0` = never delete (max 3650). Only regular files with a pxu name inside `/var/log/pxu` are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
+- TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `L` in the Config view edits `log_retention_days`.
 
-### Apprise: desde la TUI
+### Apprise: from the TUI
 
-En la vista Config (`g`) la sección «Notifications (Apprise)» muestra el estado de `[apprise]` con los secretos tapados: la `api_url` solo con esquema y host, la `api_key` como `•••` y cada URL de destino como `tgram://…`.
+In the Config view (`g`) the "Notifications (Apprise)" section shows the status of `[apprise]` with secrets hidden: `api_url` with only scheme and host, `api_key` as `•••` and each destination URL as `tgram://…`.
 
-- `N` abre el diálogo: dirección de la API, modo (clave guardada en Apprise API **o** URLs directas, separadas por coma) y los eventos que avisan (`updates_found`, `update_failed`, `run_summary`, `check_error`). El secreto guardado no se muestra: con el campo vacío se conserva, y lo que escribes se pinta como puntos.
-- Con Enter valida la config resultante entera con el mismo código que `pxu config check`; si no valida (o no queda ningún transporte utilizable) no escribe nada y dice por qué. Luego pide confirmar con «hoy → nuevo» (secretos tapados): `y`/Enter guarda, `b` vuelve a editar, Esc cancela.
-- Guarda solo `[apprise]`: el resto de `config.toml` y sus comentarios se conservan, la escritura es atómica (root, `0600`) y, si el archivo no existe, lo crea. La clave y las URLs se excluyen entre sí: al cambiar de modo se quita la otra.
-- `t` envía un aviso de prueba, igual que `pxu notify-test` (muestra «enviando…», y luego OK o el error con código 5, sin volcar secretos).
-- Con `--read-only` la edición y la prueba se rechazan: la prueba sale por red, así que cuenta como acción.
+- `N` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots.
+- With Enter it validates the entire resulting config with the same code as `pxu config check`; if it doesn't validate (or no usable transport remains) it writes nothing and says why. Then it asks for confirmation with "today → new" (secrets hidden): `y`/Enter saves, `b` goes back to editing, Esc cancels.
+- It saves only `[apprise]`: the rest of `config.toml` and its comments are preserved, the write is atomic (root, `0600`) and, if the file doesn't exist, it creates it. The key and the URLs are mutually exclusive: changing mode removes the other.
+- `t` sends a test notification, the same as `pxu notify-test` (shows "sending…", then OK or the error with code 5, without dumping secrets).
+- With `--read-only`, editing and testing are rejected: the test goes out over the network, so it counts as an action.
 
-Todas las claves y sus valores por defecto están en [`docs/ARCHITECTURE.md` §5](docs/ARCHITECTURE.md).
+All keys and their default values are in [`docs/ARCHITECTURE.md` §5](docs/ARCHITECTURE.md).
 
-## Backups y vuelta atrás
+## Backups and rollback
 
-- En modo `auto`, `pxu` pregunta a Proxmox si el CT admite snapshots. Si no los admite, hace un `vzdump` en `[backup] storage`.
-- Si el upgrade o la verificación fallan, restaura el CT con `pct rollback` o con `pct restore … --force --storage <storage del rootfs>`, lo enciende y borra el backup.
-- Si la vuelta atrás falla o el upgrade se pasa de tiempo, el backup **se conserva**, la corrida se detiene y se muestra el comando para restaurar a mano.
-- **El backup cubre solo el rootfs.** Los bind mounts (`mpN` hacia `/mnt/pve/...`) no entran en vzdump ni en la vuelta atrás.
-- `pxu` solo borra los backups de su propio registro (`/var/lib/pxu/backups.json`), y cada comando de escritura está atado al CT que se está actualizando.
+- In `auto` mode, `pxu` asks Proxmox whether the CT supports snapshots. If it doesn't, it makes a `vzdump` in `[backup] storage`.
+- If the upgrade or the verification fails, it restores the CT with `pct rollback` or with `pct restore … --force --storage <rootfs storage>`, starts it and deletes the backup.
+- If the rollback fails or the upgrade runs over its time limit, the backup **is kept**, the run stops and the command to restore by hand is shown.
+- **The backup covers only the rootfs.** Bind mounts (`mpN` to `/mnt/pve/...`) are not included in vzdump or in the rollback.
+- `pxu` only deletes the backups in its own registry (`/var/lib/pxu/backups.json`), and each write command is tied to the CT being updated.
 
-## Ejecución programada
+## Scheduled run
 
-`install.sh --timer` instala y activa `pxu-update.timer` (diario 04:30, con retraso aleatorio de 15 min). Las unidades están en `dist/systemd/` y puedes editarlas antes de instalar:
+`install.sh --timer` installs and enables `pxu-update.timer` (daily 04:30, with a random delay of 15 min). The units are in `dist/systemd/` and you can edit them before installing:
 
 ```sh
 cat dist/systemd/pxu-update.service dist/systemd/pxu-update.timer
 ```
 
-El `-` delante del `check` hace que su código 10 ("hay actualizaciones") no detenga la unidad.
+The `-` in front of `check` makes its code 10 ("there are updates") not stop the unit.
 
-### Desde la TUI
+### From the TUI
 
-Sin tocar `systemctl` a mano: en la vista Config (`g`) se ve el estado real del timer (unidades instaladas, activado, horario efectivo y próxima ejecución), y `S` (también desde la lista o el detalle) abre el diálogo del horario:
+Without touching `systemctl` by hand: in the Config view (`g`) you see the real state of the timer (installed units, enabled, effective schedule and next run), and `S` (also from the list or the detail) opens the schedule dialog:
 
-- Activar o desactivar el timer, y elegir diario a HH:MM, lunes a viernes a HH:MM, semanal (día + HH:MM) o un `OnCalendar` libre. Las horas son las del servidor.
-- Antes de confirmar valida el horario con `systemd-analyze calendar` y muestra la próxima ejecución; si no valida, no escribe nada.
-- Tras la confirmación («hoy: … → nuevo»; `y`/Enter guarda, Esc cancela) escribe el drop-in `/etc/systemd/system/pxu-update.timer.d/schedule.conf` (`OnCalendar=` vacío + el nuevo, 0644, atómico), hace `systemctl daemon-reload` y `enable --now` o `disable --now`.
-- Si las unidades no están instaladas, el diálogo las instala (son las mismas de `dist/systemd/`, embebidas en el binario).
-- Avisa si no hay `config.toml` o ningún CT con auto-update (el update no haría nada) o si la config es inválida (fallaría con código 2). Rechazado en solo lectura forzado.
+- Enable or disable the timer, and choose daily at HH:MM, Monday to Friday at HH:MM, weekly (day + HH:MM) or a free-form `OnCalendar`. Times are the server's.
+- Before confirming it validates the schedule with `systemd-analyze calendar` and shows the next run; if it doesn't validate, it writes nothing.
+- After confirmation ("today: … → new"; `y`/Enter saves, Esc cancels) it writes the drop-in `/etc/systemd/system/pxu-update.timer.d/schedule.conf` (empty `OnCalendar=` + the new one, 0644, atomic), runs `systemctl daemon-reload` and `enable --now` or `disable --now`.
+- If the units are not installed, the dialog installs them (they are the same as in `dist/systemd/`, embedded in the binary).
+- It warns if there is no `config.toml` or no CT with auto-update (the update would do nothing) or if the config is invalid (it would fail with code 2). Rejected in forced read-only mode.
 
-`install.sh --uninstall` borra también ese drop-in.
+`install.sh --uninstall` also deletes that drop-in.
 
-## Estructura
+## Structure
 
 ```
-src/main.rs           punto de entrada: elige CLI o TUI
-src/cli/              comandos (list, check, update, config) y parseo de argumentos
-src/tui/              interfaz de terminal
-src/share/            lo que usan ambos:
-  config.rs, model.rs, state.rs, notify.rs, fmt.rs, labels.rs   configuración, modelos, estado, Apprise, textos
-  proxmox/            lectura de CT/VM y de los .conf de Proxmox
-  update/             chequeo, backups y actualización con vuelta atrás
-  host/               Host real y de solo lectura
-  mock/               Proxmox simulado en memoria (solo tests / --features mock)
-install.sh            instalador para el host Proxmox
-dist/systemd/         pxu-update.service y .timer
-tests/snapshots/      capturas de la TUI
-docs/             ARCHITECTURE.md, DESIGN.md (TUI) y SECURITY-REVIEW.md
+src/main.rs           entry point: chooses CLI or TUI
+src/cli/              commands (list, check, update, config) and argument parsing
+src/tui/              terminal interface
+src/share/            what both use:
+  config.rs, model.rs, state.rs, notify.rs, fmt.rs, labels.rs   configuration, models, state, Apprise, texts
+  proxmox/            reading of CT/VM and of Proxmox .conf files
+  update/             check, backups and update with rollback
+  host/               real and read-only Host
+  mock/               in-memory simulated Proxmox (tests / --features mock only)
+install.sh            installer for the Proxmox host
+dist/systemd/         pxu-update.service and .timer
+tests/snapshots/      TUI captures
+docs/             ARCHITECTURE.md, DESIGN.md (TUI) and SECURITY-REVIEW.md
 ```
 
-## Documentos de diseño
+## Design documents
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): arquitectura y todas las claves de configuración con sus valores por defecto (§5).
-- [`docs/DESIGN.md`](docs/DESIGN.md): diseño de la TUI.
-- [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md): revisión de seguridad.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): architecture and all configuration keys with their default values (§5).
+- [`docs/DESIGN.md`](docs/DESIGN.md): TUI design.
+- [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md): security review.
 
-## Licencia
+## License
 
 MIT

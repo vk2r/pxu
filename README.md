@@ -1,165 +1,167 @@
+English | [Español](README.es.md)
+
 # pxu
 
-pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede hacerlo cada día de forma automática y avisarte por Fluxer u otro servicio compatible con Apprise.
+pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which containers have updates, updates them one at a time and, if something goes wrong, **rolls back by itself** to the previous state. It can do this every day automatically and notify you through Fluxer or any other Apprise-compatible service.
 
-Se usa desde una pantalla en la terminal (la «TUI») y no deja nada corriendo en segundo plano.
+You use it from a screen in the terminal (the "TUI") and it leaves nothing running in the background.
 
-> Versión 0.1, en desarrollo. Probado en Proxmox VE 9.2.
+> Version 0.1, in development. Tested on Proxmox VE 9.2.
 
-## Requisitos
+## Requirements
 
-- Un servidor Proxmox VE, y acceso como `root`.
-- Para los avisos (opcional): un servidor [Apprise API](https://github.com/caronc/apprise-api) accesible desde Proxmox.
+- A Proxmox VE server, and `root` access.
+- For notifications (optional): an [Apprise API](https://github.com/caronc/apprise-api) server reachable from Proxmox.
 
-## Instalación
+## Installation
 
-Por ahora no hay descargas publicadas: el programa se compila en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) y se copia a Proxmox.
+There are no published downloads yet: the program is built on another machine (with Rust, via [mise](https://mise.jdx.dev)) and copied to Proxmox.
 
-1. En el equipo con la carpeta del proyecto:
-
-```sh
-mise install        # una sola vez
-mise run build      # deja el programa en target/release/pxu
-```
-
-2. Copia al Proxmox, como prefieras, `target/release/pxu`, `install.sh` y la carpeta `dist/` (que `install.sh` busca junto a sí mismo). Por ejemplo, con `scp`:
+1. On the machine that has the project folder:
 
 ```sh
-ssh root@tu-proxmox mkdir -p /root/pxu-install
-scp target/release/pxu install.sh root@tu-proxmox:/root/pxu-install/
-scp -r dist root@tu-proxmox:/root/pxu-install/
+mise install        # only once
+mise run build      # leaves the program at target/release/pxu
 ```
 
-3. En el Proxmox, como root:
+2. Copy `target/release/pxu`, `install.sh` and the `dist/` folder (which `install.sh` looks for next to itself) to Proxmox, however you prefer. For example, with `scp`:
+
+```sh
+ssh root@your-proxmox mkdir -p /root/pxu-install
+scp target/release/pxu install.sh root@your-proxmox:/root/pxu-install/
+scp -r dist root@your-proxmox:/root/pxu-install/
+```
+
+3. On Proxmox, as root:
 
 ```sh
 cd /root/pxu-install && sh install.sh ./pxu --timer
 ```
 
-Sin `--timer` se instala solo el programa, sin la corrida diaria.
+Without `--timer`, only the program is installed, without the daily run.
 
-Se puede repetir sin problema y nunca sobrescribe tu configuración. Si el equipo no parece Proxmox, el instalador se niega; `--force` lo obliga.
+It can be repeated safely and never overwrites your configuration. If the machine doesn't look like Proxmox, the installer refuses; `--force` overrides that.
 
-Quedan instalados:
-- el programa en `/usr/local/bin/pxu`
-- tu configuración en `/etc/pxu/config.toml` (la creas tú; ver abajo)
-- los logs en `/var/log/pxu/`
+What gets installed:
+- the program at `/usr/local/bin/pxu`
+- your configuration at `/etc/pxu/config.toml` (you create it; see below)
+- the logs in `/var/log/pxu/`
 
-## Primer uso
+## First use
 
-En el servidor, como root:
+On the server, as root:
 
 ```sh
 pxu
 ```
 
-Sin archivo de configuración, pxu funciona en **solo lectura**: puedes ver tus contenedores y comprobar actualizaciones, pero no actualiza nada. Para empezar a actualizar, marca un contenedor con `a` (ver abajo); pxu crea el archivo por ti, tras pedirte confirmación.
+Without a configuration file, pxu works in **read-only** mode: you can see your containers and check for updates, but it doesn't update anything. To start updating, mark a container with `a` (see below); pxu creates the file for you, after asking for confirmation.
 
-## La pantalla (TUI)
+## The screen (TUI)
 
-Pulsa `?` en cualquier pantalla para ver la ayuda con las teclas. Todo se maneja con el teclado.
+Press `?` on any screen to see the help with the keys. Everything is controlled with the keyboard.
 
-### Lista de contenedores
+### Container list
 
-| Tecla | Qué hace |
+| Key | What it does |
 |---|---|
-| `↑` `↓` (o `j` `k`) | moverte |
-| `/` | buscar |
-| `s` | ordenar |
-| `1` `2` `3` `4` | filtrar: todos / encendidos / apagados / con actualizaciones |
-| `Enter` | ver el detalle de un contenedor |
-| `c` | comprobar si hay actualizaciones |
-| `C` | refrescar los índices del contenedor y comprobar (pide confirmación) |
-| `u` | actualizar (pide confirmación) |
-| `a` | activar o desactivar la actualización automática de ese contenedor |
-| `o` | elegir columnas |
-| `r` | recargar la lista |
-| `g` | pantalla Config |
-| `l` | pantalla Logs |
-| `S` | horario de la corrida diaria |
-| `q` | salir |
+| `↑` `↓` (or `j` `k`) | move around |
+| `/` | search |
+| `s` | sort |
+| `1` `2` `3` `4` | filter: all / running / stopped / with updates |
+| `Enter` | see a container's details |
+| `c` | check for updates |
+| `C` | refresh the container's indexes and check (asks for confirmation) |
+| `u` | update (asks for confirmation) |
+| `a` | turn automatic updates on or off for that container |
+| `o` | choose columns |
+| `r` | reload the list |
+| `g` | Config screen |
+| `l` | Logs screen |
+| `S` | daily run schedule |
+| `q` | quit |
 
-### Actualizar (`u`)
+### Update (`u`)
 
-Aparece una lista con los contenedores a actualizar. Con `↑↓` te mueves, con la barra espaciadora quitas o pones uno, y con `Enter` empieza. Mientras corre, `x` o `Esc` pide cancelar. Una vez dentro puedes desplazarte por el progreso con `↑↓`, `PgUp`/`PgDn`, y `f` vuelve al final.
+A list of the containers to update appears. Use `↑↓` to move, the space bar to remove or add one, and `Enter` to start. While it runs, `x` or `Esc` asks to cancel. Once inside, you can scroll through the progress with `↑↓`, `PgUp`/`PgDn`, and `f` jumps back to the end.
 
-Qué hace con cada contenedor, de uno en uno: copia de seguridad temporal → prueba en seco → actualización → verificación. Si falla, restaura la copia sola. Solo se actualizan los contenedores a los que hiciste una comprobación (`c`) hace menos de una hora.
+What it does with each container, one at a time: temporary backup → dry run → update → verification. If it fails, it restores the backup by itself. Only containers you checked (`c`) less than an hour ago are updated.
 
 ### Config (`g`)
 
-Muestra el estado de la corrida diaria, de los avisos y de la retención de logs. Desde aquí:
+Shows the status of the daily run, the notifications and the log retention. From here:
 
-| Tecla | Qué hace |
+| Key | What it does |
 |---|---|
-| `S` | cambiar el horario de la corrida diaria |
-| `N` | configurar los avisos (Apprise) |
-| `t` | enviar un aviso de prueba |
-| `L` | cambiar cuántos días se guardan los logs |
-| `l` | abrir Logs |
-| `Esc` | volver |
+| `S` | change the daily run schedule |
+| `N` | set up notifications (Apprise) |
+| `t` | send a test notification |
+| `L` | change how many days logs are kept |
+| `l` | open Logs |
+| `Esc` | go back |
 
 ### Logs (`l`)
 
-Lista cada corrida con su fecha, duración, resultado y tamaño, de la más nueva a la más vieja. `↑↓` para elegir, `Enter` para abrirla, `Esc` para volver. Dentro de un log: `↑↓`, `PgUp`/`PgDn` para desplazarte, `g`/`G` para ir al principio o al final, `n`/`p` para el log siguiente o anterior.
+Lists each run with its date, duration, result and size, from newest to oldest. `↑↓` to choose, `Enter` to open it, `Esc` to go back. Inside a log: `↑↓`, `PgUp`/`PgDn` to scroll, `g`/`G` to jump to the start or the end, `n`/`p` for the next or previous log.
 
-Resultados que verás: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` si algo falló, `⛔ STOPPED` si la corrida se detuvo, y `⛔ INCOMPLETE` si se cortó de golpe (por ejemplo, el servidor se apagó a mitad). Un log de una corrida que sigue en marcha también aparece como `⛔ INCOMPLETE` hasta que termina.
+Results you will see: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` if something failed, `⛔ STOPPED` if the run was stopped, and `⛔ INCOMPLETE` if it was cut off abruptly (for example, the server shut down mid-run). The log of a run that is still in progress also appears as `⛔ INCOMPLETE` until it finishes.
 
-Al principio la lista dice «no run logs yet» hasta que haya una corrida.
+At first the list says "no run logs yet" until there has been a run.
 
-## Corrida diaria automática
+## Automatic daily run
 
-Con `--timer` en la instalación, pxu comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados con `auto_update` (tecla `a`) o con la etiqueta `autoupdate` de Proxmox.
+With `--timer` at install time, pxu checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked with `auto_update` (key `a`) or with the Proxmox `autoupdate` tag.
 
-Para cambiar la hora, o desactivarla: tecla `S` en la lista o en Config. Eliges diario, lunes a viernes o semanal, ves la próxima ejecución y confirmas.
+To change the time, or turn it off: key `S` in the list or in Config. You choose daily, Monday to Friday, or weekly, see the next run and confirm.
 
-Si el contenedor está apagado, por defecto se omite.
+If the container is stopped, it is skipped by default.
 
-## Avisos (Fluxer / Apprise)
+## Notifications (Fluxer / Apprise)
 
-Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor (resultado, paquetes, tiempo y qué hacer a mano si hace falta). El título resume la corrida, por ejemplo `pxu: update run on server — 3 ok, 1 warn`.
+Each run ends with **a single notification**: a table with the server first and then each container (result, packages, time and what to do by hand if needed). The title summarizes the run, for example `pxu: update run on server — 3 ok, 1 warn`.
 
-Para configurarlo: en Config (`g`) pulsa `N`, escribe la dirección de tu Apprise API y la clave, y confirma. Con `t` envías un aviso de prueba. Las claves nunca se muestran en pantalla.
+To set it up: in Config (`g`) press `N`, type the address of your Apprise API and the key, and confirm. With `t` you send a test notification. Keys are never shown on screen.
 
-## Log de cada corrida y retención
+## Log of each run and retention
 
-Cada corrida deja **un archivo de log** en `/var/log/pxu/run-AAAAMMDD-HHMM.log` (la hora del nombre es UTC), que se va escribiendo mientras corre. Ábrelo desde la pantalla Logs.
+Each run leaves **one log file** at `/var/log/pxu/run-YYYYMMDD-HHMM.log` (the time in the name is UTC), which is written as it runs. Open it from the Logs screen.
 
-Los logs se borran solos pasados **30 días**. Para cambiarlo, pulsa `L` en Config; `0` significa no borrar nunca.
+Logs are deleted automatically after **30 days**. To change this, press `L` in Config; `0` means never delete.
 
-## Copias de seguridad y vuelta atrás
+## Backups and rollback
 
-- Antes de actualizar un contenedor, pxu hace una copia temporal: una instantánea si el almacenamiento lo permite, si no una copia con vzdump.
-- Si la actualización o la verificación fallan, pxu restaura el contenedor, lo enciende y borra la copia.
-- Si la restauración falla o la actualización se pasa de tiempo, **la copia se conserva**, la corrida se detiene y el log y el aviso muestran el comando para restaurar a mano.
-- La copia cubre solo el disco principal del contenedor. Los discos montados desde fuera (`/mnt/pve/...`) no entran.
+- Before updating a container, pxu makes a temporary backup: a snapshot if the storage allows it, otherwise a vzdump copy.
+- If the update or the verification fails, pxu restores the container, starts it and deletes the backup.
+- If the restore fails or the update runs over its time limit, **the backup is kept**, the run stops, and the log and the notification show the command to restore by hand.
+- The backup covers only the container's main disk. Disks mounted from outside (`/mnt/pve/...`) are not included.
 
-## Actualizar pxu
+## Updating pxu
 
-Compila de nuevo con `mise run build`, copia otra vez los archivos y repite `sh install.sh ./pxu --timer` en el Proxmox. Tu configuración se conserva.
+Build again with `mise run build`, copy the files again and repeat `sh install.sh ./pxu --timer` on Proxmox. Your configuration is kept.
 
-## Desinstalar
+## Uninstall
 
-En el servidor, como root:
+On the server, as root:
 
 ```sh
-./install.sh --uninstall           # quita el programa y la corrida diaria; conserva configuración y logs
-./install.sh --uninstall --purge   # además borra /etc/pxu, /var/lib/pxu y /var/log/pxu
+./install.sh --uninstall           # removes the program and the daily run; keeps configuration and logs
+./install.sh --uninstall --purge   # also deletes /etc/pxu, /var/lib/pxu and /var/log/pxu
 ```
 
-## Problemas comunes
+## Common problems
 
-- **«hay que ejecutarlo como root»** al instalar: ejecuta `install.sh` como root en el servidor.
-- **La TUI no deja actualizar y dice «read-only»** (solo lectura): falta `/etc/pxu/config.toml` o tiene errores. Marca un contenedor con `a`, o revisa el archivo con `pxu config check`. El archivo debe ser de root y con permisos `0600`.
-- **«este equipo no parece Proxmox»** al instalar: ejecútalo en el servidor Proxmox, o usa `--force`.
-- **No llegan avisos**: prueba con `t` en Config. Revisa la dirección de tu Apprise API.
-- **Un contenedor no se actualiza**: tiene que estar marcado con `a` (o con la etiqueta `autoupdate`), y haberlo comprobado con `c` hace menos de una hora.
-- **La lista de Logs está vacía**: aún no hubo ninguna corrida con esta versión. Los logs antiguos siguen en `/var/log/pxu` pero no aparecen en la lista.
-- **Un log dice `⛔ INCOMPLETE`**: la corrida se cortó (o sigue en marcha). El detalle está en el propio log.
+- **"hay que ejecutarlo como root"** (must be run as root) during install: run `install.sh` as root on the server.
+- **The TUI won't let you update and says "read-only"**: `/etc/pxu/config.toml` is missing or has errors. Mark a container with `a`, or check the file with `pxu config check`. The file must be owned by root with `0600` permissions.
+- **"este equipo no parece Proxmox"** (this machine doesn't look like Proxmox) during install: run it on the Proxmox server, or use `--force`.
+- **Notifications don't arrive**: test with `t` in Config. Check the address of your Apprise API.
+- **A container doesn't update**: it must be marked with `a` (or with the `autoupdate` tag), and you must have checked it with `c` less than an hour ago.
+- **The Logs list is empty**: there hasn't been a run with this version yet. Old logs are still in `/var/log/pxu` but don't appear in the list.
+- **A log says `⛔ INCOMPLETE`**: the run was cut off (or is still in progress). The details are in the log itself.
 
-## Desarrollo
+## Development
 
-Para compilar, probar o contribuir: [development.md](development.md).
+To build, test or contribute: [development.md](development.md).
 
-## Licencia
+## License
 
 MIT

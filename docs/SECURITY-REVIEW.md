@@ -1,76 +1,78 @@
+English | [Español](SECURITY-REVIEW.es.md)
+
 # SECURITY-REVIEW — `pxu`
 
-Estado de seguridad del código actual: superficie, modelo de amenazas y hallazgos con su estado. Cada estado está comprobado contra el código (archivo:línea o nombre del test). Las referencias de arquitectura están en [ARCHITECTURE.md](ARCHITECTURE.md) y las de interfaz en [DESIGN.md](DESIGN.md).
+Security status of the current code: attack surface, threat model and findings with their status. Each status has been checked against the code (file:line or test name). Architecture references are in [ARCHITECTURE.md](ARCHITECTURE.md) and interface references in [DESIGN.md](DESIGN.md).
 
-Estados: **corregido** (la causa ya no existe), **mitigado** (el riesgo se reduce pero queda un residuo descrito), **aceptado** (decisión consciente), **abierto** (sin corregir).
+Statuses: **fixed** (the cause no longer exists), **mitigated** (the risk is reduced but a described residue remains), **accepted** (a conscious decision), **open** (not fixed).
 
 ---
 
-## 1. Superficie y modelo de amenazas
+## 1. Surface and threat model
 
-**Qué corre y con qué privilegios.** `pxu` se ejecuta como root en el host Proxmox: a mano (TUI o CLI) o desde el timer systemd (`dist/systemd/pxu-update.service`: `pxu check --notify` y después `pxu update --yes`, con `Nice=10`, `IOSchedulingClass=idle`, `KillMode=mixed`). No hay daemon ni puerto de escucha. Un solo paquete: librería (`share/`) más CLI y TUI.
+**What runs and with what privileges.** `pxu` runs as root on the Proxmox host: by hand (TUI or CLI) or from the systemd timer (`dist/systemd/pxu-update.service`: `pxu check --notify` and then `pxu update --yes`, with `Nice=10`, `IOSchedulingClass=idle`, `KillMode=mixed`). There is no daemon and no listening port. A single package: library (`share/`) plus CLI and TUI.
 
-**Qué toca.**
+**What it touches.**
 
-| Zona | Qué hace | Cómo se limita |
+| Area | What it does | How it is limited |
 |---|---|---|
-| Lectura de PVE | Lee `/etc/pve/**.conf`, cgroups y pidfiles | Solo lectura de ficheros; nada de `pct list`/`qm list` |
-| Sondeo en CT | Un `sh -c` constante (`probe.sh`) por CT con `lxc-attach` | `ReadOnlyHost` valida el argv interior (`readonly.rs:86`); sin refresco no escribe |
-| Update de CT | Backup (snapshot/vzdump), upgrade, verificación y rollback | Opt-in explícito (`UpdateOptIn`, RAII) y escrituras atadas al CT en curso (`readonly.rs:120`) |
-| Update del host Proxmox | `apt-get full-upgrade` del host, copia de `/etc` a `/var/backups/pxu` y snapshot ZFS si la raíz es ZFS; no reinicia | Opt-in propio (`HostUpdateOptIn`) separado del de los CT; lista blanca exacta (`hostupdate.rs:74`, `:85`); a mano exige TTY, desatendido solo con `[update] host_auto = true` |
-| Driver NVIDIA | Descarga el `.run` de `download.nvidia.com`, comprueba su `sha256`, lo instala en el host y pone las librerías en los CT con `nvidia_auto` | Opt-ins `host_nvidia_auto` / `nvidia_auto` (apagados por defecto); permiso (`nvidia::Grant`) con versión, kernel y vmid concretos; solo sube dentro de la misma rama mayor; curl con `--proto =https` (`nvidia.rs:30`) |
-| Avisos | `curl --config -` (Apprise API) o CLI `apprise` | Configuración y secretos por stdin, nunca en argv; `proto` y `max-filesize` fijos (`notify.rs:163`) |
-| Estado propio | `/var/lib/pxu`, `/var/log/pxu` (logs de corrida), `/etc/pxu/config.toml` (desde la TUI), drop-in del timer | `own_state_path` (`readonly.rs:149`), escritura atómica con `O_EXCL\|O_NOFOLLOW` (`real.rs:158`), `write_config` y `apply_schedule` solo con su opt-in |
+| PVE reads | Reads `/etc/pve/**.conf`, cgroups and pidfiles | File reads only; no `pct list`/`qm list` |
+| CT probe | A constant `sh -c` (`probe.sh`) per CT via `lxc-attach` | `ReadOnlyHost` validates the inner argv (`readonly.rs:86`); without refresh it writes nothing |
+| CT update | Backup (snapshot/vzdump), upgrade, verification and rollback | Explicit opt-in (`UpdateOptIn`, RAII) and writes bound to the CT in progress (`readonly.rs:120`) |
+| Proxmox host update | Host `apt-get full-upgrade`, copy of `/etc` to `/var/backups/pxu` and ZFS snapshot if the root is ZFS; does not reboot | Its own opt-in (`HostUpdateOptIn`), separate from the CT one; exact allowlist (`hostupdate.rs:74`, `:85`); by hand it requires a TTY, unattended only with `[update] host_auto = true` |
+| NVIDIA driver | Downloads the `.run` from `download.nvidia.com`, checks its `sha256`, installs it on the host and puts the libraries into the CTs with `nvidia_auto` | Opt-ins `host_nvidia_auto` / `nvidia_auto` (off by default); a grant (`nvidia::Grant`) with a specific version, kernel and vmid; only upgrades within the same major branch; curl with `--proto =https` (`nvidia.rs:30`) |
+| Notifications | `curl --config -` (Apprise API) or the `apprise` CLI | Configuration and secrets via stdin, never in argv; fixed `proto` and `max-filesize` (`notify.rs:163`) |
+| Own state | `/var/lib/pxu`, `/var/log/pxu` (run logs), `/etc/pxu/config.toml` (from the TUI), timer drop-in | `own_state_path` (`readonly.rs:149`), atomic write with `O_EXCL\|O_NOFOLLOW` (`real.rs:158`), `write_config` and `apply_schedule` only with their opt-in |
 
-**Fronteras de confianza.**
+**Trust boundaries.**
 
-- **CT → host.** Toda salida de un CT es dato no confiable: se sanea con `fmt::clean` antes de mostrarla, registrarla o enviarla (H1).
-- **Config y registro → acciones.** `/etc/pxu/config.toml` decide qué se actualiza y guarda secretos: root y `0600` o no se usa (`config.rs:296`). `/var/lib/pxu/backups.json` decide qué backups son de `pxu` y se valida al cargar (M4).
-- **Usuarios locales sin privilegios.** Solo pueden afectar a los locks de `/run/lock` (L3). No hay entrada de datos suya hacia comandos de root.
-- **Red.** Solo salen `curl` hacia la Apprise API configurada y las descargas de NVIDIA, que solo se hacen con opt-in.
+- **CT → host.** All CT output is untrusted data: it is sanitized with `fmt::clean` before being displayed, logged or sent (H1).
+- **Config and registry → actions.** `/etc/pxu/config.toml` decides what gets updated and holds secrets: root and `0600` or it is not used (`config.rs:296`). `/var/lib/pxu/backups.json` decides which backups belong to `pxu` and is validated on load (M4).
+- **Unprivileged local users.** They can only affect the locks in `/run/lock` (L3). There is no data path from them into root commands.
+- **Network.** Only `curl` calls to the configured Apprise API and the NVIDIA downloads go out, and the latter only happen with opt-in.
 
-**Garantías de diseño** (probadas): sin `sh -c` en el host (todo `Command` con argv); el binario de producción no lleva `MockHost` (M2); ningún comando de escritura pasa sin opt-in (`without_the_opt_in_the_timer_never_touches_nvidia`, `host_writes_need_their_own_optin_and_ct_optin_is_not_enough`, `without_explicit_opt_in_nothing_can_be_written`, `check_path_is_read_only`); `pxu` no mata nunca `apt`/`dpkg` a mitad (H2, `no_kill_on_timeout` también en host y NVIDIA).
+**Design guarantees** (tested): no `sh -c` on the host (every `Command` uses argv); the production binary does not carry `MockHost` (M2); no write command passes without opt-in (`without_the_opt_in_the_timer_never_touches_nvidia`, `host_writes_need_their_own_optin_and_ct_optin_is_not_enough`, `without_explicit_opt_in_nothing_can_be_written`, `check_path_is_read_only`); `pxu` never kills `apt`/`dpkg` midway (H2, `no_kill_on_timeout` also on host and NVIDIA).
 
-**Límites conocidos.**
+**Known limits.**
 
-- Los comandos de `pct`, `vzdump`, `pvesm` y `lxc-attach` están probados con `MockHost`, no contra todos los tipos de storage de un Proxmox real.
-- La descarga de NVIDIA se verifica con el `sha256` que publica el mismo servidor de NVIDIA; no hay una firma independiente.
-- No se han revisado CVEs de dependencias con una herramienta automática. El árbol no tiene cliente HTTP ni TLS propios (solo `ratatui`, `crossterm`, `serde`, `toml`, `toml_edit`, `serde_json`, `lexopt`, `libc`; `Cargo.toml`).
+- The `pct`, `vzdump`, `pvesm` and `lxc-attach` commands are tested with `MockHost`, not against every storage type of a real Proxmox.
+- The NVIDIA download is verified with the `sha256` published by the same NVIDIA server; there is no independent signature.
+- Dependency CVEs have not been reviewed with an automated tool. The tree has no HTTP or TLS client of its own (only `ratatui`, `crossterm`, `serde`, `toml`, `toml_edit`, `serde_json`, `lexopt`, `libc`; `Cargo.toml`).
 
 ---
 
-## 2. Hallazgos
+## 2. Findings
 
-| ID | Sev. | Hallazgo | Estado | Prueba en el código |
+| ID | Sev. | Finding | Status | Evidence in the code |
 |---|---|---|---|---|
-| H1 | Alta | La salida de los CT se pintaba sin sanear: secuencias de escape en la TUI de root, en los logs y en los avisos | corregido | `fmt::clean` (`fmt.rs:17`) aplicado en `parse_probe` (`check.rs:52`), `CtResult::detail` (`check.rs:115`), `Ctx::say` (`update/mod.rs:276`), `trunc` (`fmt.rs:49`), informe y visor (`report.rs:32`, `runlog.rs:413`). Tests: `probe_output_cannot_carry_escape_sequences_into_the_ui`, test de `clean` en `fmt.rs:90` |
-| H2 | Alta | El timeout del upgrade mataba `apt-get`/`dpkg` a medias | corregido | `no_kill_on_timeout: true` en el upgrade (`update/mod.rs:658`), en el host (`hostupdate.rs:246`) y en NVIDIA (`nvidia.rs:278`); `real.rs:67` no manda señal en ese caso. Al vencer: CT fallido, backup `held`, corrida detenida. Tests: `upgrade_is_never_run_with_a_killing_timeout`, `upgrade_timeout_marks_ct_failed_and_stops_the_run`, `scenario_timeout_never_rolls_back_and_holds_the_backup` |
-| M1 | Media | Se ignoraba la reserva del lock de ProxMenux (contenido del fichero) y su marcador de chequeo inválido | corregido | `lock_ct` (`update/mod.rs:548-577`): fichero con contenido ⇒ skip, `proxmenux-lxc-check-invalid-<id>` ⇒ skip. Test: `proxmenux_reservation_and_invalid_marker_skip_the_ct`. Residuo: no interpreta el UPID; ante cualquier contenido omite el CT (falla en cerrado) |
-| M2 | Media | Un build `--features mock` podía pisar `target/release/pxu` | corregido | `compile_error!` si se compila release con `mock` (`main.rs:27-28`); el release sin la feature responde `this build has no mock support` y sale con 2 (`main.rs:21-22`); la tarea `mise run check` lo comprueba (`mise.toml`) |
-| M3 | Media | La TUI en `[RO]` permitía refrescar índices dentro de los CT | corregido | `read_only_refresh_blocked` (`tui/app.rs:1102-1106`). Test: `refresh_is_blocked_in_read_only_but_plain_check_still_works` (`tui/tests.rs:349`) |
-| M4 | Media | La lista de escritura de `update` no estaba atada al CT en curso y el registro de backups no se validaba | mitigado | Atado al CT: `host_cmd_is_update(argv, vmid)` (`readonly.rs:120`), `set_update_target` + `TargetScope` (`update/mod.rs:489,507`); `pvesm free` y `pct restore` exigen el vmid en el volid (`readonly.rs:111`). Registro: `entry_check` (`backup.rs:76`) descarta entradas que no cuadran. Tests: `update_writes_are_bound_to_the_ct_in_progress`, `tampered_registry_entries_are_dropped_and_never_reach_pvesm_free`. Residuo: al cargar no se comprueba dueño/modo de `backups.json`; lo protege el directorio `0700` de root (`real.rs:116`) |
-| M5 | Media | Tras un timeout en un CT que `pxu` arrancó, el `pct shutdown` podía cortar `dpkg` | corregido | `update/mod.rs:519-521`: con `hold` el CT queda encendido y se avisa. Test: `timeout_on_a_ct_started_by_pxu_never_shuts_it_down` |
-| L1 | Baja | `perm_problem` fallaba en abierto si `stat` fallaba | corregido | `config.rs:298-301` devuelve el problema (`cannot stat`). Test: `update_opt_in_is_revoked_on_every_exit` cubre la carga con `cannot stat` (`update/mod.rs:1192`) |
-| L2 | Baja | La comprobación de permisos seguía symlinks | mitigado | `file_meta` usa `symlink_metadata` y rechaza symlinks (`real.rs:281-286`). Residuo: no se comprueba que `/etc/pxu` sea de root sin escritura de grupo/otros |
-| L3 | Baja | Locks en `/run/lock` (1777) abiertos con `create` y sin `O_NOFOLLOW` | mitigado | `O_NOFOLLOW` en `try_lock` (`real.rs:269`) y `lock_path_ok` (`readonly.rs:141`). Residuo: los locks siguen en `/run/lock` (`real.rs:15`); un usuario local podría pre-crear y mantener `pxu-*.lock` y provocar «busy» (DoS sin corrupción) |
-| L4 | Baja | Cualquier error al abrir el lock de ProxMenux se trataba como «nada que respetar» | corregido | Solo `NotFound` pasa; otro error omite el CT (`update/mod.rs:569-572`) |
-| L5 | Baja | El lock por CT se soltaba antes de devolver el CT a `stopped` | corregido | `_locks` vive hasta después del `pct shutdown` (`update/mod.rs:508-518`) |
-| L6 | Baja | `curl --config -` está clasificado de solo lectura aunque su stdin podría escribir ficheros | mitigado | La config generada escapa comillas y saltos (`curl_q`, `notify.rs:125`) y fija `proto = "=http,https"` y `max-filesize = 65536` (`notify.rs:163`). Test: `curl_config_has_no_file_writing_options_and_resists_injection`. Residuo: la clasificación sigue siendo por argv (`readonly.rs:59`), así que depende de que el único productor sea `curl_config` |
-| L7 | Baja | La lista de lectura incluía comandos que `pxu` nunca ejecuta (`pvesh get` libre, `lxc-info`, `pct config`, `qm`…) | corregido | `host_cmd_is_read_only` (`readonly.rs:57-72`) solo admite `curl --config -`, `apprise` con forma fija, `pvesh get …/feature` validado, las lecturas de `hostcheck`/`PVE_VERSION` y el índice de NVIDIA |
-| L8 | Baja | El opt-in de escritura no se retiraba en todas las salidas | corregido | Guards RAII `UpdateOptIn`, `HostUpdateOptIn`, `NvidiaOptIn` con `Drop` (`host/mod.rs:158-203`), usados en CLI (`cli/mod.rs:332,453,497`) y TUI (`tui/mod.rs:90,120`). Test: `update_opt_in_is_revoked_on_every_exit`. El release compila con `panic = "abort"` (`Cargo.toml`) |
-| L9 | Baja | `/var/lib/pxu` y `outbox/` se creaban `0755` | corregido | `create_private_dirs` con `0o700` (`real.rs:111`), `check_private_dir` antes de escribir (`real.rs:116`) e `install -d -m 0700` en `install.sh:88` |
-| L10 | Baja | `state.json` es lectura-modificación-escritura sin lock | abierto | `check::persist` (`check.rs:301`) y `persist_info` (`update/mod.rs:999`) cargan, mutan y guardan sin cerrojo, y `pxu check` no toma lock. Dos `pxu check` simultáneos (o uno durante un update) pueden perder resultados del otro; la escritura es atómica, así que no hay corrupción |
-| L11 | Baja | Los logs guardaban la salida cruda del CT, con posibles credenciales en URLs | corregido | `mask_url_creds(clean(l))` en `Ctx::say` (`update/mod.rs:276`; `fmt.rs:28`); los ficheros se escriben `0600`. Test: `masks_url_credentials` (`fmt.rs:101`) |
-| L12 | Baja | Un registro de backups corrupto se descartaba en silencio y la siguiente escritura lo borraba | corregido | `Registry::load` (`backup.rs:97-115`): ausente ⇒ vacío; ilegible o corrupto ⇒ copia `backups.json.corrupt-<epoch>`, aviso y sin poda en esa corrida. Test: `corrupt_registry_is_quarantined_and_nothing_is_pruned` |
-| L13 | Baja | `write_atomic` abría el `.tmp` sin `O_NOFOLLOW` ni comprobaba el directorio | corregido | `write_atomic` (`real.rs:158-170`): directorio real, del usuario actual y `0700`; `.tmp` con `O_EXCL\|O_NOFOLLOW`. Test: `write_atomic_refuses_unsafe_state_dirs_and_symlinked_tmp` |
-| L14 | Baja | `--storage` de vzdump validado con un `safe_name` laxo y `numeric` aceptaba `0` | corregido | La rama de `vzdump` exige `is_pve_id(st)` (`readonly.rs:130`, `backup.rs:195`); `numeric` rechaza `0` y ceros a la izquierda (`readonly.rs:97`). Test: `backup_commands_have_exact_shapes_even_with_the_update_opt_in` |
-| L15 | Baja | El opt-in de `update` desbloqueaba el sondeo con refresco de cualquier CT | corregido | En `guest_exec` el opt-in solo vale si el vmid es el CT en curso (`readonly.rs:168`); la TUI bloquea `c`/`C`/`R` mientras corre un update (`tui/app.rs:1107-1110`). Test: `tui/tests.rs:349` |
+| H1 | High | CT output was rendered unsanitized: escape sequences in the root TUI, in logs and in notifications | fixed | `fmt::clean` (`fmt.rs:17`) applied in `parse_probe` (`check.rs:52`), `CtResult::detail` (`check.rs:115`), `Ctx::say` (`update/mod.rs:276`), `trunc` (`fmt.rs:49`), report and viewer (`report.rs:32`, `runlog.rs:413`). Tests: `probe_output_cannot_carry_escape_sequences_into_the_ui`, test of `clean` in `fmt.rs:90` |
+| H2 | High | The upgrade timeout killed `apt-get`/`dpkg` midway | fixed | `no_kill_on_timeout: true` in the upgrade (`update/mod.rs:658`), in the host (`hostupdate.rs:246`) and in NVIDIA (`nvidia.rs:278`); `real.rs:67` sends no signal in that case. On expiry: CT failed, backup `held`, run stopped. Tests: `upgrade_is_never_run_with_a_killing_timeout`, `upgrade_timeout_marks_ct_failed_and_stops_the_run`, `scenario_timeout_never_rolls_back_and_holds_the_backup` |
+| M1 | Medium | ProxMenux's lock reservation (file contents) and its invalid-check marker were ignored | fixed | `lock_ct` (`update/mod.rs:548-577`): file with contents ⇒ skip, `proxmenux-lxc-check-invalid-<id>` ⇒ skip. Test: `proxmenux_reservation_and_invalid_marker_skip_the_ct`. Residue: it does not interpret the UPID; with any contents it skips the CT (fails closed) |
+| M2 | Medium | A `--features mock` build could overwrite `target/release/pxu` | fixed | `compile_error!` if release is built with `mock` (`main.rs:27-28`); the release without the feature answers `this build has no mock support` and exits with 2 (`main.rs:21-22`); the `mise run check` task verifies it (`mise.toml`) |
+| M3 | Medium | The TUI in `[RO]` allowed refreshing indexes inside the CTs | fixed | `read_only_refresh_blocked` (`tui/app.rs:1102-1106`). Test: `refresh_is_blocked_in_read_only_but_plain_check_still_works` (`tui/tests.rs:349`) |
+| M4 | Medium | The `update` write list was not bound to the CT in progress and the backup registry was not validated | mitigated | Bound to the CT: `host_cmd_is_update(argv, vmid)` (`readonly.rs:120`), `set_update_target` + `TargetScope` (`update/mod.rs:489,507`); `pvesm free` and `pct restore` require the vmid in the volid (`readonly.rs:111`). Registry: `entry_check` (`backup.rs:76`) discards entries that do not match. Tests: `update_writes_are_bound_to_the_ct_in_progress`, `tampered_registry_entries_are_dropped_and_never_reach_pvesm_free`. Residue: owner/mode of `backups.json` is not checked on load; it is protected by the root-owned `0700` directory (`real.rs:116`) |
+| M5 | Medium | After a timeout on a CT that `pxu` started, `pct shutdown` could cut `dpkg` | fixed | `update/mod.rs:519-521`: with `hold` the CT stays on and a warning is shown. Test: `timeout_on_a_ct_started_by_pxu_never_shuts_it_down` |
+| L1 | Low | `perm_problem` failed open if `stat` failed | fixed | `config.rs:298-301` returns the problem (`cannot stat`). Test: `update_opt_in_is_revoked_on_every_exit` covers loading with `cannot stat` (`update/mod.rs:1192`) |
+| L2 | Low | The permission check followed symlinks | mitigated | `file_meta` uses `symlink_metadata` and rejects symlinks (`real.rs:281-286`). Residue: it is not checked that `/etc/pxu` is owned by root without group/other write |
+| L3 | Low | Locks in `/run/lock` (1777) opened with `create` and without `O_NOFOLLOW` | mitigated | `O_NOFOLLOW` in `try_lock` (`real.rs:269`) and `lock_path_ok` (`readonly.rs:141`). Residue: the locks are still in `/run/lock` (`real.rs:15`); a local user could pre-create and hold `pxu-*.lock` and cause "busy" (DoS without corruption) |
+| L4 | Low | Any error opening ProxMenux's lock was treated as "nothing to respect" | fixed | Only `NotFound` passes; any other error skips the CT (`update/mod.rs:569-572`) |
+| L5 | Low | The per-CT lock was released before returning the CT to `stopped` | fixed | `_locks` lives until after `pct shutdown` (`update/mod.rs:508-518`) |
+| L6 | Low | `curl --config -` is classified as read-only although its stdin could write files | mitigated | The generated config escapes quotes and line breaks (`curl_q`, `notify.rs:125`) and sets `proto = "=http,https"` and `max-filesize = 65536` (`notify.rs:163`). Test: `curl_config_has_no_file_writing_options_and_resists_injection`. Residue: the classification is still by argv (`readonly.rs:59`), so it depends on `curl_config` being the only producer |
+| L7 | Low | The read list included commands that `pxu` never runs (free-form `pvesh get`, `lxc-info`, `pct config`, `qm`…) | fixed | `host_cmd_is_read_only` (`readonly.rs:57-72`) only admits `curl --config -`, `apprise` with a fixed shape, validated `pvesh get …/feature`, the `hostcheck`/`PVE_VERSION` reads and the NVIDIA index |
+| L8 | Low | The write opt-in was not withdrawn on every exit | fixed | RAII guards `UpdateOptIn`, `HostUpdateOptIn`, `NvidiaOptIn` with `Drop` (`host/mod.rs:158-203`), used in the CLI (`cli/mod.rs:332,453,497`) and TUI (`tui/mod.rs:90,120`). Test: `update_opt_in_is_revoked_on_every_exit`. Release builds with `panic = "abort"` (`Cargo.toml`) |
+| L9 | Low | `/var/lib/pxu` and `outbox/` were created `0755` | fixed | `create_private_dirs` with `0o700` (`real.rs:111`), `check_private_dir` before writing (`real.rs:116`) and `install -d -m 0700` in `install.sh:88` |
+| L10 | Low | `state.json` is read-modify-write without a lock | open | `check::persist` (`check.rs:301`) and `persist_info` (`update/mod.rs:999`) load, mutate and save without a lock, and `pxu check` takes no lock. Two simultaneous `pxu check` runs (or one during an update) can lose each other's results; the write is atomic, so there is no corruption |
+| L11 | Low | Logs stored raw CT output, with possible credentials in URLs | fixed | `mask_url_creds(clean(l))` in `Ctx::say` (`update/mod.rs:276`; `fmt.rs:28`); files are written `0600`. Test: `masks_url_credentials` (`fmt.rs:101`) |
+| L12 | Low | A corrupt backup registry was silently discarded and the next write erased it | fixed | `Registry::load` (`backup.rs:97-115`): absent ⇒ empty; unreadable or corrupt ⇒ copy `backups.json.corrupt-<epoch>`, warning and no pruning in that run. Test: `corrupt_registry_is_quarantined_and_nothing_is_pruned` |
+| L13 | Low | `write_atomic` opened the `.tmp` without `O_NOFOLLOW` and did not check the directory | fixed | `write_atomic` (`real.rs:158-170`): real directory, owned by the current user and `0700`; `.tmp` with `O_EXCL\|O_NOFOLLOW`. Test: `write_atomic_refuses_unsafe_state_dirs_and_symlinked_tmp` |
+| L14 | Low | vzdump's `--storage` validated with a lax `safe_name` and `numeric` accepted `0` | fixed | The `vzdump` branch requires `is_pve_id(st)` (`readonly.rs:130`, `backup.rs:195`); `numeric` rejects `0` and leading zeros (`readonly.rs:97`). Test: `backup_commands_have_exact_shapes_even_with_the_update_opt_in` |
+| L15 | Low | The `update` opt-in unlocked the refresh probe of any CT | fixed | In `guest_exec` the opt-in only applies if the vmid is the CT in progress (`readonly.rs:168`); the TUI blocks `c`/`C`/`R` while an update runs (`tui/app.rs:1107-1110`). Test: `tui/tests.rs:349` |
 
 ---
 
-## 3. Riesgos que quedan
+## 3. Remaining risks
 
-- **L10 (abierto).** `state.json` puede perder el resultado de un chequeo si dos procesos `pxu` lo escriben a la vez; no corrompe el fichero ni da acceso a nada. Se mitigaría con un lock alrededor de `persist`.
-- **L3 (mitigado).** Un usuario local sin privilegios puede dejar un `pxu-*.lock` ocupado en `/run/lock` y hacer que las actualizaciones respondan «busy». Un directorio de locks propio de root lo cerraría.
-- **L2 y M4 (mitigados).** Dependen de que `/etc/pxu` y `/var/lib/pxu` sean de root sin acceso de otros; la instalación los crea `0700`, pero solo `/var/lib/pxu` se vuelve a comprobar al escribir.
-- **L6 (mitigado).** Si en el futuro otro código generara un config de `curl` con datos no escapados, la lista de lectura no lo detectaría.
+- **L10 (open).** `state.json` can lose the result of a check if two `pxu` processes write it at the same time; it does not corrupt the file or give access to anything. A lock around `persist` would mitigate it.
+- **L3 (mitigated).** An unprivileged local user can leave a `pxu-*.lock` held in `/run/lock` and make updates answer "busy". A root-owned lock directory would close it.
+- **L2 and M4 (mitigated).** They depend on `/etc/pxu` and `/var/lib/pxu` being owned by root with no access for others; the installer creates them `0700`, but only `/var/lib/pxu` is re-checked on write.
+- **L6 (mitigated).** If other code were to generate a `curl` config with unescaped data in the future, the read list would not detect it.
