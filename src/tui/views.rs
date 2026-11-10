@@ -1091,64 +1091,159 @@ fn draw_detail(f: &mut Frame, app: &App, th: &Theme, area: Rect, id: u32) {
 
 // ---------------------------------------------------------------- ayuda
 
-fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
-    let rows: Vec<&str> = match app.view {
+type HelpSection = (&'static str, Vec<(&'static str, &'static str)>);
+
+fn help_sections(app: &App) -> Vec<HelpSection> {
+    let keys = |t: &'static str, r: Vec<(&'static str, &'static str)>| -> Vec<HelpSection> { vec![(t, r)] };
+    match app.view {
         View::List => vec![
-            "↑↓ / j k     move cursor",
-            "PgUp PgDn    move 10 · Home End first/last",
-            "1 2 3 4      filter All / Running / Stopped / Updates",
-            "/            search name, tag or id (Esc clears)",
-            "s            cycle sort: vmid · name · updates · ram",
-            "r            reload /etc/pve confs (files only)",
-            "Enter        guest detail",
-            "c            check LXC updates (visible CTs, or all): refreshes the package indexes",
-            "C            read-only check: does not refresh the indexes",
-            "v            show the last check result",
-            "o            choose visible columns (Space toggles; saved in config.toml)",
-            "u            update the visible CTs with updates (asks first)",
-            "             temporary backup, verify, auto-rollback on failure",
-            "a            toggle scheduled auto-update of the CT (asks first)",
-            "             host row: host_auto · host/GPU CT: NVIDIA driver window",
-            "b            toggle the backup before updating the CT (asks first)",
-            "g / S        config view + timer state · S change schedule (asks first)",
-            "l            run logs (one file per update run)",
-            "?            this help · q quit",
-            "Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)",
+            ("Keys", vec![
+                ("↑↓ / j k", "move cursor"),
+                ("PgUp PgDn", "move 10 · Home End first/last"),
+                ("1 2 3 4", "filter All / Running / Stopped / Updates"),
+                ("/", "search name, tag or id (Esc clears)"),
+                ("s", "cycle sort: vmid · name · updates · ram"),
+                ("r", "reload /etc/pve confs (files only)"),
+                ("Enter", "guest detail"),
+                ("c", "check LXC updates (visible CTs, or all): refreshes the package indexes"),
+                ("C", "read-only check: does not refresh the indexes"),
+                ("v", "show the last check result"),
+                ("o", "choose visible columns (Space toggles; saved in config.toml)"),
+                ("u", "update the visible CTs with updates (asks first): temporary backup, verify, auto-rollback on failure"),
+                ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU CT: NVIDIA driver window"),
+                ("b", "toggle the backup before updating the CT (asks first)"),
+                ("g / S", "config view + timer state · S change schedule (asks first)"),
+                ("l", "run logs (one file per update run)"),
+                ("?", "this help · q quit"),
+            ]),
+            ("Columns", vec![
+                ("UPD", "updates available, all/security"),
+                ("—", "no data (run c)"),
+                ("AUTO", "yes = scheduled auto-update"),
+                ("BACKUP", "backup before updating (o chooses columns)"),
+            ]),
         ],
-        View::Logs if app.logs.viewer.is_some() => vec!["↑↓ / j k     scroll · PgUp PgDn / Space page · mouse wheel", "g / G        top / end", "n / p        next (older) / previous (newer) log", "q / Esc      back to the list of logs", "?            this help"],
-        View::Logs => vec!["↑↓ / j k     select · PgUp PgDn 10 · g / G first / last", "Enter        open the log (or double click)", "Esc / l      back to the main screen", "?            this help · q quit"],
-        View::Storage if app.storage.detail.is_some() => vec!["↑↓ / j k     scroll · PgUp PgDn page · g / G top / end", "r            refresh", "Esc / q      back to the guests", "?            this help"],
+        View::Logs if app.logs.viewer.is_some() => keys("Keys", vec![("↑↓ / j k", "scroll · PgUp PgDn / Space page · mouse wheel"), ("g / G", "top / end"), ("n / p", "next (older) / previous (newer) log"), ("q / Esc", "back to the list of logs"), ("?", "this help")]),
+        View::Logs => keys("Keys", vec![("↑↓ / j k", "select · PgUp PgDn 10 · g / G first / last"), ("Enter", "open the log (or double click)"), ("Esc / l", "back to the main screen"), ("?", "this help · q quit")]),
+        View::Storage if app.storage.detail.is_some() => keys("Keys", vec![("↑↓ / j k", "scroll · PgUp PgDn page · g / G top / end"), ("r", "refresh"), ("Esc / q", "back to the guests"), ("?", "this help")]),
         View::Storage => vec![
-            "↑↓ / j k     select · PgUp PgDn page · g / G first / last",
-            "Enter / d    space detail: disks, snapshots, backups, pre-update mode",
-            "S            cycle sort: used · alloc · % · last backup (oldest first) · id",
-            "f            show only guests with alerts",
-            "r            refresh (reads again; the screen keeps working)",
-            "Esc / q      back to the main screen",
-            "Used / % = what Proxmox shows (disk / maxdisk of the guest), not the thin-pool blocks.",
-            "— = stopped guest or not readable. * in SNAPS = has pxu-* snapshots. Last backup ignores pxu pre-update leftovers.",
-            "The detail shows thin-pool blocks and suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu never runs it).",
-            "Alerts: no backup · last backup > 30 d · disk >= 98% · thin pool overcommitted or >= 90% full",
-            "        pxu backup target without room for the biggest CT (like the pre-vzdump check)",
-            "Dedup (PBS) = logical size of the backups / space used in the datastore",
-            "?            this help",
+            ("Keys", vec![
+                ("↑↓ / j k", "select · PgUp PgDn page · g / G first / last"),
+                ("Enter / d", "space detail: disks, snapshots, backups, pre-update mode"),
+                ("S", "cycle sort: used · alloc · % · last backup (oldest first) · id"),
+                ("f", "show only guests with alerts"),
+                ("r", "refresh (reads again; the screen keeps working)"),
+                ("Esc / q", "back to the main screen"),
+                ("?", "this help"),
+            ]),
+            ("Columns", vec![
+                ("USED / %", "what Proxmox shows (disk / maxdisk of the guest), not the thin-pool blocks"),
+                ("—", "stopped guest or not readable"),
+                ("* in SNAPS", "has pxu-* snapshots"),
+                ("LAST BACKUP", "ignores pxu pre-update leftovers"),
+                ("Dedup (PBS)", "logical size of the backups / space used in the datastore"),
+            ]),
+            ("Alerts", vec![
+                ("no backup", "the guest has no backup"),
+                ("last backup > 30 d", "the newest backup is older than 30 days"),
+                ("disk >= 98%", "the guest disk is nearly full"),
+                ("thin pool", "overcommitted or >= 90% full"),
+                ("backup target", "pxu backup target without room for the biggest CT (like the pre-vzdump check)"),
+            ]),
+            ("Detail", vec![("thin-pool blocks", "suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu never runs it)")]),
         ],
-        View::Config => vec!["S            change the update schedule (asks first; server time)", "L            change log_retention_days (0 = never delete)", "l            run logs", "N            edit [apprise] (api_url, key or urls, events; secrets masked; asks first)", "t            send a test notice (like `pxu notify-test`)", "r            re-read the timer state", "Esc          back to the list", "?            this help · q quit"],
-        View::Update => vec!["x / Esc      cancel: finish the CT in progress, then stop", "↑↓ PgUp PgDn scroll the log · f / End follow · Home oldest", "Esc          back to the list (when the run is over)", "?            this help"],
-        View::Check => vec!["↑↓ / j k     select CT (packages shown below)", "u            update the CTs with updates (asks first)", "c            re-check (refreshes the indexes) · C / R read-only check", "Enter        guest detail", "Esc          cancel a running check, then back", "?            this help · q quit"],
-        View::Detail(_) => vec!["u            update this CT (asks first)", "a            toggle this CT's scheduled auto-update (asks first)",
-            "             host: host_auto · host/GPU CT: NVIDIA driver window", "b            toggle this CT's backup before updating (asks first)", "g / S        config view · change the update schedule", "↑↓ / j k     scroll", "PgUp PgDn    scroll 10 · Home top", "r            reload confs", "Esc          back to the list", "?            this help · q quit"],
-    };
+        View::Config => keys("Keys", vec![("S", "change the update schedule (asks first; server time)"), ("L", "change log_retention_days (0 = never delete)"), ("l", "run logs"), ("N", "edit [apprise] (api_url, key or urls, events; secrets masked; asks first)"), ("t", "send a test notice (like `pxu notify-test`)"), ("r", "re-read the timer state"), ("Esc", "back to the list"), ("?", "this help · q quit")]),
+        View::Update => keys("Keys", vec![("x / Esc", "cancel: finish the CT in progress, then stop"), ("↑↓ PgUp PgDn", "scroll the log · f / End follow · Home oldest"), ("Esc", "back to the list (when the run is over)"), ("?", "this help")]),
+        View::Check => keys("Keys", vec![("↑↓ / j k", "select CT (packages shown below)"), ("u", "update the CTs with updates (asks first)"), ("c", "re-check (refreshes the indexes) · C / R read-only check"), ("Enter", "guest detail"), ("Esc", "cancel a running check, then back"), ("?", "this help · q quit")]),
+        View::Detail(_) => keys("Keys", vec![
+            ("u", "update this CT (asks first)"),
+            ("a", "toggle this CT's scheduled auto-update (asks first); host: host_auto · host/GPU CT: NVIDIA driver window"),
+            ("b", "toggle this CT's backup before updating (asks first)"),
+            ("g / S", "config view · change the update schedule"),
+            ("↑↓ / j k", "scroll"),
+            ("PgUp PgDn", "scroll 10 · Home top"),
+            ("r", "reload confs"),
+            ("Esc", "back to the list"),
+            ("?", "this help · q quit"),
+        ]),
+    }
+}
+
+/// Ayuda como tabla de dos columnas (clave | descripción). La descripción se envuelve bajo su columna.
+fn help_lines(sections: &[HelpSection], w: usize, th: &Theme, blank_between: bool) -> Vec<Line<'static>> {
+    let kw = sections.iter().flat_map(|(_, r)| r.iter()).map(|(k, _)| k.chars().count()).max().unwrap_or(0) + 2;
+    let dw = w.saturating_sub(kw + 1).max(8);
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for (i, (title, rows)) in sections.iter().enumerate() {
+        if i > 0 && blank_between {
+            out.push(Line::default());
+        }
+        out.push(rule_spans(&[(title, th.accent().add_modifier(Modifier::BOLD))], w, th));
+        for (k, d) in rows {
+            let wrapped = wrap_words(d, dw);
+            for (j, part) in wrapped.into_iter().enumerate() {
+                let key = if j == 0 { format!(" {k:<kw$}") } else { " ".repeat(kw + 1) };
+                out.push(Line::from(vec![Span::styled(key, th.accent()), Span::raw(part)]));
+            }
+        }
+    }
+    out
+}
+
+/// Parte `s` en filas de hasta `w` columnas, solo en espacios (una palabra más larga que `w` se parte).
+fn wrap_words(s: &str, w: usize) -> Vec<String> {
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in s.split(' ') {
+        let mut word = word.to_string();
+        loop {
+            let (cl, wl) = (cur.chars().count(), word.chars().count());
+            if cur.is_empty() && wl <= w {
+                cur = word;
+                break;
+            } else if !cur.is_empty() && cl + 1 + wl <= w {
+                cur.push(' ');
+                cur.push_str(&word);
+                break;
+            } else if !cur.is_empty() {
+                rows.push(std::mem::take(&mut cur));
+            } else {
+                rows.push(word.chars().take(w).collect());
+                word = word.chars().skip(w).collect();
+            }
+        }
+    }
+    if !cur.is_empty() || rows.is_empty() {
+        rows.push(cur);
+    }
+    rows
+}
+
+fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+    let sections = help_sections(app);
     let w = 100.min(area.width.saturating_sub(4));
-    let h = rows.len() as u16 + 4;
+    let inner_w = (w as usize).saturating_sub(2);
+    let foot = if app.read_only { "read-only: no command that writes can run" } else { "writes only after you confirm (an update run or an auto-update change)" };
+    let max_h = area.height as usize;
+    // Marco 2 + pie 2 (línea en blanco + texto); si no cabe con separadores, sin ellos; si aún no, scroll.
+    let mut body = help_lines(&sections, inner_w, th, true);
+    if body.len() + 4 > max_h {
+        body = help_lines(&sections, inner_w, th, false);
+    }
+    let room = max_h.saturating_sub(4);
+    let max_scroll = body.len().saturating_sub(room);
+    let scroll = app.help_scroll.get().min(max_scroll);
+    app.help_scroll.set(scroll);
+    let shown = body.len().min(room);
+    let h = (shown + 4) as u16;
     let r = Rect { x: (area.width - w) / 2, y: (area.height.saturating_sub(h)) / 2, width: w, height: h.min(area.height) };
     f.render_widget(Clear, r);
-    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" help · any key closes ", th.bold())).border_style(th.accent());
+    let title = if max_scroll > 0 { " help · ↑↓ scroll · any other key closes " } else { " help · any key closes " };
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(title, th.bold())).border_style(th.accent());
     let inner = blk.inner(r);
     f.render_widget(blk, r);
-    let mut lines: Vec<Line> = rows.into_iter().map(|s| Line::raw(trunc(s, inner.width as usize))).collect();
+    let mut lines: Vec<Line> = body.into_iter().skip(scroll).take(shown).collect();
     lines.push(Line::default());
-    let foot = if app.read_only { "read-only: no command that writes can run" } else { "writes only after you confirm (an update run or an auto-update change)" };
     lines.push(Line::styled(foot, th.muted()).alignment(Alignment::Left));
     f.render_widget(Paragraph::new(lines), inner);
 }

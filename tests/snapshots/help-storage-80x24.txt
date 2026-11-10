@@ -1,0 +1,24 @@
+px┌ help · ↑↓ scroll · any other key closes ─────────────────────────────────┐16
+no│── Keys ──────────────────────────────────────────────────────────────────│
+──│ ↑↓ / j k            select · PgUp PgDn page · g / G first / last         │──
+ l│ Enter / d           space detail: disks, snapshots, backups, pre-update  │ …
+ l│                     mode                                                 │
+ l│ S                   cycle sort: used · alloc · % · last backup (oldest   │
+ r│                     first) · id                                          │G
+──│ f                   show only guests with alerts                         │──
+  │ r                   refresh (reads again; the screen keeps working)      │
+! │ Esc / q             back to the main screen                              │
+  │ ?                   this help                                            │
+  │── Columns ───────────────────────────────────────────────────────────────│
+  │ USED / %            what Proxmox shows (disk / maxdisk of the guest), not│
+  │                     the thin-pool blocks                                 │
+  │ —                   stopped guest or not readable                        │
+  │ * in SNAPS          has pxu-* snapshots                                  │
+  │ LAST BACKUP         ignores pxu pre-update leftovers                     │
+  │ Dedup (PBS)         logical size of the backups / space used in the      │
+ a│                     datastore                                            │3)
+──│── Alerts ────────────────────────────────────────────────────────────────│──
+1 │ no backup           the guest has no backup                              │
+──│                                                                          │──
+[↑│read-only: no command that writes can run                                 │p
+[q└──────────────────────────────────────────────────────────────────────────┘

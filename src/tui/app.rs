@@ -362,6 +362,8 @@ pub struct App {
     pub view: View,
     pub detail_scroll: usize,
     pub help: bool,
+    /// Desplazamiento de la ayuda; la vista lo recorta al máximo real.
+    pub help_scroll: std::cell::Cell<usize>,
     pub read_only: bool,
     /// Solo lectura forzado (`--read-only`): ni siquiera `a` puede tocar la config.
     pub forced_ro: bool,
@@ -419,6 +421,7 @@ impl App {
             view: View::List,
             detail_scroll: 0,
             help: false,
+            help_scroll: std::cell::Cell::new(0),
             read_only,
             forced_ro: false,
             ro_reason: None,
@@ -573,10 +576,28 @@ impl App {
         }
         if self.help {
             // El diálogo captura todo salvo q (ARCHITECTURE/DESIGN §10).
+            let sc = self.help_scroll.get();
             return match k.code {
                 KeyCode::Char('q') => Action::Quit,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.help_scroll.set(sc.saturating_sub(1));
+                    Action::None
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.help_scroll.set(sc + 1);
+                    Action::None
+                }
+                KeyCode::PageUp => {
+                    self.help_scroll.set(sc.saturating_sub(10));
+                    Action::None
+                }
+                KeyCode::PageDown => {
+                    self.help_scroll.set(sc + 10);
+                    Action::None
+                }
                 _ => {
                     self.help = false;
+                    self.help_scroll.set(0);
                     Action::None
                 }
             };

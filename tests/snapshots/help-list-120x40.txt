@@ -3,36 +3,36 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
    ID  TYPE  NAME    STATE    OS               CPU  RAM         DISK     UPD all/sec  BACKUP  AUTO
 > 100  LXC   ct-100  run      debian 12          —  0.2/0.5 GB  2.0 GB   0            yes     —
-  101  LXC   ct-101  run      debian 12          —  0.3/1.0 GB  3.0 GB   4/1          yes     —
-  102  LXC   ct-102  run      debian 12          —  0.2/0.5 GB  4.0 GB   2/1          yes     —
-  103  LXC   ct-103  run      debian 12          —  0.3/1.0 GB  25.0 GB  7/2          yes     yes
-  104  LXC┌ help · any key closes ───────────────────────────────────────────────────────────────────────────┐
-  105  LXC│↑↓ / j k     move cursor                                                                          │
-  106  LXC│PgUp PgDn    move 10 · Home End first/last                                                        │
-  107  LXC│1 2 3 4      filter All / Running / Stopped / Updates                                             │
-  108  LXC│/            search name, tag or id (Esc clears)                                                  │
-  109  LXC│s            cycle sort: vmid · name · updates · ram                                              │
-  110  LXC│r            reload /etc/pve confs (files only)                                                   │
-  111  LXC│Enter        guest detail                                                                         │
-  112  LXC│c            check LXC updates (visible CTs, or all): refreshes the package indexes               │
-  113  LXC│C            read-only check: does not refresh the indexes                                        │
-  114  LXC│v            show the last check result                                                           │
-  115  LXC│o            choose visible columns (Space toggles; saved in config.toml)                         │
-  116  LXC│u            update the visible CTs with updates (asks first)                                     │
-  117  LXC│             temporary backup, verify, auto-rollback on failure                                   │
-  118  LXC│a            toggle scheduled auto-update of the CT (asks first)                                  │
-  119  LXC│             host row: host_auto · host/GPU CT: NVIDIA driver window                              │
-  120  LXC│b            toggle the backup before updating the CT (asks first)                                │
-  121  LXC│g / S        config view + timer state · S change schedule (asks first)                           │
-  122  LXC│l            run logs (one file per update run)                                                   │
-  123  LXC│?            this help · q quit                                                                   │
-  124  LXC│Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)                          │
-  125  LXC│                                                                                                  │
-  126  LXC│read-only: no command that writes can run                                                         │
-  127  LXC└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-  128  LXC   ct-128  run      ubuntu 24.04       —  0.2/0.5 GB  5.0 GB   0            yes     —
-  129  LXC   ct-129  run      debian 12          —  0.3/1.0 GB  6.0 GB   0            yes     —
-▼ 7 below (next 130 ct-130)   — filter: all · 37 guests
+  101  LXC┌ help · any key closes ───────────────────────────────────────────────────────────────────────────┐
+  102  LXC│── Keys ──────────────────────────────────────────────────────────────────────────────────────────│
+  103  LXC│ ↑↓ / j k   move cursor                                                                           │
+  104  LXC│ PgUp PgDn  move 10 · Home End first/last                                                         │
+  105  LXC│ 1 2 3 4    filter All / Running / Stopped / Updates                                              │
+  106  LXC│ /          search name, tag or id (Esc clears)                                                   │
+  107  LXC│ s          cycle sort: vmid · name · updates · ram                                               │
+  108  LXC│ r          reload /etc/pve confs (files only)                                                    │
+  109  LXC│ Enter      guest detail                                                                          │
+  110  LXC│ c          check LXC updates (visible CTs, or all): refreshes the package indexes                │
+  111  LXC│ C          read-only check: does not refresh the indexes                                         │
+  112  LXC│ v          show the last check result                                                            │
+  113  LXC│ o          choose visible columns (Space toggles; saved in config.toml)                          │
+  114  LXC│ u          update the visible CTs with updates (asks first): temporary backup, verify,           │
+  115  LXC│            auto-rollback on failure                                                              │
+  116  LXC│ a          toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU   │
+  117  LXC│            CT: NVIDIA driver window                                                              │
+  118  LXC│ b          toggle the backup before updating the CT (asks first)                                 │
+  119  LXC│ g / S      config view + timer state · S change schedule (asks first)                            │
+  120  LXC│ l          run logs (one file per update run)                                                    │
+  121  LXC│ ?          this help · q quit                                                                    │
+  122  LXC│                                                                                                  │
+  123  LXC│── Columns ───────────────────────────────────────────────────────────────────────────────────────│
+  124  LXC│ UPD        updates available, all/security                                                       │
+  125  LXC│ —          no data (run c)                                                                       │
+  126  LXC│ AUTO       yes = scheduled auto-update                                                           │
+  127  LXC│ BACKUP     backup before updating (o chooses columns)                                            │
+  128  LXC│                                                                                                  │
+  129  LXC│read-only: no command that writes can run                                                         │
+▼ 7 below └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

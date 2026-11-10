@@ -1,0 +1,40 @@
+pxu · storage [RO] [MOCK]                                                                                          00:16
+node server · 4 storages · 37 guests
+── Storages ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ local           dir     [███░░░░░░░░░]  20.5G/100G  21%  2 bk · 2.4G · pxu pre-update target · tmpl 127M
+ local-lvm       lvmthin [██████░░░░░░] 18.6G/40.0G  46%  alloc 25.0G (63%)
+ local-zfs┌ help · any key closes ───────────────────────────────────────────────────────────────────────────┐
+ remote-ba│── Keys ──────────────────────────────────────────────────────────────────────────────────────────│
+── Guests │ ↑↓ / j k            select · PgUp PgDn page · g / G first / last                                 │──────────
+   ID NAME│ Enter / d           space detail: disks, snapshots, backups, pre-update mode                     │
+! 133 ct-1│ S                   cycle sort: used · alloc · % · last backup (oldest first) · id               │
+  114 ct-1│ f                   show only guests with alerts                                                 │
+  134 ct-1│ r                   refresh (reads again; the screen keeps working)                              │
+  128 ct-1│ Esc / q             back to the main screen                                                      │
+  113 ct-1│ ?                   this help                                                                    │
+  104 ct-1│                                                                                                  │
+  107 ct-1│── Columns ───────────────────────────────────────────────────────────────────────────────────────│
+  124 ct-1│ USED / %            what Proxmox shows (disk / maxdisk of the guest), not the thin-pool blocks   │
+  127 ct-1│ —                   stopped guest or not readable                                                │
+  112 ct-1│ * in SNAPS          has pxu-* snapshots                                                          │
+  103 ct-1│ LAST BACKUP         ignores pxu pre-update leftovers                                             │
+  109 ct-1│ Dedup (PBS)         logical size of the backups / space used in the datastore                    │
+  121 ct-1│                                                                                                  │
+  106 ct-1│── Alerts ────────────────────────────────────────────────────────────────────────────────────────│
+  131 ct-1│ no backup           the guest has no backup                                                      │
+  132 ct-1│ last backup > 30 d  the newest backup is older than 30 days                                      │
+  123 ct-1│ disk >= 98%         the guest disk is nearly full                                                │
+  126 ct-1│ thin pool           overcommitted or >= 90% full                                                 │
+  129 ct-1│ backup target       pxu backup target without room for the biggest CT (like the pre-vzdump check)│
+  102 ct-1│                                                                                                  │
+  111 ct-1│── Detail ────────────────────────────────────────────────────────────────────────────────────────│
+  108 ct-1│ thin-pool blocks    suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu │
+  135 ct-1│                     never runs it)                                                               │
+  120 ct-1│                                                                                                  │
+  105 ct-1│read-only: no command that writes can run                                                         │
+  122 ct-1└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ alerts · no backup: 1 (100) · backup > 30 d: 2 (101,133) · disk >= 98%: 1 (133)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 / 37
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [Enter] detail  [S] sort  [f] filter (alerts)  [r] refresh  [?] help  [q] back

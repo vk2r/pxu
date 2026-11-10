@@ -55,6 +55,18 @@ fn render(a: &App, w: u16, h: u16, color: bool) -> (String, Terminal<TestBackend
     (out, t)
 }
 
+/// Solo lo que hay dentro del marco de la ayuda (sin la pantalla de debajo).
+fn help_popup(out: &str) -> String {
+    out.lines()
+        .filter_map(|l| {
+            let a = l.find(['│', '┌', '└'])?;
+            let b = l.rfind(['│', '┐', '┘'])?;
+            Some(l[a..b].to_string() + "│")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn check_snapshot(name: &str, actual: &str) {
     let path = format!("{}/tests/snapshots/{name}.txt", env!("CARGO_MANIFEST_DIR"));
     if std::env::var_os("PXU_UPDATE_SNAPSHOTS").is_some() {
@@ -143,6 +155,9 @@ fn help_overlay_and_back() {
     let mut a = app("basic-37");
     press(&mut a, "?");
     snap("help-list", &a);
+    let (out, _) = render(&a, 120, 40, true);
+    let pop = help_popup(&out);
+    assert!(!pop.contains('…') && pop.contains("── Keys") && pop.contains("── Columns"), "{out}");
     a.on_key(key(KeyCode::Char('x')));
     assert!(!a.help);
     a.on_key(key(KeyCode::Enter));
@@ -2061,8 +2076,37 @@ fn storage_keys_sort_filter_and_back() {
     // ayuda propia
     let mut a = storage_app();
     press(&mut a, "?");
-    let (out, _) = render(&a, 120, 40, true);
-    assert!(out.contains("cycle sort: used") && out.contains("Dedup (PBS)"), "{out}");
+    for (w, h) in [(120, 40), (80, 24)] {
+        let (out, t) = render(&a, w, h, true);
+        assert!(!help_popup(&out).contains('…'), "{out}");
+        // todas las descripciones presentes tras unir las líneas envueltas
+        let flat: String = help_popup(&out).lines().map(|l| l.trim_matches(|c| c == '│' || c == ' ')).collect::<Vec<_>>().join(" ");
+        let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+        if h == 40 {
+            for d in ["cycle sort: used · alloc · % · last backup (oldest first) · id", "what Proxmox shows (disk / maxdisk of the guest), not the thin-pool blocks", "suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu never runs it)", "ignores pxu pre-update leftovers", "logical size of the backups / space used in the datastore", "pxu backup target without room for the biggest CT (like the pre-vzdump check)"] {
+                assert!(flat.contains(d), "missing {d:?} in {out}");
+            }
+            // continuaciones alineadas con la columna de descripción
+            let lines: Vec<&str> = out.lines().collect();
+            let pop = help_popup(&out);
+            let pl: Vec<&str> = pop.lines().collect();
+            let i = pl.iter().position(|l| l.starts_with("│ thin-pool blocks")).unwrap();
+            let col = pl[i].find("suggests").unwrap_or_else(|| panic!("{:?}\n{pop}", pl[i]));
+            assert!(pl[i + 1][..col].chars().all(|c| c == ' ' || c == '│') && !pl[i + 1][col..].starts_with(' '), "{out}");
+            let i = lines.iter().position(|l| l.contains("│ thin-pool blocks")).unwrap();
+            // claves y títulos en accent
+            let buf = t.backend().buffer();
+            let (x, y) = (lines[i].chars().position(|c| c == '│').unwrap() as u16 + 2, i as u16);
+            assert_eq!(buf[(x, y)].fg, ratatui::style::Color::Cyan);
+            let j = lines.iter().position(|l| l.contains("── Alerts")).unwrap();
+            let x = lines[j].chars().position(|c| c == 'A').unwrap() as u16;
+            assert_eq!(buf[(x, j as u16)].fg, ratatui::style::Color::Cyan);
+        }
+        if h == 24 {
+            assert!(out.contains("any other key closes"), "{out}");
+        }
+    }
+    snap("help-storage", &a);
 }
 
 #[test]
