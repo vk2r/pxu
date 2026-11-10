@@ -7,7 +7,7 @@ pub mod views;
 #[cfg(test)]
 mod tests;
 
-use app::{Action, App, AutoModal, HostStop, NvidiaModal, UpdateModal, View};
+use app::{Action, App, AutoModal, BackupModal, HostStop, NvidiaModal, UpdateModal, View};
 use apprise::AppriseModal;
 use sched::SchedModal;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
@@ -157,6 +157,38 @@ fn ask_auto_modal(host: &dyn Host, app: &mut App, vmid: u32) {
     let why = cfg.auto_update_why(vmid, &g.tags);
     let m = AutoModal::new(g, &why, !host.exists(std::path::Path::new(config::CONFIG_PATH)));
     app.open_auto_modal(m);
+}
+
+/// `b`: lee la config (validada) y abre el modal con el modo de backup de hoy y el nuevo.
+fn ask_backup_modal(host: &dyn Host, app: &mut App, vmid: u32) {
+    let cfg = match Config::load_checked(host) {
+        Ok((c, _)) => c,
+        Err(e) => return app.status = format!("backup not changed: {e}"),
+    };
+    let Some(g) = app.guest(vmid) else { return };
+    let m = BackupModal::new(g, &cfg.backup_why(vmid), &cfg.backup.mode, !host.exists(std::path::Path::new(config::CONFIG_PATH)));
+    app.open_backup_modal(m);
+}
+
+/// Confirmado: escribe `[[ct]] backup` (validado y atómico), recarga la config y sale de solo lectura si correspondía.
+fn save_backup(host: &dyn Host, app: &mut App, vmid: u32, disabled: bool) {
+    let res = {
+        let _optin = pxu::share::host::ConfigEditOptIn::new(host);
+        config::write_backup(host, vmid, disabled)
+    };
+    if let Err(e) = res {
+        return app.status = format!("backup not saved: {e}");
+    }
+    let (ro, reason) = read_only_state(host);
+    app.read_only = app.forced_ro || ro;
+    app.ro_reason = reason;
+    app.set_inventory(guests::load(host), None);
+    let now = app.guest(vmid).map(|g| g.backup.clone()).unwrap_or_default();
+    app.status = if disabled {
+        format!("CT {vmid}: backup disabled — updates run WITHOUT backup or rollback (saved in {})", config::CONFIG_PATH)
+    } else {
+        format!("CT {vmid}: backup enabled, mode {now} from [backup] (saved in {})", config::CONFIG_PATH)
+    };
 }
 
 /// Confirmado: escribe el override (validado y atómico), recarga la config y sale de solo lectura si correspondía.
@@ -478,6 +510,8 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                         },
                         Action::SaveColumns(cols) => save_columns(host, &mut app, &cols),
                         Action::AskAutoUpdate { vmid } => ask_auto_modal(host, &mut app, vmid),
+                        Action::AskBackup { vmid } => ask_backup_modal(host, &mut app, vmid),
+                        Action::SetBackup { vmid, disabled } => save_backup(host, &mut app, vmid, disabled),
                         Action::SetAutoUpdate { vmid, value } => save_auto_update(host, &mut app, vmid, value),
                         Action::SetNvidiaAuto { vmid } => save_nvidia_auto(host, &mut app, vmid),
                         Action::OpenConfig => open_config(host, &mut app),
@@ -496,7 +530,7 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                         Action::HostRepair => rx = Some(spawn_host_update(sc, host, &ucancel, vec![], true)),
                         Action::CancelUpdate => {
                             ucancel.store(true, Ordering::SeqCst);
-                            app.status = "stopping after the CT in progress: dpkg is never killed".into();
+                            app.status = "cancelling: before the install the backup is aborted now; once installing, the CT in progress finishes (dpkg is never killed)".into();
                         }
                         Action::CancelCheck => {
                             cancel.store(true, Ordering::SeqCst);

@@ -44,7 +44,8 @@ fn result_text(o: Outcome) -> &'static str {
         Outcome::Ok => "✅ ok",
         Outcome::Warn => "⚠️ warn",
         Outcome::Failed => "❌ failed",
-        Outcome::Skipped | Outcome::Cancelled => "⏭️ skipped",
+        Outcome::Skipped => "⏭️ skipped",
+        Outcome::Cancelled => "⏭️ cancelled",
     }
 }
 
@@ -207,10 +208,6 @@ fn count(rows: &[Row], o: Outcome) -> usize {
     rows.iter().filter(|r| r.outcome == o).count()
 }
 
-fn skipped(rows: &[Row]) -> usize {
-    count(rows, Outcome::Skipped) + count(rows, Outcome::Cancelled)
-}
-
 fn nvidia_failed(rep: &RunReport) -> bool {
     rep.nvidia.as_ref().is_some_and(|n| n.outcome == Outcome::Failed || n.cts.iter().any(|c| c.outcome == Outcome::Failed))
 }
@@ -230,7 +227,7 @@ fn total_s(rep: &RunReport) -> u64 {
     rep.finished_at.saturating_sub(rep.started_at)
 }
 
-/// `3 ok`, `1 warn`, `2 failed`, `1 skipped`: solo los que no son 0 (si no queda ninguno, `0 ok`).
+/// `3 ok`, `1 warn`, `2 failed`, `1 cancelled`, `1 skipped`: solo los que no son 0 (si no queda ninguno, `0 ok`).
 fn count_parts(rows: &[Row]) -> Vec<String> {
     let mut parts = Vec::new();
     for (o, w) in [(Outcome::Ok, "ok"), (Outcome::Warn, "warn"), (Outcome::Failed, "failed")] {
@@ -238,8 +235,11 @@ fn count_parts(rows: &[Row]) -> Vec<String> {
             parts.push(format!("{} {w}", count(rows, o)));
         }
     }
-    if skipped(rows) > 0 {
-        parts.push(format!("{} skipped", skipped(rows)));
+    if count(rows, Outcome::Cancelled) > 0 {
+        parts.push(format!("{} cancelled", count(rows, Outcome::Cancelled)));
+    }
+    if count(rows, Outcome::Skipped) > 0 {
+        parts.push(format!("{} skipped", count(rows, Outcome::Skipped)));
     }
     if parts.is_empty() {
         parts.push("0 ok".into());
@@ -367,6 +367,16 @@ mod tests {
         assert!(b.ends_with("📄 Full report: /var/log/pxu/run-20261110-0612.log"), "{b}");
         assert!(b.starts_with("**Update run on server** · "), "{b}");
         assert!(!b.contains("REBOOT"));
+    }
+
+    #[test]
+    fn cancelled_is_labelled_cancelled_and_counted_apart_from_skipped() {
+        let r = rep(vec![ct(113, "cap", Outcome::Ok), ct(114, "web", Outcome::Cancelled), ct(115, "db", Outcome::Skipped)]);
+        let b = body(&r);
+        assert!(row_of(&b, "114 web").contains("⏭️ cancelled"), "{b}");
+        assert!(row_of(&b, "115 db").contains("⏭️ skipped"), "{b}");
+        assert!(title(&r).contains("1 ok, 1 cancelled"), "{}", title(&r));
+        assert!(result_line(&r).contains("1 cancelled · 1 skipped"), "{}", result_line(&r));
     }
 
     #[test]

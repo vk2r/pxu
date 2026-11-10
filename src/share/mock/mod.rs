@@ -21,6 +21,9 @@ pub struct Scenario {
     pub config_uid: Option<u32>,
     /// Estado inicial del timer `pxu-update` (por defecto: unidades sin instalar).
     pub timer: MockTimer,
+    /// Espacio libre / total del storage de backups (GB) que informa `pvesh get …/storage/<s>/status` (por defecto 800 / 1000).
+    pub storage_avail_gb: Option<f64>,
+    pub storage_total_gb: Option<f64>,
 }
 
 /// Timer simulado: lo que `timer_status` informa y `apply_schedule` cambia.
@@ -431,6 +434,11 @@ impl Host for MockHost {
             Ok(ExitInfo { code: 0 })
         };
         match argv {
+            ["pvesh", "get", path, ..] if path.contains("/storage/") => {
+                let g = |v: Option<f64>, d: f64| (v.unwrap_or(d) * (1u64 << 30) as f64) as u64;
+                let (avail, total) = (g(self.scenario.storage_avail_gb, 800.0), g(self.scenario.storage_total_gb, 1000.0));
+                ok(s, &format!("{{\"active\":1,\"avail\":{avail},\"total\":{total},\"used\":{},\"enabled\":1}}", total.saturating_sub(avail)))
+            }
             ["pvesh", "get", path, ..] => {
                 // /nodes/<nodo>/lxc/<id>/feature: `fail step = "snapshot"` = storage/bind mounts que no admiten snapshots
                 let id: u32 = path.split('/').nth(4).and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -440,12 +448,24 @@ impl Host for MockHost {
             ["pct", "snapshot", ..] | ["vzdump", ..] => {
                 // `snapshot`/`vzdump` fallan solo ese comando (p. ej. storage sin snapshots); `backup` falla los dos.
                 let own = if argv[0] == "vzdump" { "vzdump" } else { "snapshot" };
-                if let Some(f) = self.scenario.fail.iter().find(|f| f.vmid == vmid && (f.step == "backup" || f.step == own)) {
+                if let Some(f) = self.scenario.fail.iter().find(|f| f.vmid == vmid && (f.step == "backup" || f.step == own) && !(f.hang && own == "vzdump")) {
                     s.line(if own == "snapshot" { "ERROR: storage does not support snapshots" } else { "ERROR: vzdump failed" });
                     return Ok(ExitInfo { code: if f.exit == 0 { 1 } else { f.exit } });
                 }
                 if argv[0] == "vzdump" {
                     s.line(&format!("INFO: creating vzdump archive '/var/lib/vz/dump/vzdump-lxc-{vmid}-2026_11_08-03_16_00.tar.zst'"));
+                    // vzdump «largo»: espera a que lo cancelen y acaba como el real tras SIGTERM (Interrupted); sin `cancel` nunca acaba (TimedOut)
+                    if self.scenario.fail.iter().any(|f| f.vmid == vmid && f.step == "vzdump" && f.hang) {
+                        let c = o.cancel.ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "mock: vzdump hung"))?;
+                        for _ in 0..500 {
+                            if c.load(std::sync::atomic::Ordering::SeqCst) {
+                                s.line("ERROR: Backup of VM interrupted by signal");
+                                return Err(io::Error::new(io::ErrorKind::Interrupted, crate::share::host::CANCELLED_MSG));
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        return Err(io::Error::new(io::ErrorKind::TimedOut, "mock: vzdump never cancelled"));
+                    }
                 }
                 ok(s, "INFO: backup finished")
             }

@@ -36,5 +36,5 @@ detail · config (left) · state (right) · pxu checks and updates LXC only — 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 vm-203 · read from /etc/pve/nodes/server/qemu-server/203.conf
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [r] reload  [a] auto  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
+[↑↓/jk] scroll  [r] reload  [a] auto  [b] backup  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
 config is read from the .conf file (no processes); runtime metrics come from cgroup/pidfile only

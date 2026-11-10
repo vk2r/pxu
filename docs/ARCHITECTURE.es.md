@@ -130,7 +130,7 @@ Código: `src/share/update/mod.rs`. Es el único comando que escribe.
 4. **Cortacircuito:** `max_consecutive_failures` fallos seguidos (2) detienen la corrida (con `on_failure = "stop"`, el primer fallo). Los CT restantes quedan `skipped`.
 5. Al terminar: informe, log final y aviso único (§4.3).
 
-Cancelación (Ctrl-C/SIGINT/SIGTERM/SIGHUP en la CLI, diálogo en la TUI): la corrida termina el CT en curso y se detiene; los siguientes quedan `cancelled` y el exit es 30. `dpkg`/`apt` nunca se matan por una cancelación.
+Cancelación (Ctrl-C/SIGINT/SIGTERM/SIGHUP en la CLI, diálogo en la TUI): la corrida termina el CT en curso y se detiene; los siguientes quedan `cancelled` y el exit es 30. `dpkg`/`apt` nunca se matan por una cancelación. Excepción: antes de instalar (pre-checks/backup) la cancelación es inmediata: solo se señala a `vzdump` (SIGTERM; SIGKILL de su grupo a los 120 s), vzdump limpia su parcial/snapshot/lock (pxu lo verifica) y el CT queda `cancelled`, intacto.
 
 ### 3.3 Pasos por CT
 
@@ -145,6 +145,7 @@ Lock → Preflight → Backup → Refresh+Simulate → Upgrade → Verify → (R
    - `snapshot` / `vzdump`: solo esa vía, sin caída a la otra.
    - vzdump: `vzdump <vmid> --mode snapshot --storage <[backup] storage> --compress zstd --zstd 1 --ionice 7 --notes-template "pxu pre-update {{guestname}}"`. El storage del `rootfs:` se lee del `.conf` y se anota; sin él no se hace el backup (el rollback restauraría en `local`).
    - `none` (solo si se pone a mano): sin backup ni rollback; el log y `config check` lo avisan.
+   - **Chequeo de espacio:** antes de vzdump pxu estima el tamaño (usado del rootfs con `df -Pk /` + `mpN` no bind sin `backup=0` a su tamaño asignado, × `[backup] space_ratio`) y lo compara con el espacio libre del storage (`pvesh get /nodes/<nodo>/storage/<storage>/status`, solo lectura). Si quedaría menos de max(`min_free_gb`, 10 % del total), o el estado es ilegible, no se lanza vzdump: el CT falla con `backup skipped: needs ~X GB, storage S has Y GB free — CT untouched` y la corrida sigue con el siguiente CT (también en `pxu update` y en el auto-update).
    - **Si el backup falla, el CT no se toca** (fallo en el paso `backup`).
    - **Alcance:** el backup y el rollback cubren solo el rootfs; los bind mounts y `mpN` con `backup=0` no se guardan ni se revierten (`BACKUP_SCOPE_NOTE`, escrito en el log de cada CT).
 4. **Refresh + Simulate.** Sondeo con refresco (siempre necesario para actualizar). Con 0 paquetes el CT queda `skipped: already up to date after refresh` y el backup se descarta.
@@ -263,6 +264,8 @@ host_nvidia_auto = false      # …y el driver NVIDIA del host
 mode = "auto"                 # "auto" | "snapshot" | "vzdump" | "none"
 storage = "local"             # storage de PVE para los vzdump
 keep = 0                      # backups de pxu que se conservan por CT tras un update correcto (0 = temporales)
+space_ratio = 1.0              # estimated backup size / used size (zstd 1:1)
+min_free_gb = 5               # minimum spare GiB on the storage (or 10% of total, whichever is larger)
 
 [apprise]
 transport = "auto"            # "auto" | "api" | "cli" | "none"
@@ -275,7 +278,7 @@ timeout_s = 10
 retry_delays_ms = [2000, 8000]
 
 [ui]
-columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto"]   # opcionales: type os cpu ram disk tags gpu upd auto
+columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto"]   # opcionales: type os cpu ram disk tags gpu upd auto backup (tags y backup ocultas por defecto)
 
 # Overrides por CT (opcionales)
 [[ct]]
@@ -292,6 +295,8 @@ Prioridad de `auto_update`: `[[ct]] auto_update` > tag de `auto_update_tags` > n
 ### 5.1 Validación y edición desde la TUI
 
 La TUI también escribe esos overrides: `a` alterna el `auto_update` del CT seleccionado (modal con «hoy: … → nuevo estado»; `y`/Enter confirma, Esc cancela). Solo cambia la línea `auto_update` del bloque `[[ct]]` de ese vmid, o añade un bloque al final; comentarios y orden se conservan. Se valida el TOML resultante y se escribe de forma atómica (root, `0600`). Un override `false` gana sobre el tag del CT.
+
+`b` hace lo mismo con el backup previo al update: escribe `backup = "none"` en el bloque `[[ct]]` del CT (o añade el bloque), y al reactivarlo quita la clave `backup` para que el CT vuelva a seguir `[backup] mode` (el bloque se queda, con sus otras claves). El modal muestra el modo actual y de dónde viene (override `[[ct]]` o `[backup] mode`) y, al desactivar, avisa de que el update corre sin backup y sin rollback automático. El host (vmid 0) no se cambia aquí. La lista puede mostrar el modo efectivo en la columna opcional `BACKUP` (`auto`/`snap`/`vzdump`/`none`) y el detalle del CT también.
 
 `pxu update` y la TUI validan la config igual que `pxu config check` antes de usarla: valores desconocidos (`on_failure = "Stop"`, `apt_mode = "Upgrade"`) o claves mal escritas (`on_falure`) son errores. `pxu update` sale con código 2 y los muestra; la TUI arranca en solo lectura con el motivo en la barra de estado. Los avisos (warnings) no bloquean.
 

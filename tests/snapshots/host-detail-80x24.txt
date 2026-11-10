@@ -19,6 +19,6 @@ detail · host review · u installs host updates after a confirmation
 ────────────────────────────────────────────────────────────────────────────────
 server · u installs host updates after confirmation · a: scheduled run never to…
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [g] config
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [g] config
 [S] schedule  [Esc] back  [?] help  [q] quit
 host_auto OFF: timer skips the host; press a to include it

@@ -28,7 +28,7 @@ pub struct FileMeta {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ExecOpts {
+pub struct ExecOpts<'a> {
     pub nice: Option<i32>,
     pub ionice: Option<IoPrio>,
     pub timeout_s: Option<u64>,
@@ -38,7 +38,13 @@ pub struct ExecOpts {
     /// Bytes que se escriben en el stdin del proceso (secretos: nunca van en argv).
     pub stdin: Option<Vec<u8>>,
     pub env: Vec<(String, String)>,
+    /// Si pasa a `true` mientras corre, el host real manda SIGTERM al proceso (solo a él; sus hijos los limpia él mismo) y devuelve
+    /// `Interrupted`. Solo para órdenes que se pueden abortar limpiamente (vzdump): nunca para apt/dpkg.
+    pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
 }
+
+/// Texto del error de `ExecOpts::cancel` (el motor lo reconoce por el tipo `Interrupted`).
+pub const CANCELLED_MSG: &str = "interrupted: cancelled by user (SIGTERM sent)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExitInfo {

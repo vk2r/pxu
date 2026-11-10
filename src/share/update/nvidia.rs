@@ -270,11 +270,11 @@ impl NvidiaRun {
 
 // ---------------------------------------------------------------- motor
 
-fn quick(cfg: &Config) -> ExecOpts {
+fn quick(cfg: &Config) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(cfg.check.timeout_s), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 
-fn long() -> ExecOpts {
+fn long() -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(LONG_S), no_kill_on_timeout: true, env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 
@@ -336,7 +336,7 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, reboot_pending: bool,
     let libs_cts: Vec<u32> = libs.iter().map(|g| g.vmid).collect();
     let Some(grant) = Grant::new(&target, &kernel, flavor, stop_cts.clone(), libs_cts.clone()) else { return skip("skipped: could not build a safe command set (unexpected version or kernel name)") };
     let mut c = Cx {
-        cx: Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0 },
+        cx: Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0, cancel: None, interrupted: false, root_used_kb: None },
         started_at,
         from: Some(cur.clone()),
         to: Some(target.clone()),
@@ -482,7 +482,7 @@ fn host_install(c: &mut Cx, g: &Grant) -> Option<Res> {
     None
 }
 
-fn long_s(s: u64) -> ExecOpts {
+fn long_s(s: u64) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(s), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 

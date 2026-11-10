@@ -14,11 +14,11 @@ px┌ help · any key closes ─────────────────
   │             temporary backup, verify, auto-rollback on failure           │
   │a            toggle scheduled auto-update of the CT (asks first)          │
   │             host row: host_auto · host/GPU CT: NVIDIA driver window      │
+  │b            toggle the backup before updating the CT (asks first)        │
   │g / S        config view + timer state · S change schedule (asks first)   │
-  │l            run logs (one file per update run)                           │
-▼ │?            this help · q quit                                           │
-──│Columns: UPD pending updates (all/security) · — no data yet (press c)     │──
-> │AUTO yes = in the scheduled run · host row: u asks before updating        │
+▼ │l            run logs (one file per update run)                           │
+──│?            this help · q quit                                           │──
+> │Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)  │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │
 [r└──────────────────────────────────────────────────────────────────────────┘

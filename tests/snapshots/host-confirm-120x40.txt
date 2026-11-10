@@ -36,5 +36,5 @@ pxu · Proxmox Updater [MOCK]                   node server · 6 guests · 5 run
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
-[l] logs  [g] config  [S] schedule  [?] help  [q] quit
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
+[o] columns  [l] logs  [g] config  [S] schedule  [?] help  [q] quit

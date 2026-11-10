@@ -6,9 +6,6 @@ ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
 » 423   ct-423           skip                  —  not started: stopped after 2 consecutive failures
 » 424   ct-424           skip                  —  not started: stopped after 2 consecutive failures
 ── live log ────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 00:16:00  421 $ pct shutdown 421 --timeout 60
- 00:16:00  421 OK
- 00:16:00  421 $ pct rollback 421 pxu-20261108031600
  00:16:00  421 OK
  00:16:00  421 $ pct start 421
  00:16:00  421 OK
@@ -30,6 +27,9 @@ ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
  00:16:00  422 $ pvesh get /nodes/server/lxc/422/feature --feature snapshot --output-format json
  00:16:00  422 {"hasFeature":0}
  00:16:00  422 snapshot not used (PVE reports no snapshot support for this CT); using vzdump on storage "local"
+ 00:16:00  422 $ pvesh get /nodes/server/storage/local/status --output-format json
+ 00:16:00  422 {"active":1,"avail":858993459200,"total":1073741824000,"used":214748364800,"enabled":1}
+ 00:16:00  422 backup space: ~1.0 GB needed (rootfs used + mount points, ratio 1), storage local has 800.0 GB free, 100…
  00:16:00  422 $ vzdump 422 --mode snapshot --storage local --compress zstd --zstd 1 --ionice 7 --notes-template pxu pr…
  00:16:00  422 ERROR: vzdump failed
  00:16:00  422 == result: Failed: backup failed, CT untouched: vzdump exit 255

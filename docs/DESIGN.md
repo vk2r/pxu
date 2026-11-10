@@ -15,7 +15,7 @@ Code: `src/tui/` — `app.rs` (state and keys), `views.rs` (drawing), `logs.rs` 
 3. **Color is never the only signal.** States in words (`run`, `stopped`), step marks (`●` in progress, `✓` ok, `✗` fail, `»` skip, `·` pending), cursor with `>` in addition to reverse video. Works with `NO_COLOR`.
 4. **Keyboard first, mouse optional.** Everything is done with the keyboard; each screen declares its keys in the footer. The mouse only acts in the logs view (§4.7).
 5. **Expensive things on demand.** The default view lives off files in `/etc/pve` and cgroups; the package check only runs with `c`/`C`.
-6. **Every change asks for confirmation.** `u`, `a`, `S`, `N`, `L` and the host row open a dialog before writing or running anything.
+6. **Every change asks for confirmation.** `u`, `a`, `b`, `S`, `N`, `L` and the host row open a dialog before writing or running anything.
 
 Comfortable minimum: 80×24; the footer (`keybar`) and the columns adapt to the width (§3, §5.1).
 
@@ -50,7 +50,7 @@ Data format: updates `n/s` (total/security), sizes `x/y GB`, index age `5h`, `32
 
 ## 4. Key map
 
-Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, schedule, Apprise, retention) → help `?` → search → view key. A modal captures all keys.
+Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, backup, schedule, Apprise, retention) → help `?` → search → view key. A modal captures all keys.
 
 `Ctrl-C` with an active update run opens the cancel dialog (§7); without a run it exits.
 
@@ -71,6 +71,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | `o` | choose visible columns |
 | `u` | update the visible CTs with updates (asks for confirmation); on the host row, updates the host |
 | `a` | auto-update of the CT / the host (asks for confirmation); on a CT with a GPU, NVIDIA driver window |
+| `b` | backup before the CT's update: on (follows `[backup] mode`) / `none` (asks for confirmation; not for the host) |
 | `g` | Config view |
 | `S` | timer schedule dialog |
 | `l` | run logs |
@@ -78,7 +79,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 
 ### 4.2 Detail (`detail_key`, `app.rs:1196-1223`)
 
-`↑↓/jk` scroll · `PgUp PgDn` 10 · `Home` top · `u` update this guest · `r` reload · `c` check · `a` auto-update · `g` Config · `S` schedule · `?` help · `Esc`/`Backspace` back · `q` quit.
+`↑↓/jk` scroll · `PgUp PgDn` 10 · `Home` top · `u` update this guest · `r` reload · `c` check · `a` auto-update · `b` backup · `g` Config · `S` schedule · `?` help · `Esc`/`Backspace` back · `q` quit.
 
 ### 4.3 Check result (`check_key`, `app.rs:1139-1172`)
 
@@ -96,6 +97,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | Confirm host update | `↑↓/jk` scroll · `Enter` install · `Esc`/`q`/`n` cancel |
 | NVIDIA driver | `Space` check · `Enter` save · `Esc`/`q`/`n` close |
 | Auto-update (`a`) | `y`/`Enter` save · `Esc`/`n`/`q` cancel |
+| Backup (`b`) | `y`/`Enter` save · `Esc`/`n`/`q` cancel |
 | Columns (`o`) | `Space` show/hide · `Enter` close |
 | Cancel run | `Enter` finish the CT in progress and stop · `Esc` continue |
 | Schedule (`S`) | `Tab`/`↓` and `BackTab`/`↑` field · `←/→/Space` change · `Enter` validate · `Esc` cancel; on the confirmation `y`/`Enter` saves, `b`/`Backspace` goes back to editing |
@@ -118,7 +120,7 @@ Viewer: `↑↓/jk` · `PgUp PgDn`/`Space` page · `g`/`G` start/end · `n`/`p` 
 
 ### 5.1 Main list
 
-Every column is as wide as its content (at least its header), with 2-space gaps, left-aligned; spare width is never spread. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` and `AUTO` measure max(header, longest value among the current guests); `CPU` is fixed (6, or 5 when narrow) because its value changes every second and the table must not jump. `NAME` comes first at the width of the longest name and is only cut with `…` if it does not fit even without `TAGS`; `TAGS` takes what is left up to its longest text, and when less than 6 columns are left it is hidden (header included) instead of cutting `NAME`. If everything fits the rest of the line stays empty. The selection bar spans the whole row. Columns: `ID NAME STATE OS CPU RAM UPD AUTO`, plus `TYPE`, `DISK`, `TAGS` and `GPU` depending on the width and the choice made with `o` (`ID`, `NAME` and `STATE` always; the selection is saved in `config.toml`). The list footer (`views.rs:446-451`) and the line under the table (`▼ 21 below …`, summary of the selected guest) change with the selection.
+Every column is as wide as its content (at least its header), with 2-space gaps, left-aligned; spare width is never spread. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` and `AUTO` measure max(header, longest value among the current guests); `CPU` is fixed (6, or 5 when narrow) because its value changes every second and the table must not jump. `NAME` comes first at the width of the longest name and is only cut with `…` if it does not fit even without `TAGS`; `TAGS` takes what is left up to its longest text, and when less than 6 columns are left it is hidden (header included) instead of cutting `NAME`. If everything fits the rest of the line stays empty. The selection bar spans the whole row. Columns: `ID NAME STATE OS CPU RAM UPD AUTO`, plus `TYPE`, `DISK`, `TAGS`, `GPU` and `BACKUP` (hidden by default; `auto`/`snap`/`vzdump`/`none`) depending on the width and the choice made with `o` (`ID`, `NAME` and `STATE` always; the selection is saved in `config.toml`). The list footer (`views.rs:446-451`) and the line under the table (`▼ 21 below …`, summary of the selected guest) change with the selection.
 
 ```
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
@@ -144,7 +146,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 > 103 ct-103 · debian 12 · 7 updates (2 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **The host row.** Proxmox itself appears as a `vmid 0` row (`GuestKind::Host`) with its package summary in the header (`host: 7 upd`). `u` on it opens its own confirmation (package list grouped by kernel/firmware/pve/security/other, reboot notice, prior copy of `/etc`, no automatic rollback) and it never enters a CT run. `a` on it toggles `[update] host_auto`, the timer's opt-in. Before `c` the host appears as "not reviewed yet: press c".
@@ -173,7 +175,7 @@ pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00
 > 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] de…
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 ```
@@ -200,7 +202,7 @@ pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00
 >│                                                                            │…
 ─└────────────────────────────────────────────────────────────────────────────┘─
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **GPU / NVIDIA.** The `GPU` column (`NV ✓`, `AMD ✓`, `pass`, `—`) appears when there are GPUs. `a` on the host or on a CT with a GPU opens the NVIDIA driver window: check `[ ] Upgrade GPU driver` and `Enter` saves `host_nvidia_auto`; the timer installs the `.run` driver after updating the host, always without rebooting. If unchecked, nothing is saved.
@@ -229,7 +231,7 @@ pxu [MOCK]                                       server · 5/6 up · 1 upd   00:
 C└────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **Columns (`o`):**
@@ -258,7 +260,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **Help (`?`).** Text of `draw_help` (`views.rs:1040-1085`), specific to each view:
@@ -280,6 +282,7 @@ px┌ help · any key closes ─────────────────
   │             temporary backup, verify, auto-rollback on failure           │
   │a            toggle scheduled auto-update of the CT (asks first)          │s
   │             host row: host_auto · host/GPU CT: NVIDIA driver window      │
+  │b            toggle the backup before updating the CT (asks first)        │
   │g / S        config view + timer state · S change schedule (asks first)   │
   │l            run logs (one file per update run)                           │
 ▼ │?            this help · q quit                                           │
@@ -317,7 +320,7 @@ detail · config (left) · state & updates (right)
 ────────────────────────────────────────────────────────────────────────────────
 ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [?] help  [q] quit
 config is read from the .conf file (no processes); runtime metrics come from cg…
 ```
 
@@ -442,7 +445,7 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 ### 5.6 Config, schedule and Apprise
@@ -571,11 +574,11 @@ step times update on log lines or state changes · log: /var/log/pxu/run-*.log
 [x] cancel  [↑↓] scroll log  [f] follow  [?] help
 ```
 
-`Enter` sets stop-after: the CT in progress finishes its cycle (upgrade → verify → restore) and the pending ones become `canceled`. **`dpkg`/`apt` are never killed midway through an installation.** In non-destructive steps (pre-checks, refresh, backup) the child is killed. The run still emits its `run_summary` via Apprise. In a check, `Esc` cancels the probe in progress and those already done keep their result.
+`Enter` sets stop-after: the CT in progress finishes its cycle (upgrade → verify → restore) and the pending ones become `canceled`. **`dpkg`/`apt` are never killed midway through an installation.** **While the CT is still in pre-checks or the vzdump backup (before the install), `Enter` stops at once**: pxu sends SIGTERM to `vzdump` (SIGKILL of its group after 120 s), vzdump removes its partial file, its snapshot LV and the CT lock, the CT is marked `canceled` and left untouched, and the bar reads `cancel: [x] → stop now: CT <vmid> is before the install, its backup is aborted and cleaned up, CT untouched`. From the install step on, the bar and the dialog keep the text above (finish the guest, then stop). The run still emits its `run_summary` via Apprise. In a check, `Esc` cancels the probe in progress and those already done keep their result.
 
 ## 8. Read-only mode
 
-`[RO]` badge in the header. It is enabled when the config is missing or invalid (wrong permissions, unknown keys or values); `pxu update` in that case exits with code 2. Effects: `u` is disabled (`updates disabled in read-only mode (no valid config)`). Still available: listing, detail, check `c`, search, order, columns, logs and the test notification. `a` can create the missing config (the modal says so) and on saving it leaves read-only. Internally there is a forced mode (`forced_ro`) that also rejects `a`; no command-line option enables it today (`main.rs` passes `false`).
+`[RO]` badge in the header. It is enabled when the config is missing or invalid (wrong permissions, unknown keys or values); `pxu update` in that case exits with code 2. Effects: `u` is disabled (`updates disabled in read-only mode (no valid config)`). Still available: listing, detail, check `c`, search, order, columns, logs and the test notification. `a` and `b` can create the missing config (the modal says so) and on saving it leaves read-only. Internally there is a forced mode (`forced_ro`) that also rejects `a` and `b`; no command-line option enables it today (`main.rs` passes `false`).
 
 ## 9. Unverified limit
 

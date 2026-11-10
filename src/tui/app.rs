@@ -85,6 +85,10 @@ pub enum Action {
     AskAutoUpdate { vmid: u32 },
     /// `y`/Enter en el modal de auto-update: el bucle escribe `[[ct]] auto_update` en config.toml y recarga.
     SetAutoUpdate { vmid: u32, value: bool },
+    /// `b`: el bucle lee la config (validada) y abre el modal del backup previo al update.
+    AskBackup { vmid: u32 },
+    /// `y`/Enter en el modal del backup: el bucle escribe `[[ct]] backup` en config.toml (`disabled` = `"none"`; si no, hereda el global) y recarga.
+    SetBackup { vmid: u32, disabled: bool },
     /// `y`/Enter en el modal del driver NVIDIA: el bucle guarda `nvidia_auto` (CT) y/o `host_nvidia_auto`.
     SetNvidiaAuto { vmid: u32 },
     /// `g` / `r` en Config: el bucle lee el estado del timer y muestra la vista.
@@ -191,6 +195,44 @@ impl AutoModal {
             lines.push("with a config pxu leaves read-only mode (updates become possible)".into());
         }
         AutoModal { vmid: g.vmid, name: g.name.clone(), value, lines }
+    }
+}
+
+/// Modal de confirmación del backup previo al update de un CT (`b`).
+pub struct BackupModal {
+    pub vmid: u32,
+    pub name: String,
+    /// Lo que se guardará: `true` = `backup = "none"`; `false` = quitar el override y heredar `[backup] mode`.
+    pub disabled: bool,
+    pub lines: Vec<String>,
+}
+
+impl BackupModal {
+    /// `why`: modo actual y su origen (`Config::backup_why`); `now`: modo efectivo; `global`: `[backup] mode`; `missing`: aún no existe config.toml.
+    pub fn new(g: &Guest, why: &str, global: &str, missing: bool) -> BackupModal {
+        let disabled = g.backup != "none";
+        let mut lines = vec![format!("today: {why}")];
+        if disabled {
+            if g.backup != global {
+                lines.push(format!("the [[ct]] override ({}) is replaced by \"none\"", g.backup));
+            }
+            lines.push("WARNING: no backup before the update and no automatic rollback if it fails".into());
+            lines.push("the CT is updated in place; a failed update can only be fixed by hand".into());
+            lines.push(format!("saved as [[ct]] vmid = {}, backup = \"none\" in {}", g.vmid, pxu::share::config::CONFIG_PATH));
+            if missing {
+                lines.push(format!("{} does not exist: it will be created with only that block", pxu::share::config::CONFIG_PATH));
+                lines.push("with a config pxu leaves read-only mode (updates become possible)".into());
+            }
+        } else if global == "none" {
+            lines.push("the global [backup] mode is none: this CT gets backup = \"auto\"".into());
+            lines.push("temporary backup before the update (snapshot, else vzdump) and auto-rollback on failure".into());
+            lines.push(format!("saved as [[ct]] vmid = {}, backup = \"auto\" in {}; the rest is kept as it is", g.vmid, pxu::share::config::CONFIG_PATH));
+        } else {
+            lines.push(format!("the backup key of the [[ct]] block is removed: the CT follows [backup] mode = \"{global}\""));
+            lines.push("temporary backup before the update (snapshot, else vzdump) and auto-rollback on failure".into());
+            lines.push(format!("the rest of {} is kept as it is", pxu::share::config::CONFIG_PATH));
+        }
+        BackupModal { vmid: g.vmid, name: g.name.clone(), disabled, lines }
     }
 }
 
@@ -336,6 +378,7 @@ pub struct App {
     pub update: UpdateState,
     pub modal: Option<UpdateModal>,
     pub auto_modal: Option<AutoModal>,
+    pub backup_modal: Option<BackupModal>,
     pub nvidia_modal: Option<NvidiaModal>,
     pub host_modal: Option<HostModal>,
     pub sched: Option<SchedModal>,
@@ -384,6 +427,7 @@ impl App {
             update: UpdateState::default(),
             modal: None,
             auto_modal: None,
+            backup_modal: None,
             nvidia_modal: None,
             host_modal: None,
             sched: None,
@@ -506,6 +550,9 @@ impl App {
         }
         if self.auto_modal.is_some() {
             return self.auto_modal_key(k);
+        }
+        if self.backup_modal.is_some() {
+            return self.backup_modal_key(k);
         }
         if self.sched.is_some() {
             return self.sched_key(k);
@@ -796,6 +843,46 @@ impl App {
         Action::AskAutoUpdate { vmid }
     }
 
+    /// `b`: alterna el backup previo al update del CT (el bucle abre el modal con la config leída).
+    fn ask_backup(&mut self, vmid: Option<u32>) -> Action {
+        let Some(vmid) = vmid else { return Action::None };
+        if self.forced_ro {
+            self.status = "read-only mode (--read-only): the config cannot be changed".into();
+            return Action::None;
+        }
+        if self.check.running || self.update.running {
+            self.status = "a run is in progress: change the backup when it finishes".into();
+            return Action::None;
+        }
+        match self.guest(vmid) {
+            Some(g) if g.kind == GuestKind::Host => self.status = "the host uses its own backup (/etc, ZFS snapshot): it is not changed here".into(),
+            Some(g) if g.kind == GuestKind::Lxc && g.state != RunState::Remote => return Action::AskBackup { vmid },
+            _ => self.status = "backup applies to local LXC only".into(),
+        }
+        Action::None
+    }
+
+    pub fn open_backup_modal(&mut self, m: BackupModal) {
+        self.backup_modal = Some(m);
+    }
+
+    fn backup_modal_key(&mut self, k: KeyEvent) -> Action {
+        let Some(m) = self.backup_modal.as_ref() else { return Action::None };
+        match k.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                let a = Action::SetBackup { vmid: m.vmid, disabled: m.disabled };
+                self.backup_modal = None;
+                return a;
+            }
+            KeyCode::Esc | KeyCode::Char('n' | 'q') => {
+                self.backup_modal = None;
+                self.status = "backup unchanged".into();
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
     pub fn open_auto_modal(&mut self, m: AutoModal) {
         self.auto_modal = Some(m);
     }
@@ -1030,6 +1117,10 @@ impl App {
                 let v = self.selected().map(|g| g.vmid);
                 return self.ask_auto(v);
             }
+            KeyCode::Char('b') => {
+                let v = self.selected().map(|g| g.vmid);
+                return self.ask_backup(v);
+            }
             KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1).min(n.saturating_sub(1)),
             KeyCode::Up | KeyCode::Char('k') => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::PageDown => self.cursor = (self.cursor + 10).min(n.saturating_sub(1)),
@@ -1192,6 +1283,11 @@ impl App {
             KeyCode::Char('a') => {
                 if let View::Detail(id) = self.view {
                     return self.ask_auto(Some(id));
+                }
+            }
+            KeyCode::Char('b') => {
+                if let View::Detail(id) = self.view {
+                    return self.ask_backup(Some(id));
                 }
             }
             KeyCode::Char('u') => {

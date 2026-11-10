@@ -311,6 +311,17 @@ fn update_enter_starts_run_and_run_view_shows_queue_and_log() {
 }
 
 #[test]
+fn cancel_bar_and_dialog_say_stop_now_before_install() {
+    let mut a = rw_app("update-ok");
+    let evs = start_update(&mut a, "update-ok");
+    a.on_key(key(KeyCode::Enter));
+    let at = evs.iter().position(|e| matches!(e, UpdEvent::Step(402, update::Step::Backup))).unwrap();
+    feed(&mut a, &evs[..=at]);
+    a.on_key(key(KeyCode::Char('x')));
+    snap("update-cancel-backup", &a);
+}
+
+#[test]
 fn update_run_finished_summary_and_ring_cap() {
     let mut a = rw_app("update-fail");
     let evs = start_update(&mut a, "update-fail");
@@ -1675,7 +1686,7 @@ fn list_table_keeps_two_space_gaps_and_tags_use_extra_width() {
 
 #[test]
 fn footer_key_bars_single_line_left_aligned() {
-    let keys = ["[↑↓/jk] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[o] columns", "[l] logs", "[g] config", "[S] schedule", "[?] help", "[q] quit"];
+    let keys = ["[↑↓/jk] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[b] backup", "[o] columns", "[l] logs", "[g] config", "[S] schedule", "[?] help", "[q] quit"];
     let a = app("basic-37");
     // 230 columnas: todas las teclas en una sola línea, con huecos de 2 espacios.
     let (out, _) = render(&a, 230, 40, true);
@@ -1686,7 +1697,7 @@ fn footer_key_bars_single_line_left_aligned() {
     assert!(!out.lines().any(|l| l.contains("[r] reload") && !l.contains("[q] quit")), "no second key line at 230");
     // 80 columnas: ninguna tecla queda cortada.
     let (out, _) = render(&a, 80, 24, true);
-    for k in ["[↑↓] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[o] cols", "[g] config", "[l] logs", "[?] help", "[q] quit"] {
+    for k in ["[↑↓] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[b] bkp", "[o] cols", "[g] cfg", "[l] logs", "[?] help", "[q] quit"] {
         assert!(out.contains(k), "80 cols: missing {k}");
     }
     for w in [80u16, 120, 160, 230] {
@@ -1747,4 +1758,143 @@ fn list_columns_measure_content_and_tags_hide_when_too_narrow() {
             assert!(rest.trim_end().chars().count() >= 4, "w={w}: TAGS shown");
         }
     }
+}
+
+// ---------------------------------------------------------------- tecla `b` (backup antes del update)
+
+#[test]
+fn b_disables_the_backup_of_a_ct_and_enables_it_again_keeping_the_config() {
+    let src = "# mi config\n[update]\nauto_update_tags = [\"auto\"]\n\n[[ct]]\nvmid = 116\nauto_update = false\n";
+    let h = auto_host(Some(src));
+    let mut a = auto_app(&h);
+    goto(&mut a, 116);
+    assert_eq!(a.selected().unwrap().backup, "auto");
+    assert_eq!(a.on_key(key(KeyCode::Char('b'))), Action::AskBackup { vmid: 116 });
+    super::ask_backup_modal(&h, &mut a, 116);
+    let m = a.backup_modal.as_ref().unwrap();
+    assert!(m.disabled && m.lines.iter().any(|l| l.contains("auto by [backup] mode (global)")) && m.lines.iter().any(|l| l.contains("no automatic rollback")), "{:?}", m.lines);
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("Disable the backup before updating CT 116") && out.contains("WARNING") && out.contains("[y/Enter] save"), "{out}");
+    // Esc cancela sin tocar nada
+    a.on_key(key(KeyCode::Esc));
+    assert!(a.backup_modal.is_none() && cfg_text(&h) == src && a.status.contains("unchanged"));
+    // `y` confirma → el bucle escribe y la columna se actualiza
+    super::ask_backup_modal(&h, &mut a, 116);
+    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::SetBackup { vmid: 116, disabled: true });
+    super::save_backup(&h, &mut a, 116, true);
+    let now = cfg_text(&h);
+    assert!(now.starts_with("# mi config\n") && now.contains("auto_update = false") && now.contains("backup = \"none\""), "{now}");
+    assert_eq!(now.matches("vmid = 116").count(), 1);
+    assert_eq!(a.guest(116).unwrap().backup, "none");
+    assert!(a.status.contains("WITHOUT backup"), "{}", a.status);
+    // volver a activar: sin override hereda el global, el bloque con otras claves se queda
+    super::ask_backup_modal(&h, &mut a, 116);
+    let m = a.backup_modal.as_ref().unwrap();
+    assert!(!m.disabled && m.lines.iter().any(|l| l.contains("none by [[ct]] override")), "{:?}", m.lines);
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("Enable the backup before updating CT 116"), "{out}");
+    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetBackup { vmid: 116, disabled: false });
+    super::save_backup(&h, &mut a, 116, false);
+    assert_eq!(cfg_text(&h), src, "round trip");
+    assert_eq!(a.guest(116).unwrap().backup, "auto");
+}
+
+#[test]
+fn b_with_global_none_enables_the_ct_with_backup_auto() {
+    let h = auto_host(Some("[backup]\nmode = \"none\"\n"));
+    let mut a = auto_app(&h);
+    goto(&mut a, 116);
+    assert_eq!(a.selected().unwrap().backup, "none");
+    super::ask_backup_modal(&h, &mut a, 116);
+    let m = a.backup_modal.as_ref().unwrap();
+    assert!(!m.disabled && m.lines.iter().any(|l| l.contains("the global [backup] mode is none: this CT gets backup = \"auto\"")), "{:?}", m.lines);
+    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::SetBackup { vmid: 116, disabled: false });
+    super::save_backup(&h, &mut a, 116, false);
+    assert!(cfg_text(&h).contains("[[ct]]\nvmid = 116\nbackup = \"auto\""), "{}", cfg_text(&h));
+    assert_eq!(a.guest(116).unwrap().backup, "auto");
+    // y otra vez: lo vuelve a desactivar
+    super::ask_backup_modal(&h, &mut a, 116);
+    assert!(a.backup_modal.as_ref().unwrap().disabled);
+}
+
+#[test]
+fn b_turns_a_snapshot_override_into_none_and_works_from_the_detail_view() {
+    let h = auto_host(Some("[backup]\nmode = \"vzdump\"\n[[ct]]\nvmid = 105\nbackup = \"snapshot\"\n"));
+    let mut a = auto_app(&h);
+    a.view = View::Detail(105);
+    assert_eq!(a.on_key(key(KeyCode::Char('b'))), Action::AskBackup { vmid: 105 });
+    super::ask_backup_modal(&h, &mut a, 105);
+    let m = a.backup_modal.as_ref().unwrap();
+    assert!(m.disabled && m.lines.iter().any(|l| l.contains("snapshot by [[ct]] override")) && m.lines.iter().any(|l| l.contains("override (snapshot) is replaced")), "{:?}", m.lines);
+    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::SetBackup { vmid: 105, disabled: true });
+    super::save_backup(&h, &mut a, 105, true);
+    assert!(cfg_text(&h).contains("backup = \"none\"") && !cfg_text(&h).contains("snapshot"));
+    // detalle muestra el modo
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("backup before update: none (no rollback)"), "{out}");
+    // volver a activar hereda el global
+    super::save_backup(&h, &mut a, 105, false);
+    assert_eq!(a.guest(105).unwrap().backup, "vzdump", "re-enabling inherits the global mode");
+    assert_eq!(cfg_text(&h), "[backup]\nmode = \"vzdump\"\n[[ct]]\nvmid = 105\n");
+    a.view = View::Detail(105);
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("backup before update: yes, mode vzdump"), "{out}");
+}
+
+#[test]
+fn b_is_refused_in_read_only_for_the_host_and_with_an_invalid_config() {
+    let src = "[update]\nauto_update_tags = [\"auto\"]\n";
+    let h = auto_host(Some(src));
+    let mut a = auto_app(&h);
+    a.forced_ro = true;
+    goto(&mut a, 116);
+    assert_eq!(a.on_key(key(KeyCode::Char('b'))), Action::None);
+    assert!(a.status.contains("--read-only"), "{}", a.status);
+    assert!(cfg_text(&h) == src && a.backup_modal.is_none());
+    // host: no aplica
+    let (mut a, _h) = host_app_with(fixture("host"));
+    goto(&mut a, 0);
+    assert_eq!(a.on_key(key(KeyCode::Char('b'))), Action::None);
+    assert!(a.status.contains("host") && a.status.contains("not changed here"), "{}", a.status);
+    // config inválida: no se abre el modal ni se escribe
+    let bad = "[update]\non_failure = \"Stop\"\n";
+    let h = auto_host(Some(bad));
+    let mut a = auto_app(&h);
+    goto(&mut a, 116);
+    super::ask_backup_modal(&h, &mut a, 116);
+    assert!(a.backup_modal.is_none() && a.status.contains("not changed"), "{}", a.status);
+    super::save_backup(&h, &mut a, 116, true);
+    assert_eq!(cfg_text(&h), bad);
+}
+
+#[test]
+fn b_without_config_warns_it_will_create_it() {
+    let h = auto_host(Some(""));
+    let mut a = auto_app(&h);
+    goto(&mut a, 105);
+    super::ask_backup_modal(&h, &mut a, 105);
+    let lines = a.backup_modal.as_ref().unwrap().lines.join("|");
+    assert!(lines.contains("will be created with only that block"), "{lines}");
+    super::save_backup(&h, &mut a, 105, true);
+    assert_eq!(cfg_text(&h).trim(), "[[ct]]\nvmid = 105\nbackup = \"none\"");
+}
+
+#[test]
+fn the_backup_column_is_optional_hidden_by_default_and_shows_short_modes() {
+    let h = auto_host(Some("[[ct]]\nvmid = 116\nbackup = \"none\"\n[[ct]]\nvmid = 105\nbackup = \"snapshot\"\n"));
+    let mut a = auto_app(&h);
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(!out.contains("BACKUP"), "hidden by default");
+    assert!(pxu::share::config::UiCfg::default().visible_columns().iter().all(|c| c != "backup"));
+    a.columns.push("backup".into());
+    let (out, _) = render(&a, 120, 40, true);
+    let head = out.lines().find(|l| l.contains("BACKUP")).expect("header");
+    assert!(head.find("AUTO").unwrap() < head.find("BACKUP").unwrap(), "{head}");
+    let row = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} "))).unwrap().to_string();
+    assert!(row("116").trim_end().ends_with("none"), "{}", row("116"));
+    assert!(row("105").trim_end().ends_with("snap"), "{}", row("105"));
+    assert!(row("100").trim_end().ends_with("auto"), "{}", row("100"));
+    // selector `o`: aparece como opción y no está marcada de entrada
+    let a2 = auto_app(&h);
+    assert!(!a2.col_shown("backup") && pxu::share::config::OPTIONAL_COLUMNS.contains(&"backup"));
 }

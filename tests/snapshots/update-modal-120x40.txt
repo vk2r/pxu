@@ -36,5 +36,5 @@ pxu · Proxmox Updater [MOCK]                                 node server · 3 g
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
-[l] logs  [g] config  [S] schedule  [?] help  [q] quit
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
+[o] columns  [l] logs  [g] config  [S] schedule  [?] help  [q] quit

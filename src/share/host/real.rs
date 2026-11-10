@@ -78,14 +78,53 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
             }
         });
     }
-    for l in BufReader::new(rd).lines() {
-        match l {
-            Ok(l) => sink.line(&l),
-            Err(_) => break, // salida no UTF-8: se corta la lectura, el exit code manda
+    let finished = std::sync::atomic::AtomicBool::new(false);
+    let interrupted = std::sync::atomic::AtomicBool::new(false);
+    let st = std::thread::scope(|sc| -> io::Result<std::process::ExitStatus> {
+        if let Some(c) = opts.cancel {
+            let (finished, interrupted) = (&finished, &interrupted);
+            sc.spawn(move || {
+                let tick = std::time::Duration::from_millis(100);
+                loop {
+                    if finished.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    if c.load(std::sync::atomic::Ordering::SeqCst) {
+                        interrupted.store(true, std::sync::atomic::Ordering::SeqCst);
+                        // SAFETY: el pid sigue siendo del hijo mientras `wait` no haya vuelto (`finished` se pone justo después).
+                        unsafe { libc::kill(pid, libc::SIGTERM) };
+                        // vzdump limpia su archivo parcial y su snapshot al recibir SIGTERM; si no acaba en 2 min se corta el grupo.
+                        for _ in 0..1200 {
+                            if finished.load(std::sync::atomic::Ordering::SeqCst) {
+                                return;
+                            }
+                            std::thread::sleep(tick);
+                        }
+                        // SAFETY: igual que arriba.
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                            libc::kill(pid, libc::SIGKILL);
+                        }
+                        return;
+                    }
+                    std::thread::sleep(tick);
+                }
+            });
         }
-    }
-    let st = child.wait()?;
+        for l in BufReader::new(rd).lines() {
+            match l {
+                Ok(l) => sink.line(&l),
+                Err(_) => break, // salida no UTF-8: se corta la lectura, el exit code manda
+            }
+        }
+        let st = child.wait();
+        finished.store(true, std::sync::atomic::Ordering::SeqCst);
+        st
+    })?;
     let _ = done_tx.send(());
+    if interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, CANCELLED_MSG));
+    }
     if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(io::Error::new(io::ErrorKind::TimedOut, format!(
             "timed out after {}s{}",

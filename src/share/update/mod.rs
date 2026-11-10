@@ -73,6 +73,10 @@ pub enum Step {
 }
 
 impl Step {
+    /// ¿Aún no se ha empezado a instalar? Hasta aquí cancelar corta el CT en el acto y lo deja intacto.
+    pub fn before_install(self) -> bool {
+        matches!(self, Step::Pending | Step::Preflight | Step::Lock | Step::Backup | Step::Refresh)
+    }
     pub fn label(self) -> &'static str {
         match self {
             Step::Pending => "pending",
@@ -260,6 +264,12 @@ struct Ctx<'a> {
     ev: &'a mut dyn FnMut(Event),
     /// Paquetes de seguridad de la lista pendiente (solo el host: lo fija antes de instalar, para el informe).
     security: usize,
+    /// Cancelación del usuario (`[x]` en la TUI): solo se atiende ANTES de instalar y dentro del backup (vzdump).
+    cancel: Option<&'a AtomicBool>,
+    /// El último `host_cmd` fue interrumpido por `cancel` (el host real mandó SIGTERM).
+    interrupted: bool,
+    /// Espacio usado de `/` en el CT (`df -Pk /` de los pre-checks), para estimar el tamaño del backup.
+    root_used_kb: Option<u64>,
 }
 
 impl LineSink for Ctx<'_> {
@@ -290,7 +300,17 @@ impl Ctx<'_> {
         self.say(&format!("$ {}", argv.join(" ")));
         self.capture.clear();
         let h = self.host;
-        h.host_cmd(argv, o, self).map(|e| e.code).map_err(|e| e.to_string())
+        self.interrupted = false;
+        match h.host_cmd(argv, o, self) {
+            Ok(e) => Ok(e.code),
+            Err(e) => {
+                self.interrupted = e.kind() == std::io::ErrorKind::Interrupted && o.cancel.is_some();
+                Err(e.to_string())
+            }
+        }
+    }
+    fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(Ordering::SeqCst))
     }
     fn guest(&mut self, argv: &[&str], o: &ExecOpts) -> Result<i32, String> {
         self.say(&format!("$ [CT {}] {}", self.vmid, argv.join(" ")));
@@ -430,11 +450,14 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
             continue;
         }
         ev(Event::Start(g.vmid));
-        let (r, stop) = run_ct(host, g, cfg, ev);
+        let (r, stop) = run_ct(host, g, cfg, cancel, ev);
         match r.outcome {
             Outcome::Failed => streak += 1,
             Outcome::Ok | Outcome::Warn => streak = 0,
             _ => {}
+        }
+        if r.outcome == Outcome::Cancelled {
+            cancelled = true;
         }
         finish(r, ev, &mut results);
         if let Some(why) = stop {
@@ -512,9 +535,9 @@ impl Drop for TargetScope<'_> {
     }
 }
 
-fn run_ct(host: &dyn Host, g: &Guest, cfg: &Config, ev: &mut dyn FnMut(Event)) -> (CtRun, Option<String>) {
+fn run_ct(host: &dyn Host, g: &Guest, cfg: &Config, cancel: &AtomicBool, ev: &mut dyn FnMut(Event)) -> (CtRun, Option<String>) {
     let t0 = now_s(host);
-    let mut cx = Ctx { host, vmid: g.vmid, log: Vec::new(), dropped: 0, capture: Vec::new(), abort: None, hold: false, no_prune: false, ev, security: 0 };
+    let mut cx = Ctx { host, vmid: g.vmid, log: Vec::new(), dropped: 0, capture: Vec::new(), abort: None, hold: false, no_prune: false, ev, security: 0, cancel: Some(cancel), interrupted: false, root_used_kb: None };
     let mut run = CtRun {
         vmid: g.vmid, name: g.name.clone(), outcome: Outcome::Failed, step: Step::Lock, detail: String::new(), packages_before: g.updates(), packages_after: None, security: g.security(),
         reboot_required: false, new_failed_units: vec![], backup: None, rollback: None, revert: None, log_path: None, took_s: 0,
@@ -547,6 +570,9 @@ fn run_ct(host: &dyn Host, g: &Guest, cfg: &Config, ev: &mut dyn FnMut(Event)) -
     run.outcome = d.outcome;
     run.step = d.step;
     run.detail = d.detail;
+    if run.outcome == Outcome::Cancelled {
+        cx.abort = Some("cancelled by user".into());
+    }
     if started_by_us && cx.hold {
         run.detail += &format!("; CT left RUNNING (it was stopped before): dpkg may still be working inside, shut it down manually: pct shutdown {}", g.vmid);
     }
@@ -616,6 +642,7 @@ fn ct_steps(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_u
     match cx.guest(&["df", "-Pk", "/"], &nice) {
         Ok(0) => {
             let avail_kb = cx.capture.iter().filter_map(|l| l.split_whitespace().nth(3)?.parse::<u64>().ok()).next();
+            cx.root_used_kb = cx.capture.iter().filter_map(|l| l.split_whitespace().nth(2)?.parse::<u64>().ok()).next();
             match avail_kb {
                 Some(kb) if kb / 1024 < cfg.update.min_free_mb => return fail(Step::Preflight, format!("only {} MB free on / (need {} MB)", kb / 1024, cfg.update.min_free_mb)),
                 None => return fail(Step::Preflight, "cannot read free space on /"),
@@ -630,6 +657,9 @@ fn ct_steps(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_u
         Ok(_) => failed_units(&cx.capture),
         Err(_) => BTreeSet::new(), // sin systemd (Alpine): sin comparación
     };
+    if cx.cancelled() {
+        return Done { outcome: Outcome::Cancelled, step: Step::Preflight, detail: "cancelled in pre-checks: CT untouched".into() };
+    }
     // --- backup (siempre, salvo `mode = "none"` puesto a mano): sin backup no se toca el CT
     cx.step(Step::Backup);
     let mode = cfg.backup_mode(g.vmid);
@@ -644,6 +674,8 @@ fn ct_steps(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_u
                 cx.say(BACKUP_SCOPE_NOTE);
                 Some(e)
             }
+            Err(_) if cx.interrupted => return Done { outcome: Outcome::Cancelled, step: Step::Backup, detail: "cancelled during the backup: vzdump aborted, CT untouched".into() },
+            Err(e) if e.starts_with(SKIPPED) => return fail(Step::Backup, e),
             Err(e) => return fail(Step::Backup, format!("backup failed, CT untouched: {e}")),
         }
     };
@@ -657,6 +689,9 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
     let id = g.vmid.to_string();
     let host = cx.host;
     let units_cmd = ["systemctl", "--failed", "--no-legend", "--plain"];
+    if cx.cancelled() {
+        return Done { outcome: Outcome::Cancelled, step: Step::Backup, detail: "cancelled before the update: backup deleted, CT untouched".into() };
+    }
     // --- refresco + simulación (reutiliza el sondeo con refresh=1 y edad mínima 0)
     cx.step(Step::Refresh);
     let co = CheckOpts { refresh: true, read_only: false, refresh_min_age_s: 0, timeout_s: cfg.check.timeout_s, nice: cfg.general.nice, stale_after_s: cfg.check.index_stale_days * 86400 };
@@ -669,6 +704,9 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
     run.packages_before = info.packages.len();
     if info.packages.is_empty() {
         return Done { outcome: Outcome::Skipped, step: Step::Refresh, detail: "already up to date after refresh".into() };
+    }
+    if cx.cancelled() {
+        return Done { outcome: Outcome::Cancelled, step: Step::Refresh, detail: "cancelled before the upgrade: nothing was installed".into() };
     }
     // --- upgrade
     cx.step(Step::Upgrade);
@@ -819,13 +857,23 @@ fn take_snapshot(cx: &mut Ctx, g: &Guest, cfg: &Config, stamp: &str) -> Result<E
     }
 }
 
+/// Prefijo del error de `take_vzdump` cuando no se lanza por falta de espacio (el motor no le antepone «backup failed»).
+const SKIPPED: &str = "backup skipped:";
+
 fn take_vzdump(cx: &mut Ctx, g: &Guest, cfg: &Config, stamp: &str) -> Result<Entry, String> {
     let id = g.vmid.to_string();
     // sin el storage del rootfs el rollback restauraría en `local`: no se hace el backup (CT intacto)
     let storage = backup::rootfs_storage(&g.conf).ok_or("cannot read the rootfs storage from the CT config (rollback needs it)")?;
-    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(IoPrio::BestEffort7), ..Default::default() };
+    check_backup_space(cx, g, cfg)?;
+    // vzdump es la única orden abortable: con SIGTERM borra su archivo parcial y su snapshot (`snap_*_vzdump`) y quita el lock del CT.
+    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(IoPrio::BestEffort7), cancel: cx.cancel, ..Default::default() };
     let argv = ["vzdump", &id, "--mode", "snapshot", "--storage", &cfg.backup.storage, "--compress", "zstd", "--zstd", "1", "--ionice", "7", "--notes-template", "pxu pre-update {{guestname}}"];
-    match cx.host_cmd(&argv, &o) {
+    let r = cx.host_cmd(&argv, &o);
+    if cx.interrupted {
+        verify_vzdump_cleanup(cx, g);
+        return Err("vzdump interrupted by the user".into());
+    }
+    match r {
         Ok(0) => {
             let archive = cx.capture.iter().find_map(|l| l.split("creating vzdump archive '").nth(1)?.split('\'').next().map(String::from));
             let volid = archive.and_then(|a| backup::volid(&cfg.backup.storage, &a, g.vmid)).ok_or("vzdump finished but its archive could not be identified (see log)")?;
@@ -834,6 +882,74 @@ fn take_vzdump(cx: &mut Ctx, g: &Guest, cfg: &Config, stamp: &str) -> Result<Ent
         }
         Ok(c) => Err(format!("vzdump exit {c}")),
         Err(e) => Err(e),
+    }
+}
+
+const GIB: u64 = 1 << 30;
+
+fn gb(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / GIB as f64)
+}
+
+/// Estima lo que ocupará el vzdump (espacio usado del rootfs + mount points incluidos, a su tamaño asignado) y lo compara con el libre
+/// del storage destino. Falla en cerrado: sin poder leer el storage no se lanza. Con zstd se asume `space_ratio` (1.0 = sin compresión).
+fn check_backup_space(cx: &mut Ctx, g: &Guest, cfg: &Config) -> Result<(), String> {
+    let st = &cfg.backup.storage;
+    if !backup::is_pve_id(&g.node) || !backup::is_pve_id(st) {
+        return Err(format!("{SKIPPED} unusable node or storage name — CT untouched"));
+    }
+    let rootfs = backup::rootfs_storage(&g.conf).and_then(|_| g.conf.get("rootfs")).map(crate::share::proxmox::conf::parse_props);
+    let root_alloc = rootfs.as_ref().and_then(|(_, p)| crate::share::proxmox::conf::prop(p, "size")).and_then(crate::share::proxmox::conf::parse_size).unwrap_or(0);
+    let root_used = cx.root_used_kb.map(|k| k * 1024).unwrap_or(root_alloc);
+    // vzdump no incluye los bind mounts (`/ruta` posicional) ni los mp con backup=0
+    let mut mp_bytes = 0u64;
+    for (_, v) in g.conf.indexed("mp") {
+        let (vol, props) = crate::share::proxmox::conf::parse_props(v);
+        let bind = vol.is_none_or(|x| x.starts_with('/'));
+        if bind || crate::share::proxmox::conf::prop(&props, "backup") == Some("0") {
+            continue;
+        }
+        mp_bytes += crate::share::proxmox::conf::prop(&props, "size").and_then(crate::share::proxmox::conf::parse_size).unwrap_or(0);
+    }
+    let need = ((root_used + mp_bytes) as f64 * cfg.backup.space_ratio) as u64;
+    let path = format!("/nodes/{}/storage/{st}/status", g.node);
+    let unread = |why: String| format!("{SKIPPED} cannot read the free space of storage {st} ({why}) — CT untouched");
+    match cx.host_cmd(&["pvesh", "get", &path, "--output-format", "json"], &ExecOpts::default()) {
+        Ok(0) => {}
+        Ok(c) => return Err(unread(format!("pvesh exit {c}"))),
+        Err(e) => return Err(unread(e)),
+    }
+    let v: serde_json::Value = serde_json::from_str(&cx.capture.join("\n")).map_err(|e| unread(format!("unreadable answer: {e}")))?;
+    let num = |k: &str| v.get(k).and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)));
+    let (Some(avail), total) = (num("avail"), num("total").unwrap_or(0)) else { return Err(unread("no avail in the answer".into())) };
+    let spare = (cfg.backup.min_free_gb * GIB).max(total / 10);
+    cx.say(&format!("backup space: ~{} needed (rootfs used + mount points, ratio {}), storage {st} has {} free, {} must stay free", gb(need), cfg.backup.space_ratio, gb(avail), gb(spare)));
+    if avail < need.saturating_add(spare) {
+        return Err(format!("{SKIPPED} needs ~{}, storage {st} has {} free (it must keep {} spare) — CT untouched", gb(need), gb(avail), gb(spare)));
+    }
+    Ok(())
+}
+
+/// Tras abortar un vzdump: el CT no debe quedar con `lock: backup` ni dejar el archivo parcial. vzdump lo limpia solo; aquí se comprueba y se dice.
+fn verify_vzdump_cleanup(cx: &mut Ctx, g: &Guest) {
+    cx.say("vzdump aborted by the user (SIGTERM): it removes its partial archive, the snapshot and the CT lock by itself");
+    let conf = format!("/etc/pve/nodes/{}/lxc/{}.conf", g.node, g.vmid);
+    if let Ok(raw) = cx.host.read_file(Path::new(&conf)) {
+        if crate::share::proxmox::conf::Conf::parse(&String::from_utf8_lossy(&raw)).get("lock").is_some() {
+            cx.say(&format!("WARNING: CT {} still has a lock in its config after the abort: check it and run `pct unlock {}` if no backup is running", g.vmid, g.vmid));
+        } else {
+            cx.say("CT config has no lock: untouched");
+        }
+    }
+    let archive = cx.capture.iter().find_map(|l| l.split("creating vzdump archive '").nth(1)?.split('\'').next().map(String::from));
+    if let Some(a) = archive {
+        let dat = a.rsplit_once(".tar").map(|(b, _)| format!("{b}.tar.dat"));
+        let left: Vec<&String> = std::iter::once(&a).chain(dat.as_ref()).filter(|p| cx.host.exists(Path::new(p.as_str()))).collect();
+        if left.is_empty() {
+            cx.say("partial archive removed");
+        } else {
+            cx.say(&format!("WARNING: partial archive still on disk, delete it by hand: {}", left.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+        }
     }
 }
 
@@ -942,8 +1058,8 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
     let host = cx.host;
     let keep = cfg.keep_for(g.vmid);
     match d.outcome {
-        Outcome::Skipped => {
-            // Nada que actualizar: el backup no sirve de nada.
+        Outcome::Skipped | Outcome::Cancelled => {
+            // Nada que actualizar (o cancelado antes de instalar): el backup no sirve de nada.
             match discard(cx, &entry) {
                 Ok(()) => run.backup = Some(format!("{} (deleted)", entry.describe())),
                 Err(why) => d.detail += &format!("; WARNING: backup {} could not be deleted ({why})", entry.describe()),
@@ -1009,7 +1125,6 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
                 cx.say(&format!("CRITICAL: rollback failed: {why}; backup {} kept", entry.describe()));
             }
         },
-        Outcome::Cancelled => {}
     }
     d
 }
@@ -1081,6 +1196,9 @@ mod tests {
             "update-timeout" => fleet(&[431, 432]).hang(431, FailAt::Upgrade),
             "update-pm-lock" => fleet(&[441, 442, 443]).proxmenux_reservation(441).proxmenux_invalid_marker(442),
             "update-no-backup" => fleet(&[481]).backup_mode("none"),
+            "update-cancel-backup" => fleet(&[501, 502]).backup_mode("vzdump").hang(501, FailAt::Vzdump),
+            "update-low-space" => fleet(&[503, 504]).backup_mode("vzdump").storage_gb(3.0, 94.0),
+            "update-cancel-install" => fleet(&[505, 506, 507]),
             "update-timeout-backup" => fleet(&[471, 472]).backup_mode("vzdump").hang(471, FailAt::Upgrade),
             "update-timeout-stopped" => World::new()
                 .ct(Ct::new(491).tags("auto").stopped().updates(std_updates()).checked_minutes_ago(5))
@@ -1186,7 +1304,7 @@ mod tests {
                 cx_lines.push(l);
             }
         };
-        let mut cx = Ctx { host: &h, vmid: 401, log: Vec::new(), dropped: 0, capture: Vec::new(), abort: None, hold: false, no_prune: false, ev: &mut ev, security: 0 };
+        let mut cx = Ctx { host: &h, vmid: 401, log: Vec::new(), dropped: 0, capture: Vec::new(), abort: None, hold: false, no_prune: false, ev: &mut ev, security: 0, cancel: None, interrupted: false, root_used_kb: None };
         cx.line("ok \x1b]0;pwned\x07 fetch https://user:secret@repo.example/x\x1b[2J");
         assert!(cx.log.iter().all(|l| !l.chars().any(|c| c.is_control())));
         assert!(!cx.log[0].contains("secret") && cx.log[0].contains("https://***@repo.example"), "{}", cx.log[0]);
@@ -1356,6 +1474,76 @@ mod tests {
         assert!(matches!(again(), Err(RunError::Locked)));
         drop(held);
         assert!(again().is_ok());
+    }
+
+    /// Corre `only` y pone `cancel` en cuanto `trigger` ve un evento (un clic de `[x]` en ese instante).
+    fn go_cancel(h: &ReadOnlyHost<MockHost>, only: &[u32], trigger: impl Fn(&Event) -> bool) -> RunReport {
+        h.set_update_enabled(true);
+        let cfg = Config::load(h).unwrap();
+        let inv = guests::load(h);
+        let cancel = AtomicBool::new(false);
+        run(h, &inv, &cfg, &Opts { only: only.to_vec() }, &cancel, &mut |e| {
+            if trigger(&e) {
+                cancel.store(true, Ordering::SeqCst);
+            }
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn cancel_during_vzdump_aborts_it_and_leaves_the_ct_cancelled_and_untouched() {
+        let h = host("update-cancel-backup");
+        let rep = go_cancel(&h, &[501, 502], |e| matches!(e, Event::Line(501, l) if l.contains("creating vzdump archive")));
+        let r = by(&rep, 501);
+        assert_eq!((r.outcome, r.step), (Outcome::Cancelled, Step::Backup), "{r:?}");
+        assert!(r.detail.contains("vzdump aborted") && r.detail.contains("untouched"), "{}", r.detail);
+        assert_eq!(by(&rep, 502).outcome, Outcome::Cancelled, "the next CT is cancelled before start");
+        assert!(rep.cancelled && rep.exit_code() == EXIT_ABORTED);
+        assert!(guest_cmds(&h, 501).iter().all(|c| !c.contains("upgrade")), "nothing installed");
+        assert!(host_cmds(&h).iter().all(|c| !c.starts_with("pvesm free") && !c.contains("rollback") && !c.contains("restore")), "no archive was registered, nothing to delete or restore: {:?}", host_cmds(&h));
+        assert!(Registry::load(&h).entries.is_empty(), "an aborted vzdump leaves no registry entry");
+    }
+
+    #[test]
+    fn cancel_after_the_backup_but_before_the_install_deletes_the_backup_and_cancels() {
+        let h = host("update-cancel-install");
+        let rep = go_cancel(&h, &[505, 506], |e| matches!(e, Event::Step(505, Step::Backup)));
+        let r = by(&rep, 505);
+        assert_eq!(r.outcome, Outcome::Cancelled, "{r:?}");
+        assert!(guest_cmds(&h, 505).iter().all(|c| !c.contains("upgrade")), "nothing installed");
+        assert!(host_cmds(&h).iter().any(|c| c.starts_with("pct delsnapshot 505 pxu-")), "{:?}", host_cmds(&h));
+        assert!(Registry::load(&h).entries.is_empty());
+        assert_eq!(by(&rep, 506).outcome, Outcome::Cancelled);
+    }
+
+    #[test]
+    fn cancel_once_the_install_started_finishes_the_ct_then_stops() {
+        let h = host("update-cancel-install");
+        let rep = go_cancel(&h, &[506, 507], |e| matches!(e, Event::Step(506, Step::Upgrade)));
+        let r = by(&rep, 506);
+        assert!(matches!(r.outcome, Outcome::Ok | Outcome::Warn), "the CT in the middle of the install is finished: {r:?}");
+        assert!(guest_cmds(&h, 506).iter().any(|c| c.contains("upgrade") || c.contains("dist-upgrade")));
+        assert_eq!(by(&rep, 507).outcome, Outcome::Cancelled);
+        assert!(rep.cancelled);
+    }
+
+    #[test]
+    fn vzdump_is_not_launched_when_the_storage_has_no_room() {
+        let h = host("update-low-space");
+        let rep = go_cancel(&h, &[503], |_| false);
+        let r = by(&rep, 503);
+        assert_eq!((r.outcome, r.step), (Outcome::Failed, Step::Backup), "{r:?}");
+        assert!(r.detail.starts_with("backup skipped: needs ~") && r.detail.contains("storage local has 3.0 GB free") && r.detail.ends_with("CT untouched"), "{}", r.detail);
+        assert!(host_cmds(&h).iter().all(|c| !c.starts_with("vzdump")), "{:?}", host_cmds(&h));
+        assert!(guest_cmds(&h, 503).iter().all(|c| !c.contains("upgrade")));
+    }
+
+    #[test]
+    fn backup_space_defaults_are_ratio_1_and_5_gb_spare() {
+        let h = host("update-low-space");
+        let cfg = Config::load(&h).unwrap();
+        assert_eq!(cfg.backup.space_ratio, 1.0);
+        assert_eq!(cfg.backup.min_free_gb, 5);
     }
 
     #[test]

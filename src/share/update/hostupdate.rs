@@ -238,11 +238,11 @@ fn lock_all(host: &dyn Host) -> Result<Locks, RunError> {
     Ok(Locks(g))
 }
 
-fn quick(cfg: &Config) -> ExecOpts {
+fn quick(cfg: &Config) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(cfg.check.timeout_s), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 
-fn long(secs: u64) -> ExecOpts {
+fn long(secs: u64) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(secs), no_kill_on_timeout: true, env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 
@@ -268,7 +268,7 @@ pub fn repair_dpkg(host: &dyn Host, cfg: &Config, ev_out: &mut dyn FnMut(Event))
     let _locks = lock_all(host)?;
     ev(Event::Queue(vec![(0, "host".into())]));
     ev(Event::Start(0));
-    let mut cx = Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0 };
+    let mut cx = Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0, cancel: None, interrupted: false, root_used_kb: None };
     cx.say(&format!("pxu host update (dpkg repair) · {}", stamp(started_at)));
     cx.step(Step::Preflight);
     let res = match cx.host_cmd(DPKG_CONFIGURE, &long(INSTALL_TIMEOUT_S)) {
@@ -336,7 +336,7 @@ pub fn run_unattended(host: &dyn Host, inv: &Inventory, cfg: &Config, cancel: &A
 
 #[allow(clippy::too_many_arguments)]
 fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostPkg>, unattended: bool, started_at: u64, cancel: &AtomicBool, ev: &mut dyn FnMut(Event)) -> Result<HostOutcome, RunError> {
-    let mut cx = Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0 };
+    let mut cx = Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0, cancel: None, interrupted: false, root_used_kb: None };
     cx.security = confirmed.iter().filter(|p| p.sec).count();
     cx.say(&format!("pxu host update{} · {}", if unattended { " (scheduled run)" } else { "" }, stamp(started_at)));
     // precomprobaciones: sin tocar nada

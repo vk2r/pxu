@@ -22,11 +22,10 @@ detail · config (left) · state & updates (right)
 │  nesting 1 · keyctl 1                                               ││held: docker-ce                                │
 │                                                                     ││                                               │
 │ops                                                                  ││auto-update: yes (config/tag)                  │
-│  snapshots 2 (pxu_pre_202611070430, zfs_auto_5412)                  ││                                               │
+│  snapshots 2 (pxu_pre_202611070430, zfs_auto_5412)                  ││backup before update: yes, mode auto           │
 │  pending changes: none                                              ││                                               │
 │  description:                                                       ││                                               │
 │    Hub with a bind mount and two snapshots                          ││                                               │
-│                                                                     ││                                               │
 │                                                                     ││                                               │
 │                                                                     ││                                               │
 │                                                                     ││                                               │
@@ -36,5 +35,6 @@ detail · config (left) · state & updates (right)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [g] config  [S] schedule  [Esc] back  [?] help
+[q] quit
 config is read from the .conf file (no processes); runtime metrics come from cgroup/pidfile only

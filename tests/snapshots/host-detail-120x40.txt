@@ -31,10 +31,10 @@ detail · host review · u installs host updates after a confirmation
 │  driver 595.112.07 · module for 6.17.13-2-pve: yes                  ││                                               │
 │  dkms nvidia 595.112.07 · 6.17.13-2-pve · installed                 ││                                               │
 │  CT 134 ct-134 · running · NVIDIA 595.112.07 (= host)               ││                                               │
-│  CT 135 ct-135 · stopped · NVIDIA unknown                           ││                                               │
 └─────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 server · u installs host updates after confirmation · a: scheduled run never touches it (host_auto off)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [g] config  [S] schedule  [Esc] back  [?] help
+[q] quit
 host_auto OFF: timer skips the host; press a to include it

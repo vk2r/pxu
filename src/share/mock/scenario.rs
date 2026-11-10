@@ -471,6 +471,12 @@ impl World {
         self.require_fresh = Some(m);
         self
     }
+    /// Espacio libre y total (GB) del storage de backups, tal como lo informa `pvesh get …/storage/<s>/status`.
+    pub fn storage_gb(mut self, avail: f64, total: f64) -> World {
+        self.scenario.storage_avail_gb = Some(avail);
+        self.scenario.storage_total_gb = Some(total);
+        self
+    }
     /// Sección `[backup]` con `mode` (`auto`/`snapshot`/`vzdump`/`none`).
     pub fn backup_mode(mut self, m: &str) -> World {
         self.backup_mode = Some(m.into());

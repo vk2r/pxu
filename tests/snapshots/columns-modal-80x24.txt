@@ -14,11 +14,11 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
   109  ct-109  ru│  [x] GPU                                   │
   110  ct-110  ru│  [x] UPD                                   │es
   111  ct-111  ru│  [x] AUTO                                  │
-  112  ct-112  ru│                                            │
-  113  ct-113  ru│ [Space] show/hide  [Enter] close           │
-▼ 23 below (next └────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────
+  112  ct-112  ru│  [ ] BACKUP                                │
+  113  ct-113  ru│                                            │
+▼ 23 below (next │ [Space] show/hide  [Enter] close           │
+─────────────────└────────────────────────────────────────────┘─────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit

@@ -66,6 +66,8 @@ pub fn host_cmd_is_read_only(argv: &[&str]) -> bool {
         ["apprise", "--config", "/dev/stdin", "-t", _, "-b", _, "-n", _] => true,
         // ¿admite el CT snapshots? Consulta pura de PVE (sin efectos): `{"hasFeature":0|1}`
         ["pvesh", "get", path, "--feature", "snapshot", "--output-format", "json"] => feature_path(path),
+        // espacio libre del storage donde irá un vzdump (`avail`/`total`): consulta pura
+        ["pvesh", "get", path, "--output-format", "json"] => storage_status_path(path),
         _ => false,
     }
 }
@@ -79,6 +81,12 @@ pub fn host_cmd_is_refresh(argv: &[&str]) -> bool {
 fn feature_path(p: &str) -> bool {
     let parts: Vec<&str> = p.split('/').collect();
     matches!(parts.as_slice(), ["", "nodes", node, "lxc", id, "feature"] if crate::share::update::backup::is_pve_id(node) && numeric(id))
+}
+
+/// `/nodes/<nodo>/storage/<storage>/status`, con nodo y storage validados.
+fn storage_status_path(p: &str) -> bool {
+    let parts: Vec<&str> = p.split('/').collect();
+    matches!(parts.as_slice(), ["", "nodes", node, "storage", st, "status"] if crate::share::update::backup::is_pve_id(node) && crate::share::update::backup::is_pve_id(st))
 }
 
 /// Dentro de un CT solo se permite el script de sondeo embebido (nunca otro `sh -c`):

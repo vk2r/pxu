@@ -130,7 +130,7 @@ Code: `src/share/update/mod.rs`. It is the only command that writes.
 4. **Circuit breaker:** `max_consecutive_failures` failures in a row (2) stop the run (with `on_failure = "stop"`, the first failure). The remaining CTs are left `skipped`.
 5. At the end: report, final log and single notification (§4.3).
 
-Cancellation (Ctrl-C/SIGINT/SIGTERM/SIGHUP in the CLI, dialog in the TUI): the run finishes the CT in progress and stops; the following ones are left `cancelled` and the exit is 30. `dpkg`/`apt` are never killed by a cancellation.
+Cancellation (Ctrl-C/SIGINT/SIGTERM/SIGHUP in the CLI, dialog in the TUI): the run finishes the CT in progress and stops; the following ones are left `cancelled` and the exit is 30. `dpkg`/`apt` are never killed by a cancellation. Exception: before the install (pre-checks/backup) the cancel is immediate: only `vzdump` is signalled (SIGTERM; SIGKILL of its group after 120 s), the partial file/snapshot/lock are cleaned up by vzdump itself (pxu verifies it) and the CT ends `cancelled`, untouched.
 
 ### 3.3 Steps per CT
 
@@ -145,6 +145,7 @@ Lock → Preflight → Backup → Refresh+Simulate → Upgrade → Verify → (R
    - `snapshot` / `vzdump`: only that route, no fallback to the other.
    - vzdump: `vzdump <vmid> --mode snapshot --storage <[backup] storage> --compress zstd --zstd 1 --ionice 7 --notes-template "pxu pre-update {{guestname}}"`. The storage of `rootfs:` is read from the `.conf` and recorded; without it no backup is made (the rollback would restore to `local`).
    - `none` (only if set by hand): no backup or rollback; the log and `config check` warn about it.
+   - **Space check:** before vzdump pxu estimates the size (rootfs used from `df -Pk /` + non-bind `mpN` without `backup=0` at their allocated size, × `[backup] space_ratio`) and compares it with the free space of the storage (`pvesh get /nodes/<node>/storage/<storage>/status`, read-only). If less than max(`min_free_gb`, 10% of total) would remain, or the status is unreadable, vzdump is not launched: the CT fails with `backup skipped: needs ~X GB, storage S has Y GB free — CT untouched` and the run goes on with the next CT (also in `pxu update` and the auto-update).
    - **If the backup fails, the CT is not touched** (failure in the `backup` step).
    - **Scope:** the backup and the rollback cover only the rootfs; bind mounts and `mpN` with `backup=0` are neither saved nor reverted (`BACKUP_SCOPE_NOTE`, written in each CT's log).
 4. **Refresh + Simulate.** Probe with refresh (always needed to update). With 0 packages the CT is left as `skipped: already up to date after refresh` and the backup is discarded.
@@ -263,6 +264,8 @@ host_nvidia_auto = false      # …and the host's NVIDIA driver
 mode = "auto"                 # "auto" | "snapshot" | "vzdump" | "none"
 storage = "local"             # PVE storage for vzdumps
 keep = 0                      # pxu backups kept per CT after a successful update (0 = temporary)
+space_ratio = 1.0              # estimated backup size / used size (zstd 1:1)
+min_free_gb = 5               # minimum spare GiB on the storage (or 10% of total, whichever is larger)
 
 [apprise]
 transport = "auto"            # "auto" | "api" | "cli" | "none"
@@ -275,7 +278,7 @@ timeout_s = 10
 retry_delays_ms = [2000, 8000]
 
 [ui]
-columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto"]   # optional: type os cpu ram disk tags gpu upd auto
+columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto"]   # optional: type os cpu ram disk tags gpu upd auto backup (tags and backup hidden by default)
 
 # Per-CT overrides (optional)
 [[ct]]
@@ -292,6 +295,8 @@ Priority of `auto_update`: `[[ct]] auto_update` > `auto_update_tags` tag > no. T
 ### 5.1 Validation and editing from the TUI
 
 The TUI also writes those overrides: `a` toggles the `auto_update` of the selected CT (modal with "today: … → new state"; `y`/Enter confirms, Esc cancels). It only changes the `auto_update` line of that vmid's `[[ct]]` block, or adds a block at the end; comments and order are preserved. The resulting TOML is validated and written atomically (root, `0600`). An override of `false` wins over the CT's tag.
+
+`b` does the same for the backup before the update: it writes `backup = "none"` in the CT's `[[ct]]` block (or adds the block), and re-enabling removes the `backup` key so the CT follows `[backup] mode` again (the block stays, with its other keys). The modal shows the current mode and where it comes from (`[[ct]]` override or `[backup] mode`) and, when disabling, warns that the update runs without backup and without automatic rollback. The host (vmid 0) is not handled here. The list can show the effective mode in the optional `BACKUP` column (`auto`/`snap`/`vzdump`/`none`) and the CT detail shows it too.
 
 `pxu update` and the TUI validate the config the same way as `pxu config check` before using it: unknown values (`on_failure = "Stop"`, `apt_mode = "Upgrade"`) or misspelled keys (`on_falure`) are errors. `pxu update` exits with code 2 and shows them; the TUI starts in read-only mode with the reason in the status bar. Warnings don't block.
 

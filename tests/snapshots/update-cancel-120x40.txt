@@ -5,22 +5,22 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ● 402   ct-402           upgrade           00:00
 · 403   ct-403           pending
 ── live log · 402 ct-402 ───────────────────────────────────────────────────────────────────────────────────────────────
- 00:16:00  401 == verify
- 00:16:00  401 $ [CT 401] dpkg --audit
- 00:16:00  401 dpkg --audit: clean
  00:16:00  401 $ [CT 401] systemctl --failed --no-legend --plain
  00:16:00  401 failed units: 0 before, 0 after
  00:16:00  401 $ pct delsnapshot 401 pxu-20261108031600
  00:16:00  401 OK
  00:16:00  401 backup deleted: snapshot pxu-20261108031600
  00:16:00  401 == result: Ok: 3 → 0 package(s) pending
- 00:16:00  402 == lock     ┌ Cancel run? ───────────────────────────────────────────────────┐
- 00:16:00  402 == pre-check│ [Enter] finish CT 402 (upgrade → verify → restore), then stop  │
- 00:16:00  402 $ [CT 402] d│ [Esc] keep running                                             │
- 00:16:00  402 Filesystem 1│                                                                │
- 00:16:00  402 /dev/loop0 4│ dpkg/apt is never killed mid-install · pending CTs become cance│
- 00:16:00  402 $ [CT 402] s│                                                                │
- 00:16:00  402 == backup   └────────────────────────────────────────────────────────────────┘
+ 00:16:00  402 == lock
+ 00:16:00  402 == pre-checks
+ 00:16:00  402 $ [CT 402] df -Pk /
+ 00:16:00  402 Filesystem 1┌ Cancel run? ───────────────────────────────────────────────────┐
+ 00:16:00  402 /dev/loop0 4│ [Enter] finish CT 402 (upgrade → verify → restore), then stop  │
+ 00:16:00  402 $ [CT 402] s│ [Esc] keep running                                             │
+ 00:16:00  402 == backup   │                                                                │
+ 00:16:00  402 $ pvesh get │ dpkg/apt is never killed mid-install · pending CTs become cance│
+ 00:16:00  402 {"active":1,│                                                                │abled":1}
+ 00:16:00  402 backup space└────────────────────────────────────────────────────────────────┘cal has 800.0 GB free, 100…
  00:16:00  402 $ vzdump 402 --mode snapshot --storage local --compress zstd --zstd 1 --ionice 7 --notes-template pxu pr…
  00:16:00  402 INFO: creating vzdump archive '/var/lib/vz/dump/vzdump-lxc-402-2026_11_08-03_16_00.tar.zst'
  00:16:00  402 INFO: backup finished

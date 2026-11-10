@@ -15,7 +15,7 @@ Código: `src/tui/` — `app.rs` (estado y teclas), `views.rs` (dibujo), `logs.r
 3. **El color nunca es la única señal.** Estados en palabras (`run`, `stopped`), marcas en los pasos (`●` en curso, `✓` ok, `✗` fail, `»` skip, `·` pendiente), cursor con `>` además del video inverso. Funciona con `NO_COLOR`.
 4. **Teclado primero, ratón opcional.** Todo se hace con teclado; cada pantalla declara sus teclas en el pie. El ratón solo actúa en la vista de logs (§4.7).
 5. **Lo caro, bajo pedido.** La vista por defecto vive de archivos de `/etc/pve` y cgroups; el chequeo de paquetes solo corre con `c`/`C`.
-6. **Todo cambio pide confirmación.** `u`, `a`, `S`, `N`, `L` y la fila del host abren un diálogo antes de escribir o ejecutar nada.
+6. **Todo cambio pide confirmación.** `u`, `a`, `b`, `S`, `N`, `L` y la fila del host abren un diálogo antes de escribir o ejecutar nada.
 
 Mínimo cómodo: 80×24; el pie (`keybar`) y las columnas se adaptan al ancho (§3, §5.1).
 
@@ -50,7 +50,7 @@ Formato de datos: updates `n/s` (total/seguridad), tamaños `x/y GB`, edad del �
 
 ## 4. Mapa de teclas
 
-Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
+Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, backup, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
 
 `Ctrl-C` con una corrida de update activa abre el diálogo de cancelación (§7); sin corrida sale.
 
@@ -71,6 +71,7 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | `o` | elegir columnas visibles |
 | `u` | actualizar los CT visibles con updates (pide confirmación); sobre la fila del host, actualiza el host |
 | `a` | auto-update del CT / del host (pide confirmación); en un CT con GPU, ventana del driver NVIDIA |
+| `b` | backup previo al update del CT: activado (sigue `[backup] mode`) / `none` (pide confirmación; el host no aplica) |
 | `g` | vista Config |
 | `S` | diálogo de horario del timer |
 | `l` | logs de las corridas |
@@ -78,7 +79,7 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 
 ### 4.2 Detalle (`detail_key`, `app.rs:1196-1223`)
 
-`↑↓/jk` desplaza · `PgUp PgDn` 10 · `Home` arriba · `u` actualizar este guest · `r` recargar · `c` chequear · `a` auto-update · `g` Config · `S` horario · `?` ayuda · `Esc`/`Backspace` vuelve · `q` sale.
+`↑↓/jk` desplaza · `PgUp PgDn` 10 · `Home` arriba · `u` actualizar este guest · `r` recargar · `c` chequear · `a` auto-update · `b` backup · `g` Config · `S` horario · `?` ayuda · `Esc`/`Backspace` vuelve · `q` sale.
 
 ### 4.3 Resultado del chequeo (`check_key`, `app.rs:1139-1172`)
 
@@ -96,6 +97,7 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | Confirmar update del host | `↑↓/jk` desplazar · `Enter` instalar · `Esc`/`q`/`n` cancelar |
 | Driver NVIDIA | `Space` marcar · `Enter` guardar · `Esc`/`q`/`n` cerrar |
 | Auto-update (`a`) | `y`/`Enter` guardar · `Esc`/`n`/`q` cancelar |
+| Backup (`b`) | `y`/`Enter` guardar · `Esc`/`n`/`q` cancelar |
 | Columnas (`o`) | `Space` mostrar/ocultar · `Enter` cerrar |
 | Cancelar corrida | `Enter` terminar el CT en curso y parar · `Esc` seguir |
 | Horario (`S`) | `Tab`/`↓` y `BackTab`/`↑` campo · `←/→/Space` cambiar · `Enter` validar · `Esc` cancelar; en la confirmación `y`/`Enter` guarda, `b`/`Backspace` vuelve a editar |
@@ -118,7 +120,7 @@ Visor: `↑↓/jk` · `PgUp PgDn`/`Space` página · `g`/`G` principio/final · 
 
 ### 5.1 Lista principal
 
-Cada columna mide lo que mide su contenido (como mínimo su cabecera), con huecos de 2 espacios, alineadas a la izquierda; el ancho sobrante no se reparte. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` y `AUTO` miden max(cabecera, valor más largo entre los guests actuales); `CPU` es fija (6, o 5 en estrecho) porque su valor cambia cada segundo y la tabla no debe saltar. `NAME` va primero con el ancho del nombre más largo y solo se recorta con `…` si no cabe ni sin `TAGS`; `TAGS` se lleva lo que quede hasta su texto más largo y, si le quedan menos de 6 columnas, se oculta (cabecera incluida) en vez de recortar `NAME`. Si todo cabe el resto de la línea queda vacío. La barra de selección cubre toda la fila. Columnas: `ID NAME STATE OS CPU RAM UPD AUTO`, más `TYPE`, `DISK`, `TAGS` y `GPU` según el ancho y la elección de `o` (`ID`, `NAME` y `STATE` siempre; la selección se guarda en `config.toml`). El pie de lista (`views.rs:446-451`) y la línea bajo la tabla (`▼ 21 below …`, resumen del guest seleccionado) cambian con la selección.
+Cada columna mide lo que mide su contenido (como mínimo su cabecera), con huecos de 2 espacios, alineadas a la izquierda; el ancho sobrante no se reparte. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` y `AUTO` miden max(cabecera, valor más largo entre los guests actuales); `CPU` es fija (6, o 5 en estrecho) porque su valor cambia cada segundo y la tabla no debe saltar. `NAME` va primero con el ancho del nombre más largo y solo se recorta con `…` si no cabe ni sin `TAGS`; `TAGS` se lleva lo que quede hasta su texto más largo y, si le quedan menos de 6 columnas, se oculta (cabecera incluida) en vez de recortar `NAME`. Si todo cabe el resto de la línea queda vacío. La barra de selección cubre toda la fila. Columnas: `ID NAME STATE OS CPU RAM UPD AUTO`, más `TYPE`, `DISK`, `TAGS`, `GPU` y `BACKUP` (oculta por defecto; `auto`/`snap`/`vzdump`/`none`) según el ancho y la elección de `o` (`ID`, `NAME` y `STATE` siempre; la selección se guarda en `config.toml`). El pie de lista (`views.rs:446-451`) y la línea bajo la tabla (`▼ 21 below …`, resumen del guest seleccionado) cambian con la selección.
 
 ```
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
@@ -144,7 +146,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 > 103 ct-103 · debian 12 · 7 updates (2 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **La fila del host.** El Proxmox mismo aparece como fila `vmid 0` (`GuestKind::Host`) con su resumen de paquetes en el header (`host: 7 upd`). `u` sobre ella abre su propia confirmación (lista de paquetes agrupada por kernel/firmware/pve/security/other, aviso de reinicio, copia de `/etc` previa, sin rollback automático) y nunca entra en una corrida de CT. `a` sobre ella alterna `[update] host_auto`, el opt-in del timer. Antes de `c` el host aparece como "not reviewed yet: press c".
@@ -173,7 +175,7 @@ pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00
 > 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] de…
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 ```
@@ -200,7 +202,7 @@ pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00
 >│                                                                            │…
 ─└────────────────────────────────────────────────────────────────────────────┘─
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **GPU / NVIDIA.** La columna `GPU` (`NV ✓`, `AMD ✓`, `pass`, `—`) aparece cuando hay GPUs. `a` sobre el host o un CT con GPU abre la ventana del driver NVIDIA: marcar `[ ] Upgrade GPU driver` y `Enter` guarda `host_nvidia_auto`; el timer instala el driver `.run` tras actualizar el host, siempre sin reiniciar. Sin marcar no se guarda nada.
@@ -229,7 +231,7 @@ pxu [MOCK]                                       server · 5/6 up · 1 upd   00:
 C└────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **Columnas (`o`):**
@@ -258,7 +260,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 **Ayuda (`?`).** Texto de `draw_help` (`views.rs:1040-1085`), propio de cada vista:
@@ -280,6 +282,7 @@ px┌ help · any key closes ─────────────────
   │             temporary backup, verify, auto-rollback on failure           │
   │a            toggle scheduled auto-update of the CT (asks first)          │s
   │             host row: host_auto · host/GPU CT: NVIDIA driver window      │
+  │b            toggle the backup before updating the CT (asks first)        │
   │g / S        config view + timer state · S change schedule (asks first)   │
   │l            run logs (one file per update run)                           │
 ▼ │?            this help · q quit                                           │
@@ -317,7 +320,7 @@ detail · config (left) · state & updates (right)
 ────────────────────────────────────────────────────────────────────────────────
 ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [?] help  [q] quit
 config is read from the .conf file (no processes); runtime metrics come from cg…
 ```
 
@@ -442,7 +445,7 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
 ### 5.6 Config, horario y Apprise
@@ -571,11 +574,11 @@ step times update on log lines or state changes · log: /var/log/pxu/run-*.log
 [x] cancel  [↑↓] scroll log  [f] follow  [?] help
 ```
 
-`Enter` marca stop-after: el CT en curso termina su ciclo (upgrade → verify → restore) y los pendientes pasan a `canceled`. **`dpkg`/`apt` nunca se matan a mitad de instalación.** En pasos no destructivos (pre-checks, refresh, backup) se mata al hijo. La corrida emite igualmente su `run_summary` por Apprise. En un chequeo, `Esc` cancela el sondeo en curso y los ya hechos conservan su resultado.
+`Enter` marca stop-after: el CT en curso termina su ciclo (upgrade → verify → restore) y los pendientes pasan a `canceled`. **`dpkg`/`apt` nunca se matan a mitad de instalación.** **Mientras el CT sigue en pre-checks o en el backup vzdump (antes de instalar), `Enter` corta al instante**: pxu envía SIGTERM a `vzdump` (SIGKILL de su grupo a los 120 s), vzdump borra su fichero parcial, su LV de snapshot y el lock del CT, el CT queda `canceled` e intacto, y la barra dice `cancel: [x] → stop now: CT <vmid> is before the install, its backup is aborted and cleaned up, CT untouched`. Desde el paso de instalación la barra y el diálogo mantienen el texto de arriba (terminar el guest y parar). La corrida emite igualmente su `run_summary` por Apprise. En un chequeo, `Esc` cancela el sondeo en curso y los ya hechos conservan su resultado.
 
 ## 8. Modo solo lectura
 
-Badge `[RO]` en el header. Se activa cuando la config falta o es inválida (permisos incorrectos, claves o valores desconocidos); `pxu update` en ese caso sale con código 2. Efectos: `u` queda deshabilitado (`updates disabled in read-only mode (no valid config)`). Siguen disponibles: listar, detalle, chequeo `c`, búsqueda, orden, columnas, logs y el aviso de prueba. `a` puede crear la config ausente (el modal lo avisa) y al guardar se sale de solo lectura. Internamente existe un modo forzado (`forced_ro`) que además rechaza `a`; ninguna opción de línea de comandos lo activa hoy (`main.rs` pasa `false`).
+Badge `[RO]` en el header. Se activa cuando la config falta o es inválida (permisos incorrectos, claves o valores desconocidos); `pxu update` en ese caso sale con código 2. Efectos: `u` queda deshabilitado (`updates disabled in read-only mode (no valid config)`). Siguen disponibles: listar, detalle, chequeo `c`, búsqueda, orden, columnas, logs y el aviso de prueba. `a` y `b` pueden crear la config ausente (el modal lo avisa) y al guardar se sale de solo lectura. Internamente existe un modo forzado (`forced_ro`) que además rechaza `a` y `b`; ninguna opción de línea de comandos lo activa hoy (`main.rs` pasa `false`).
 
 ## 9. Límite sin verificar
 

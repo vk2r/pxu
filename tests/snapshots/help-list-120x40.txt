@@ -22,11 +22,11 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
   117  LXC│             temporary backup, verify, auto-rollback on failure                                   │
   118  LXC│a            toggle scheduled auto-update of the CT (asks first)                                  │
   119  LXC│             host row: host_auto · host/GPU CT: NVIDIA driver window                              │
-  120  LXC│g / S        config view + timer state · S change schedule (asks first)                           │
-  121  LXC│l            run logs (one file per update run)                                                   │
-  122  LXC│?            this help · q quit                                                                   │
-  123  LXC│Columns: UPD pending updates (all/security) · — no data yet (press c)                             │
-  124  LXC│AUTO yes = in the scheduled run · host row: u asks before updating                                │
+  120  LXC│b            toggle the backup before updating the CT (asks first)                                │
+  121  LXC│g / S        config view + timer state · S change schedule (asks first)                           │
+  122  LXC│l            run logs (one file per update run)                                                   │
+  123  LXC│?            this help · q quit                                                                   │
+  124  LXC│Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)                          │
   125  LXC│                                                                                                  │
   126  LXC│read-only: no command that writes can run                                                         │
   127  LXC└──────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -36,5 +36,5 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
-[l] logs  [g] config  [S] schedule  [?] help  [q] quit
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
+[o] columns  [l] logs  [g] config  [S] schedule  [?] help  [q] quit

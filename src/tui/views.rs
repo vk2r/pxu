@@ -137,6 +137,9 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     if app.auto_modal.is_some() {
         draw_auto_modal(f, app, th, area);
     }
+    if app.backup_modal.is_some() {
+        draw_backup_modal(f, app, th, area);
+    }
     if app.nvidia_modal.is_some() {
         draw_nvidia_modal(f, app, th, area);
     }
@@ -214,6 +217,9 @@ fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> 
         if on("auto") {
             post.push(c("AUTO", None, 8));
         }
+        if on("backup") {
+            post.push(c("BACKUP", None, 8));
+        }
         let n = pre.len() + 1 + post.len();
         let used: usize = pre.iter().chain(post.iter()).map(|x| x.w).sum();
         let rest = (width as usize).saturating_sub(2 + used + 2 * (n - 1));
@@ -245,7 +251,7 @@ fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> 
         } else if on("os") {
             v.push(c("OS", None, 6));
         }
-        for (k, t) in [("cpu", "CPU"), ("ram", "RAM"), ("upd", "UPD"), ("auto", "AUTO")] {
+        for (k, t) in [("cpu", "CPU"), ("ram", "RAM"), ("upd", "UPD"), ("auto", "AUTO"), ("backup", "BACKUP")] {
             if on(k) {
                 v.push(c(t, if t == "CPU" { Some(5) } else { None }, 6));
             }
@@ -302,6 +308,11 @@ fn cell(g: &Guest, app: &App, title: &str, w: usize) -> String {
                 "—".into()
             }
         }
+        "BACKUP" => match (g.kind, g.backup.as_str()) {
+            (GuestKind::Lxc, "snapshot") => "snap".into(),
+            (GuestKind::Lxc, m) => m.into(),
+            _ => "—".into(),
+        },
         _ => String::new(),
     }
 }
@@ -337,6 +348,8 @@ fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool, w: u
             }
             "AUTO" if g.auto_update => th.ok(),
             "AUTO" => th.muted(),
+            "BACKUP" if g.kind == GuestKind::Lxc && g.backup == "none" => th.warn(),
+            "BACKUP" => th.muted(),
             _ if g.state != RunState::Running && matches!(c.title, "NAME" | "OS" | "CPU" | "RAM" | "DISK" | "TAGS") => th.muted(),
             _ => Style::default(),
         };
@@ -360,9 +373,9 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let w = area.width;
     // Teclas: una sola línea si caben; si no, dos (la fila sobrante va a la tabla).
     let keys = if w < 112 {
-        keybar_wrap(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("o", "cols"), ("g", "config"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("b", "bkp"), ("o", "cols"), ("g", "cfg"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     } else {
-        keybar_wrap(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("o", "columns"), ("l", "logs"), ("g", "config"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("b", "backup"), ("o", "columns"), ("l", "logs"), ("g", "config"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     };
     let parts = Layout::vertical([
         Constraint::Length(1), // header
@@ -972,6 +985,7 @@ fn state_lines(g: &Guest, app: &App) -> Vec<(String, bool)> {
         l(String::new(), false);
         let why = if g.auto_update { "yes (config/tag)" } else { "no" };
         l(format!("auto-update: {why}"), false);
+        l(format!("backup before update: {}", if g.backup == "none" { "none (no rollback)".to_string() } else { format!("yes, mode {}", g.backup) }), false);
     }
     v
 }
@@ -999,7 +1013,7 @@ fn draw_detail(f: &mut Frame, app: &App, th: &Theme, area: Rect, id: u32) {
         f.render_widget(Paragraph::new("guest vanished (press Esc)"), area);
         return;
     };
-    let mut keys = vec![("↑↓/jk", "scroll"), ("r", "reload"), ("a", "auto"), ("g", "config"), ("S", "schedule"), ("Esc", "back"), ("?", "help"), ("q", "quit")];
+    let mut keys = vec![("↑↓/jk", "scroll"), ("r", "reload"), ("a", "auto"), ("b", "backup"), ("g", "config"), ("S", "schedule"), ("Esc", "back"), ("?", "help"), ("q", "quit")];
     if g.kind != GuestKind::Vm {
         keys.insert(1, ("u", "update (asks)"));
     }
@@ -1097,11 +1111,11 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
             "             temporary backup, verify, auto-rollback on failure",
             "a            toggle scheduled auto-update of the CT (asks first)",
             "             host row: host_auto · host/GPU CT: NVIDIA driver window",
+            "b            toggle the backup before updating the CT (asks first)",
             "g / S        config view + timer state · S change schedule (asks first)",
             "l            run logs (one file per update run)",
             "?            this help · q quit",
-            "Columns: UPD pending updates (all/security) · — no data yet (press c)",
-            "AUTO yes = in the scheduled run · host row: u asks before updating",
+            "Columns: UPD all/sec · — no data (c) · AUTO yes = scheduled · BACKUP (o)",
         ],
         View::Logs if app.logs.viewer.is_some() => vec!["↑↓ / j k     scroll · PgUp PgDn / Space page · mouse wheel", "g / G        top / end", "n / p        next (older) / previous (newer) log", "q / Esc      back to the list of logs", "?            this help"],
         View::Logs => vec!["↑↓ / j k     select · PgUp PgDn 10 · g / G first / last", "Enter        open the log (or double click)", "Esc / l      back to the main screen", "?            this help · q quit"],
@@ -1109,7 +1123,7 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         View::Update => vec!["x / Esc      cancel: finish the CT in progress, then stop", "↑↓ PgUp PgDn scroll the log · f / End follow · Home oldest", "Esc          back to the list (when the run is over)", "?            this help"],
         View::Check => vec!["↑↓ / j k     select CT (packages shown below)", "u            update the CTs with updates (asks first)", "c            re-check (refreshes the indexes) · C / R read-only check", "Enter        guest detail", "Esc          cancel a running check, then back", "?            this help · q quit"],
         View::Detail(_) => vec!["u            update this CT (asks first)", "a            toggle this CT's scheduled auto-update (asks first)",
-            "             host: host_auto · host/GPU CT: NVIDIA driver window", "g / S        config view · change the update schedule", "↑↓ / j k     scroll", "PgUp PgDn    scroll 10 · Home top", "r            reload confs", "Esc          back to the list", "?            this help · q quit"],
+            "             host: host_auto · host/GPU CT: NVIDIA driver window", "b            toggle this CT's backup before updating (asks first)", "g / S        config view · change the update schedule", "↑↓ / j k     scroll", "PgUp PgDn    scroll 10 · Home top", "r            reload confs", "Esc          back to the list", "?            this help · q quit"],
     };
     let w = 100.min(area.width.saturating_sub(4));
     let h = rows.len() as u16 + 4;
@@ -1376,6 +1390,22 @@ fn draw_auto_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let what = if m.vmid == 0 { "scheduled update of the Proxmox HOST".to_string() } else { format!("auto-update for CT {} {}", m.vmid, m.name) };
     let mut lines = vec![Line::styled(trunc(&format!(" {} {what}?", if m.value { "Enable" } else { "Disable" }), w), th.bold()), Line::default()];
     lines.extend(m.lines.iter().map(|l| Line::raw(trunc(&format!(" {l}"), w))));
+    lines.push(Line::default());
+    lines.push(mbar(th, &[("y/Enter", "save"), ("Esc", "cancel")], 2, w));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_backup_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+    let Some(m) = &app.backup_modal else { return };
+    let r = centered(area, 90, (m.lines.len() as u16 + 6).min(area.height.saturating_sub(2)));
+    f.render_widget(Clear, r);
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" confirm ", th.bold())).border_style(th.accent());
+    let inner = blk.inner(r);
+    f.render_widget(blk, r);
+    let w = inner.width as usize;
+    let head = format!(" {} the backup before updating CT {} {}?", if m.disabled { "Disable" } else { "Enable" }, m.vmid, m.name);
+    let mut lines = vec![Line::styled(trunc(&head, w), th.bold()), Line::default()];
+    lines.extend(m.lines.iter().map(|l| Line::styled(trunc(&format!(" {l}"), w), if l.starts_with("WARNING") { th.warn() } else { Style::default() })));
     lines.push(Line::default());
     lines.push(mbar(th, &[("y/Enter", "save"), ("Esc", "cancel")], 2, w));
     f.render_widget(Paragraph::new(lines), inner);
@@ -1665,6 +1695,11 @@ fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), inner);
 }
 
+/// ¿Está el CT `v` antes de instalar (pre-checks, backup, refresco)? Entonces cancelar lo corta en el acto y lo deja intacto.
+fn cancel_stops_now(u: &super::app::UpdateState, v: u32) -> bool {
+    u.queue.iter().find(|q| q.vmid == v).is_some_and(|q| matches!(q.state, QState::Active(s) if s.before_install()))
+}
+
 fn draw_cancel(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let r = centered(area, 66, 7);
     f.render_widget(Clear, r);
@@ -1672,13 +1707,15 @@ fn draw_cancel(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let inner = blk.inner(r);
     f.render_widget(blk, r);
     let cur = app.update.current.map_or("the CT in progress".to_string(), |v| format!("CT {v}"));
-    let fin = format!("finish {cur} (upgrade → verify → restore), then stop");
+    let now = app.update.current.is_some_and(|v| cancel_stops_now(&app.update, v));
+    let fin = if now { format!("stop now: abort {cur}'s backup, clean up") } else { format!("finish {cur} (upgrade → verify → restore), then stop") };
+    let note = if now { " nothing installed yet, CT untouched · pending CTs become canceled" } else { " dpkg/apt is never killed mid-install · pending CTs become canceled" };
     f.render_widget(
         Paragraph::new(vec![
             mbar(th, &[("Enter", &fin)], 1, 200),
             mbar(th, &[("Esc", "keep running")], 1, 200),
             Line::default(),
-            Line::styled(" dpkg/apt is never killed mid-install · pending CTs become canceled", th.muted()),
+            Line::styled(note, th.muted()),
         ]),
         inner,
     );
@@ -1764,6 +1801,7 @@ fn draw_update(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(ll), parts[5]);
     let cancel = if u.running {
         match u.current {
+            Some(v) if cancel_stops_now(u, v) => format!("cancel: [x] → stop now: CT {v} is before the install, its backup is aborted and cleaned up, CT untouched"),
             Some(v) => format!("cancel: [x] → finish current guest ({v}), then stop · killing dpkg mid-install is never done"),
             None => "cancel: [x] → stop after the current step".into(),
         }

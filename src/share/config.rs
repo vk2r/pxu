@@ -24,9 +24,9 @@ pub struct Config {
 }
 
 /// Columnas opcionales de la lista (ID, NAME y STATE son fijas), en el orden en que se muestran en la TUI.
-pub const OPTIONAL_COLUMNS: &[&str] = &["type", "os", "cpu", "ram", "disk", "tags", "gpu", "upd", "auto"];
+pub const OPTIONAL_COLUMNS: &[&str] = &["type", "os", "cpu", "ram", "disk", "tags", "gpu", "upd", "auto", "backup"];
 
-/// `[ui]`: preferencias de la TUI. `columns` ausente ⇒ todas las opcionales salvo `tags`.
+/// `[ui]`: preferencias de la TUI. `columns` ausente ⇒ todas las opcionales salvo `tags` y `backup`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UiCfg {
     #[serde(default)]
@@ -37,7 +37,7 @@ impl UiCfg {
     /// Columnas opcionales visibles, en minúsculas y sin repetir; los nombres desconocidos se ignoran.
     pub fn visible_columns(&self) -> Vec<String> {
         match &self.columns {
-            None => OPTIONAL_COLUMNS.iter().filter(|c| **c != "tags").map(|c| c.to_string()).collect(),
+            None => OPTIONAL_COLUMNS.iter().filter(|c| !matches!(**c, "tags" | "backup")).map(|c| c.to_string()).collect(),
             Some(v) => OPTIONAL_COLUMNS.iter().filter(|c| v.iter().any(|x| x.eq_ignore_ascii_case(c))).map(|c| c.to_string()).collect(),
         }
     }
@@ -187,6 +187,18 @@ pub struct BackupCfg {
     pub keep: Option<usize>,
     /// Obsoleto: se lee como `keep` si éste falta (y `config check` avisa).
     pub keep_snapshots: Option<usize>,
+    /// Tamaño estimado del vzdump = espacio usado del CT × `space_ratio` (zstd: 1.0 = sin compresión, el caso seguro).
+    #[serde(default = "d_ratio")]
+    pub space_ratio: f64,
+    /// Espacio libre mínimo (GB) que debe quedar en el storage tras el vzdump (y como mínimo el 10 % de su tamaño).
+    #[serde(default = "d_min_free_gb")]
+    pub min_free_gb: u64,
+}
+fn d_ratio() -> f64 {
+    1.0
+}
+fn d_min_free_gb() -> u64 {
+    5
 }
 fn d_auto() -> String {
     "auto".into()
@@ -201,7 +213,7 @@ impl BackupCfg {
 }
 impl Default for BackupCfg {
     fn default() -> Self {
-        BackupCfg { mode: d_auto(), storage: d_storage(), keep: None, keep_snapshots: None }
+        BackupCfg { mode: d_auto(), storage: d_storage(), keep: None, keep_snapshots: None, space_ratio: d_ratio(), min_free_gb: d_min_free_gb() }
     }
 }
 
@@ -268,6 +280,14 @@ impl Config {
         self.ct.iter().find(|c| c.vmid == vmid).and_then(|c| c.backup.as_deref()).unwrap_or(&self.backup.mode)
     }
 
+    /// De dónde viene el modo de backup de un CT: `[[ct]] backup` (override) o `[backup] mode` (global).
+    pub fn backup_why(&self, vmid: u32) -> String {
+        match self.ct.iter().find(|c| c.vmid == vmid).and_then(|c| c.backup.as_deref()) {
+            Some(m) => format!("{m} by [[ct]] override"),
+            None => format!("{} by [backup] mode (global)", self.backup.mode),
+        }
+    }
+
     pub fn keep_for(&self, vmid: u32) -> usize {
         self.ct.iter().find(|c| c.vmid == vmid).and_then(|c| c.keep).unwrap_or_else(|| self.backup.keep())
     }
@@ -315,7 +335,7 @@ const KEYS: &[(&str, &[&str])] = &[
     ("general", &["nice", "io_class", "log_retention_days", "logs_per_ct"]),
     ("check", &["refresh", "refresh_min_age_hours", "timeout_s", "index_stale_days"]),
     ("update", &["auto_update_tags", "stopped", "require_fresh_check_minutes", "min_free_mb", "reboot", "apt_mode", "on_failure", "max_consecutive_failures", "timeout_min", "host_auto", "host_nvidia_auto"]),
-    ("backup", &["mode", "storage", "keep"]),
+    ("backup", &["mode", "storage", "keep", "space_ratio", "min_free_gb"]),
     ("ui", &["columns"]),
     ("apprise", &["transport", "api_url", "api_key", "urls", "tag", "on", "timeout_s", "retry_delays_ms"]),
 ];
@@ -440,6 +460,9 @@ fn validate_text_into(host: &dyn Host, text: &str, v: &mut Validation) {
     oneof(v, "[update] apt_mode", &cfg.update.apt_mode, &["dist-upgrade", "upgrade"]);
     oneof(v, "[update] on_failure", &cfg.update.on_failure, &["continue", "stop"]);
     oneof(v, "[backup] mode", &cfg.backup.mode, MODES);
+    if !(0.1..=4.0).contains(&cfg.backup.space_ratio) {
+        v.errors.push(format!("[backup] space_ratio = {}: expected 0.1..4.0", cfg.backup.space_ratio));
+    }
     oneof(v, "[apprise] transport", &cfg.apprise.transport, &["auto", "api", "cli", "none"]);
     if cfg.update.max_consecutive_failures == 0 {
         v.errors.push("[update] max_consecutive_failures must be >= 1".into());
@@ -502,6 +525,47 @@ pub fn set_auto_update(text: &str, vmid: u32, value: bool) -> Result<String, Str
         }
     }
     Ok(doc.to_string())
+}
+
+/// Pone `backup = "none"` en el bloque `[[ct]]` de `vmid` (`disabled`; añade el bloque si falta) o quita la clave `backup`
+/// para heredar el `[backup] mode` global (`!disabled`; el bloque se conserva aunque quede con solo `vmid`). Si el global es "none", heredar no
+/// activaría nada: entonces `!disabled` escribe `backup = "auto"` en el bloque (lo crea si falta). Conserva comentarios y orden.
+pub fn set_backup(text: &str, vmid: u32, disabled: bool) -> Result<String, String> {
+    use toml_edit::{value as val, ArrayOfTables, DocumentMut, Item, Table};
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("TOML syntax: {e}"))?;
+    let global_none = doc.get("backup").and_then(|b| b.get("mode")).and_then(|m| m.as_str()) == Some("none");
+    if !disabled && !global_none && doc.get("ct").is_none() {
+        return Ok(doc.to_string());
+    }
+    let item = doc.entry("ct").or_insert_with(|| Item::ArrayOfTables(ArrayOfTables::new()));
+    let cts = item.as_array_of_tables_mut().ok_or("`ct` is not an array of tables ([[ct]])")?;
+    let at = cts.iter().position(|t| t.get("vmid").and_then(|v| v.as_integer()) == Some(vmid as i64));
+    match (at.and_then(|i| cts.get_mut(i)), disabled) {
+        (Some(t), true) => t["backup"] = val("none"),
+        (Some(t), false) if global_none => t["backup"] = val("auto"),
+        (Some(t), false) => {
+            t.remove("backup");
+        }
+        (None, _) if !disabled && !global_none => {}
+        (None, _) => {
+            let mut t = Table::new();
+            t["vmid"] = val(vmid as i64);
+            t["backup"] = val(if disabled { "none" } else { "auto" });
+            cts.push(t);
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// Activa/desactiva el backup previo al update de un CT en `/etc/pxu/config.toml`. Valida el resultado ANTES de escribir (atómico, como `write_auto_update`).
+pub fn write_backup(host: &dyn Host, vmid: u32, disabled: bool) -> Result<(), String> {
+    let old = read_config_text(host)?;
+    let new = set_backup(&old, vmid, disabled)?;
+    let v = validate_text(host, &new);
+    if let Some(e) = v.errors.iter().chain(v.typos.iter()).next() {
+        return Err(format!("the resulting config would be invalid ({e}): nothing was written"));
+    }
+    host.write_config(new.as_bytes()).map_err(|e| format!("{CONFIG_PATH}: {e}"))
 }
 
 /// Pone `[update] host_auto = value`, conservando el resto del archivo.
@@ -860,6 +924,52 @@ mod tests {
         let out2 = set_auto_update(src2, 7, true).unwrap();
         assert!(out2.starts_with("# c\n[[ct]]\nvmid = 7\nkeep = 1\nauto_update = true\n"), "{out2}");
         assert!(out2.ends_with("[backup]\nmode = \"auto\"\n"), "{out2}");
+    }
+
+    #[test]
+    fn set_backup_adds_none_removes_the_override_and_keeps_the_rest() {
+        let src = "# mi config\n[[ct]]\nvmid = 105 # web\nauto_update = true\n\n[[ct]]\nvmid = 7\nbackup = \"vzdump\"\n";
+        let out = set_backup(src, 105, true).unwrap();
+        assert!(out.starts_with("# mi config\n") && out.contains("vmid = 105 # web") && out.contains("auto_update = true") && out.contains("backup = \"none\""), "{out}");
+        let c: Config = toml::from_str(&out).unwrap();
+        assert_eq!(c.backup_mode(105), "none");
+        assert_eq!(c.backup_mode(7), "vzdump", "the other CT is untouched");
+        // volver a activar: la clave desaparece, el resto (y el bloque) se queda
+        let back = set_backup(&out, 105, false).unwrap();
+        assert_eq!(back, src, "round trip");
+        // el bloque con solo vmid se conserva
+        let only = set_backup("[[ct]]\nvmid = 9\nbackup = \"none\"\n", 9, false).unwrap();
+        assert_eq!(only, "[[ct]]\nvmid = 9\n");
+        // override snapshot/vzdump → none
+        assert!(set_backup(src, 7, true).unwrap().contains("vmid = 7\nbackup = \"none\""));
+    }
+
+    #[test]
+    fn set_backup_re_enable_with_global_none_writes_auto() {
+        let src = "[backup]\nmode = \"none\"\n\n[[ct]]\nvmid = 4\nauto_update = true\n";
+        let out = set_backup(src, 4, false).unwrap();
+        assert!(out.contains("auto_update = true\nbackup = \"auto\""), "{out}");
+        let c: Config = toml::from_str(&out).unwrap();
+        assert_eq!(c.backup_mode(4), "auto");
+        assert_eq!(c.backup_mode(5), "none", "the others keep the global none");
+        // sin bloque: se crea
+        let out = set_backup("[backup]\nmode = \"none\"\n", 6, false).unwrap();
+        assert!(out.ends_with("[[ct]]\nvmid = 6\nbackup = \"auto\"\n"), "{out}");
+        // volver a desactivar el CT: "none" otra vez
+        assert_eq!(toml::from_str::<Config>(&set_backup(&out, 6, true).unwrap()).unwrap().backup_mode(6), "none");
+    }
+
+    #[test]
+    fn set_backup_creates_a_block_when_missing_and_does_nothing_to_re_enable_an_absent_one() {
+        let out = set_backup("[update]\nhost_auto = false\n", 9, true).unwrap();
+        assert!(out.ends_with("[[ct]]\nvmid = 9\nbackup = \"none\"\n") && out.starts_with("[update]"), "{out}");
+        assert_eq!(set_backup("[update]\n", 9, false).unwrap(), "[update]\n");
+        assert_eq!(set_backup("", 9, false).unwrap(), "");
+        assert_eq!(set_backup("", 5, true).unwrap(), "[[ct]]\nvmid = 5\nbackup = \"none\"\n");
+        assert!(set_backup("[update\n", 5, true).is_err());
+        let c: Config = toml::from_str("[backup]\nmode = \"snapshot\"\n[[ct]]\nvmid = 3\nbackup = \"none\"\n").unwrap();
+        assert_eq!(c.backup_why(3), "none by [[ct]] override");
+        assert_eq!(c.backup_why(4), "snapshot by [backup] mode (global)");
     }
 
     #[test]

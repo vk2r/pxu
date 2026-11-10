@@ -52,6 +52,8 @@ pub struct Guest {
     pub disk_bytes: Option<u64>,
     pub onboot: bool,
     pub auto_update: bool,
+    /// Modo de backup efectivo antes del update (`[[ct]] backup` o `[backup] mode`): auto | snapshot | vzdump | none.
+    pub backup: String,
     pub conf_path: String,
     pub conf: Conf,
     pub check: Option<CheckInfo>,

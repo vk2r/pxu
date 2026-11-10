@@ -21,4 +21,4 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
 [↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit
+[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit

@@ -22,10 +22,10 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
   117  LXC   ct-117  stopped  debian │  [x] GPU                                   │   —
   118  LXC   ct-118  stopped  debian │  [x] UPD                                   │   —
   119  LXC   ct-119  stopped  debian │  [x] AUTO                                  │   yes
-  120  LXC   ct-120  run      alpine │                                            │   —
-  121  LXC   ct-121  run      debian │ [Space] show/hide  [Enter] close           │   —
-  122  LXC   ct-122  run      debian └────────────────────────────────────────────┘   —
-  123  LXC   ct-123  run      debian 12          —  0.3/1.0 GB  5.0 GB   0            yes
+  120  LXC   ct-120  run      alpine │  [ ] BACKUP                                │   —
+  121  LXC   ct-121  run      debian │                                            │   —
+  122  LXC   ct-122  run      debian │ [Space] show/hide  [Enter] close           │   —
+  123  LXC   ct-123  run      debian └────────────────────────────────────────────┘   yes
   124  LXC   ct-124  run      debian 12          —  0.2/0.5 GB  6.0 GB   3/1          —
   125  LXC   ct-125  run      ubuntu 24.04       —  0.3/1.0 GB  2.0 GB   0            yes
   126  LXC   ct-126  run      alpine 3.20        —  0.2/0.5 GB  3.0 GB   0            —
@@ -36,5 +36,5 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
-[l] logs  [g] config  [S] schedule  [?] help  [q] quit
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
+[o] columns  [l] logs  [g] config  [S] schedule  [?] help  [q] quit
