@@ -1,0 +1,24 @@
+pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00:16
+[All 6]  Run 5   Stop 1   Upd 1  / search…
+────────────────────────────────────────────────────────────────────────────────
+    ID  NAME                   STATE    GPU       CPU  RAM           UPD    AUTO
+>    0  server                 run      NV ✓        —  24.4/62.5 GB  7/2    —
+   131  ct-131                 run      AMD ✓       —  0.2/0.5 GB    0      —
+   134  ct-134                 run      NV ✓        —  0.2/0.5 GB    1/0    —
+ ┌ host: dpkg needs repair ───────────────────────────────────────────────────┐
+ │ `dpkg --audit` reports a half-configured system:                           │
+ │   The following packages are only half configured:                         │
+ │    pve-manager  half-configured                                            │
+ │                                                                            │
+ │ Offer: run `dpkg --configure -a`, then review the update again.            │
+ │                                                                            │
+ │ [Enter] run dpkg --configure -a  [Esc] cancel                              │
+ │                                                                            │
+ └────────────────────────────────────────────────────────────────────────────┘
+
+
+────────────────────────────────────────────────────────────────────────────────
+> 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] de…
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

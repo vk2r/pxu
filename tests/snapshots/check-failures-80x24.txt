@@ -1,0 +1,24 @@
+pxu · check [RO] [MOCK]            read-only · finished 00:16 · took 0 s   00:16
+3 checked · 2 skipped · 3 with updates · 9 packages (3 security) · 0 stale inde…
+     ID  NAME            PM      INDEX  UPD  SEC  REBOOT  RESULT
+>   104  ct-104          apt        3h    3    1  no      ok
+    105  ct-105          apt        3h    3    1  no      ok
+    106  ct-106          apt        3h    3    1  no      ok
+    107  ct-107          —           —    —    —  —       timeout
+    108  ct-108          —           —    —    —  —       skip: locked: backup
+    109  ct-109          —           —    —    —  —       skip: stopped
+    110  ct-110          —           —    —    —  —       error: probe did not …
+
+
+
+ packages · 104 ct-104 · apt ───────────────────────────────────────────────────
+curl                      8.5               → 8.6               sec
+libssl3                   3.0.1             → 3.0.2
+bash                      5.2               → 5.2.1
+held: none · reboot required: no
+
+
+────────────────────────────────────────────────────────────────────────────────
+read-only: 1 command per CT, nothing written in the guests · INDEX = age of the…
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [?] help  [q] quit

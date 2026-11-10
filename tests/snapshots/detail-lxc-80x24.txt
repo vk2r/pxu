@@ -1,0 +1,24 @@
+pxu · guest 103 · ct-103 [RO] [MOCK]              LXC · server · running   00:16
+detail · config (left) · state & updates (right)
+────────────────────────────────────────────────────────────────────────────────
+┌ config · /etc/pve/nodes/server/lxc/103.conf ─────────────────────────────────┐
+│vmid 103 · hostname ct-103 · type LXC · node server                           │
+│state running · ostype debian · arch amd64                                    │
+│unprivileged 1 · onboot 1                                                     │
+│tags apps,auto · template no                                                  │
+│                                                                              │
+│resources                                                                     │
+│  cores 4                                                                     │
+│  memory 1024 MB · swap 512 MB                                                │
+│  rootfs local-zfs:subvol-103-disk-0 · 5.0 GB                                 │
+│  mp0 local-zfs:subvol-103-mp0 → /mnt/data · 20.0 GB · backup=1               │
+│                                                                              │
+│network                                                                       │
+│  net0 name=eth0 bridge=vmbr0 ip=192.168.1.29/24 firewall=1                   │
+│       hwaddr BC:24:11:2A:67:D1 · gw 192.168.1.1                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
+────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [?] help  [q] quit
+config is read from the .conf file (no processes); runtime metrics come from cg…

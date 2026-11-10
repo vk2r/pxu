@@ -1,0 +1,24 @@
+pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
+ All 37   Run 34  [Stop 3]  Upd 13  / search…
+────────────────────────────────────────────────────────────────────────────────
+    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+>  117  ct-117           stopped  debian            —  —/1.0 GB      —      —
+   118  ct-118           stopped  debian            —  —/0.5 GB      —      —
+   119  ct-119           stopped  debian            —  —/1.0 GB      —      yes
+
+
+
+
+
+
+
+
+
+
+
+— filter: stopped · 3 guests
+────────────────────────────────────────────────────────────────────────────────
+> 117 ct-117 · debian · no check data · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

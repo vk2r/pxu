@@ -1,0 +1,24 @@
+pxu · guest 0 · server [RO] [MOCK]               HOST · server · running   00:16
+detail · host review · u installs host updates after a confirmation
+────────────────────────────────────────────────────────────────────────────────
+┌ host · packages, repos, GPUs ────────────────────────────────────────────────┐
+│kernel (2)                                                                    │
+│  proxmox-kernel-6.17 6.17.9-1 → 6.17.13-2                                    │
+│  proxmox-default-kernel 2.0.1 → 2.0.2                                        │
+│                                                                              │
+│firmware (1)                                                                  │
+│  pve-firmware 3.16-1 → 3.17-2                                                │
+│                                                                              │
+│pve (1)                                                                       │
+│  pve-manager 9.1.1 → 9.1.4                                                   │
+│                                                                              │
+│security (2)                                                                  │
+│  libc6 2.36-9+deb12u9 → 2.36-9+deb12u10                                      │
+│  openssl 3.0.16-1 → 3.0.17-1                                                 │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+server · u installs host updates after confirmation · a: scheduled run never to…
+────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [?] help  [q] quit
+host_auto OFF: timer skips the host; press a to include it

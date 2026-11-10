@@ -1,0 +1,24 @@
+pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
+ All 37   Run 34   Stop 3  [Upd 13] / search…
+────────────────────────────────────────────────────────────────────────────────
+    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+>  101  ct-101           run      debian 12         —  0.3/1.0 GB    4/1    —
+   102  ct-102           run      debian 12         —  0.2/0.5 GB    2/1    —
+   103  ct-103           run      debian 12         —  0.3/1.0 GB    7/2    yes
+   104  ct-104           run      alpine 3.20       —  0.2/0.5 GB    4/1    —
+   106  ct-106           run      debian 12         —  0.2/0.5 GB    3/1    yes
+   107  ct-107           run      debian 12         —  0.3/1.0 GB    4/1    —
+   108  ct-108           run      debian 12         —  0.2/0.5 GB    2/1    yes
+   110  ct-110           run      debian 12         —  0.2/0.5 GB    4/1    yes
+   112  ct-112           run      alpine 3.20       —  0.2/0.5 GB    3/1    —
+   114  ct-114           run      debian 12         —  0.2/0.5 GB    2/1    —
+   121  ct-121           run      debian 12         —  0.3/1.0 GB    3/1    —
+   122  ct-122           run      debian 12         —  0.2/0.5 GB    4/1    —
+   124  ct-124           run      debian 12         —  0.2/0.5 GB    3/1    —
+
+— filter: updates · 13 guests
+────────────────────────────────────────────────────────────────────────────────
+> 101 ct-101 · debian 12 · 4 updates (1 security) · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

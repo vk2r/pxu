@@ -1,0 +1,40 @@
+pxu · config [MOCK]                                                                                                00:16
+config · automatic update schedule (systemd timer pxu-update) and notifications (Apprise)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌ Schedule ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ units installed : yes                                                                                                │
+│ enabled         : yes (state: active)                                                                                │
+│ schedule        : Mon..Fri *-*-* 03:00                                                                               │
+│ next run        : Tue 2026-11-10 04:35:12 -03                                                                        │
+│ times are the server's                                                                                               │
+│                                                                                                                      │
+│ config          : /etc/pxu/config.toml                                                                               │
+│ CTs with auto-update: 8                                                                                              │
+│ host_auto       : no — the scheduled run never touches the host                                                      │
+│ log rete┌ Notifications (Apprise) ─────────────────────────────────────────────────────────────────────────┐         │
+│         │ > API address              http://apprise.local:8000_                                            │         │
+│ Notifica│   Sends with               (•) saved key in Apprise API  ( ) urls                                │         │
+│ status  │   API key                  (stored — leave empty to keep)                                        │         │
+│ api_url │   Notify on                [x] updates_found                                                     │         │
+│ api_key │                            [x] update_failed                                                     │         │
+│ events  │                            [x] run_summary                                                       │         │
+│         │                            [x] check_error                                                       │         │
+│         │                                                                                                  │         │
+│         │ secrets are never shown; what you type appears as dots                                           │         │
+│         │                                                                                                  │         │
+│         │ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel                                  │         │
+│         └──────────────────────────────────────────────────────────────────────────────────────────────────┘         │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[S] schedule  [N] notifications  [L] log retention  [t] test notice
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[S] schedule  [N] notifications  [L] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
+the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; then the CTs with auto-update)

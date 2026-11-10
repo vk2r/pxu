@@ -1,0 +1,40 @@
+pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 guests · 34 running · 13 with updates   00:16
+[All 37]   Running 34    Stopped 3    Updates 13   / search name, tag, id…                                    sort: vmid
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     ID  TYPE  NAME                     STATE    OS                     CPU  RAM            DISK       UPD all/sec  AUTO
+>   100  LXC   ct-100                   run      debian 12                —  0.2/0.5 GB     2.0 GB     0            —
+    101  LXC   ct-101                   run      debian 12                —  0.3/1.0 GB     3.0 GB     4/1          —
+    102  LXC   ct-102                   run      debian 12                —  0.2/0.5 GB     4.0 GB     2/1          —
+    103  LXC   ct-103                   run      debian 12                —  0.3/1.0 GB     25.0 GB    7/2          yes
+    104  LXC   ct-104                   run      alpine 3.20              —  0.2/0.5 GB     6.0 GB     4/1          —
+    105  LXC   ct-105                   run      fedora 41                —  0.3/1.0 GB     2.0 GB     0            yes
+    106  LXC   ct-106                   run      debian 12                —  0.2/0.5 GB     3.0 GB     3/1          yes
+    107  LXC   ct-107                   run      debian 12                —  0.3/1.0 GB     4.0 GB     4/1          —
+    108  LXC   ct-108                ┌ columns ───────────────────────────────────┐5 GB     5.0 GB     2/1          yes
+    109  LXC   ct-109                │ ID, NAME and STATE are always shown        │0 GB     6.0 GB     0            —
+    110  LXC   ct-110                │                                            │5 GB     2.0 GB     4/1          yes
+    111  LXC   ct-111                │> [x] TYPE                                  │0 GB     3.0 GB     0            —
+    112  LXC   ct-112                │  [x] OS                                    │5 GB     4.0 GB     3/1          —
+    113  LXC   ct-113                │  [x] CPU                                   │0 GB     5.0 GB     0            —
+    114  LXC   ct-114                │  [x] RAM                                   │5 GB     6.0 GB     2/1          —
+    115  LXC   ct-115                │  [x] DISK                                  │0 GB     2.0 GB     0            —
+    116  LXC   ct-116                │  [ ] TAGS                                  │5 GB     3.0 GB     0            yes
+    117  LXC   ct-117                │  [x] GPU                                   │GB       4.0 GB     —            —
+    118  LXC   ct-118                │  [x] UPD                                   │GB       5.0 GB     —            —
+    119  LXC   ct-119                │  [x] AUTO                                  │GB       6.0 GB     —            yes
+    120  LXC   ct-120                │                                            │5 GB     2.0 GB     0            —
+    121  LXC   ct-121                │ [Space] show/hide  [Enter] close           │0 GB     3.0 GB     3/1          —
+    122  LXC   ct-122                └────────────────────────────────────────────┘5 GB     4.0 GB     4/1          —
+    123  LXC   ct-123                   run      debian 12                —  0.3/1.0 GB     5.0 GB     0            yes
+    124  LXC   ct-124                   run      debian 12                —  0.2/0.5 GB     6.0 GB     3/1          —
+    125  LXC   ct-125                   run      ubuntu 24.04             —  0.3/1.0 GB     2.0 GB     0            yes
+    126  LXC   ct-126                   run      alpine 3.20              —  0.2/0.5 GB     3.0 GB     0            —
+    127  LXC   ct-127                   run      ubuntu 24.04             —  0.3/1.0 GB     4.0 GB     0            —
+    128  LXC   ct-128                   run      ubuntu 24.04             —  0.2/0.5 GB     5.0 GB     0            —
+    129  LXC   ct-129                   run      debian 12                —  0.3/1.0 GB     6.0 GB     0            —
+▼ 7 below (next 130 ct-130)   — filter: all · 37 guests
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [g] config  [?] help  [q] quit
+[r] reload  [a] auto  [o] columns  [l] logs  [S] schedule

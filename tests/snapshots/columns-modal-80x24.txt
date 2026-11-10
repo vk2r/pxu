@@ -1,0 +1,24 @@
+pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
+[All 37]  Run 34   Stop 3   Upd 13  / search…
+────────────────────────────────────────────────────────────────────────────────
+    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+>  100  ct-100   ┌ columns ───────────────────────────────────┐GB    0      —
+   101  ct-101   │ ID, NAME and STATE are always shown        │GB    4/1    —
+   102  ct-102   │                                            │GB    2/1    —
+   103  ct-103   │> [x] TYPE                                  │GB    7/2    yes
+   104  ct-104   │  [x] OS                                    │GB    4/1    —
+   105  ct-105   │  [x] CPU                                   │GB    0      yes
+   106  ct-106   │  [x] RAM                                   │GB    3/1    yes
+   107  ct-107   │  [x] DISK                                  │GB    4/1    —
+   108  ct-108   │  [ ] TAGS                                  │GB    2/1    yes
+   109  ct-109   │  [x] GPU                                   │GB    0      —
+   110  ct-110   │  [x] UPD                                   │GB    4/1    yes
+   111  ct-111   │  [x] AUTO                                  │GB    0      —
+   112  ct-112   │                                            │GB    3/1    —
+   113  ct-113   │ [Space] show/hide  [Enter] close           │GB    0      —
+▼ 23 below (next └────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+> 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

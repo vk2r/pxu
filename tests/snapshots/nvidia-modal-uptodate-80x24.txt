@@ -1,0 +1,24 @@
+pxu [MOCK]                                       server · 5/6 up · 1 upd   00:16
+[All 6]  Run 5   Stop 1   Upd 1  / search…
+─┌ NVIDIA driver ─────────────────────────────────────────────────────────────┐─
+ │ NVIDIA driver of CT 134 ct-134                                             │O
+>│                                                                            │
+ │ [x] Upgrade GPU driver                                                     │
+ │                                                                            │
+ │ Installed:  595.112.07                                                     │
+ │ Latest:     595.112.07 (up to date)                                        │
+ │                                                                            │
+ │ When checked, the scheduled run (after the host update):                   │
+ │   • downloads the newest 595.x and verifies it (sha256 + --check)          │
+ │   • test-builds it, stops the GPU CTs, installs it with DKMS               │
+ │   • checks nvidia-smi; GPU CTs get the same version (libs only)            │
+ │   • this CT restarts after getting the libs                                │
+ │ Skipped if a host reboot is pending. pxu never reboots the host.           │
+ │                                                                            │
+ │ Saves: [[ct]] 134 nvidia_auto + [update] host_nvidia_auto                  │
+ │                                                                            │
+─│ [Space] check  [Enter] save  [Esc] close                                   │─
+C└────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

@@ -1,0 +1,24 @@
+pxu · update run [MOCK]                       started 00:16 · sequential   00:16
+ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
+── queue ───────────────────────────────────────────────────────────────────────
+✓ 401   ct-401           ok                0m00s  3 → 0 package(s) pending
+● 402   ct-402           upgrade           00:00
+· 403   ct-403           pending
+── live log · 402 ct-402 ───────────────────────────────────────────────────────
+ 00:16:00  402 $ vzdump 402 --mode snapshot --storage local --compress zstd --z…
+ 00:16:┌ Cancel run? ───────────────────────────────────────────────────┐-402-2…
+ 00:16:│ [Enter] finish CT 402 (upgrade → verify → restore), then stop  │
+ 00:16:│ [Esc] keep running                                             │8-03_1…
+ 00:16:│                                                                │fs (sy…
+ 00:16:│ dpkg/apt is never killed mid-install · pending CTs become cance│
+ 00:16:│                                                                │
+ 00:16:└────────────────────────────────────────────────────────────────┘
+ 00:16:00  402 == upgrade
+ 00:16:00  402 $ [CT 402] apk upgrade --no-cache
+ 00:16:00  402 Reading package lists...
+ 00:16:00  402 Calculating upgrade... Done
+────────────────────────────────────────────────────────────────────────────────
+cancel: [x] → finish current guest (402), then stop · killing dpkg mid-install …
+step times update on log lines or state changes · log: /var/log/pxu/run-*.log
+────────────────────────────────────────────────────────────────────────────────
+[x] cancel  [↑↓] scroll log  [f] follow  [?] help

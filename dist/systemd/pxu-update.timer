@@ -1,0 +1,10 @@
+[Unit]
+Description=pxu: chequeo y actualización diaria de LXC
+
+[Timer]
+OnCalendar=*-*-* 04:30
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

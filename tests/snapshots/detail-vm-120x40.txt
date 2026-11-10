@@ -1,0 +1,40 @@
+pxu · guest 203 · vm-203 [RO] [MOCK]                                                       VM · server · running   00:16
+detail · config (left) · state (right) · pxu checks and updates LXC only — VMs are listed for reference
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌ config · /etc/pve/nodes/server/qemu-server/203.conf ────────────────┐┌ state ────────────────────────────────────────┐
+│vmid 203 · name vm-203 · type VM · node server                       ││running                                        │
+│state running · ostype other · machine q35                           ││cpu — · mem —/2.0 GB                           │
+│bios ovmf · agent 1 · onboot 1 · startup up=1                        ││disk allocated 32.0 GB                         │
+│protection 1 · tags infra · template no                              ││gpu: PCI passthrough (hostpci)                 │
+│                                                                     ││                                               │
+│cpu & memory                                                         ││updates                                        │
+│  cpu host · sockets 1 × cores 2 · numa 0                            ││  — pxu checks and updates LXC only            │
+│  memory 2048 MB · balloon 0 (disabled)                              ││  nothing is run inside VMs                    │
+│                                                                     ││                                               │
+│disks (scsihw virtio-scsi-single)                                    ││                                               │
+│  scsi0 local-lvm:vm-203-disk-0 · 32.0 GB                            ││                                               │
+│                                                                     ││                                               │
+│network & passthrough                                                ││                                               │
+│  net0 virtio=BC:24:11:2B:CB:03,bridge=vmbr0,firewall=1              ││                                               │
+│  hostpci0 0000:00:1f.6,pcie=1                                       ││                                               │
+│  usb0 host=0bda:8153                                                ││                                               │
+│                                                                     ││                                               │
+│boot                                                                 ││                                               │
+│  order=scsi0;net0                                                   ││                                               │
+│                                                                     ││                                               │
+│ops                                                                  ││                                               │
+│  snapshots 0                                                        ││                                               │
+│  pending changes: none                                              ││                                               │
+│  description:                                                       ││                                               │
+│    VM vm-203                                                        ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+└─────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+vm-203 · read from /etc/pve/nodes/server/qemu-server/203.conf
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] scroll  [r] reload  [a] auto  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
+config is read from the .conf file (no processes); runtime metrics come from cgroup/pidfile only

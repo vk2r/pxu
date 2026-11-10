@@ -1,0 +1,40 @@
+pxu · Proxmox Updater [MOCK]                   node server · 6 guests · 5 running · 1 with updates · host: 7 upd   00:16
+[All 6]   Running 5    Stopped 1    Updates 1   / search name, tag, id…                                       sort: vmid
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     ID  TYPE  NAME           STATE    OS                     CPU  RAM            DISK       GPU       UPD all/sec  AUTO
+>     0  HOST  server         run      proxmox ve 9.0.11        —  24.4/62.5 GB   —          NVIDIA ✓  7/2          —
+    131  LXC   ct-131         run      debian 12                —  0.2/0.5 GB     4.0 GB     AMD ✓     0            —
+    134  LXC   ct-134         run      debian 12                —  0.2/0.5 GB     4.0 GB     NVIDIA ✓  1/0          —
+    135  LXC   ct-135         stopped  debian 12                —  —/0.5 GB       4.0 GB     NVIDIA ?  0            —
+    140  LXC   ct-140         run      debian 12                —  0.2/0.5 GB     4.0 GB     —         0            —
+    150  LX┌ confirm host update ───────────────────────────────────────────────────────────────────────────┐       —
+    200  VM│ Install 7 packages on the Proxmox host (2 security)?                                           │       —
+           │                                                                                                │
+           │ kernel (2)                                                                                     │
+           │   proxmox-kernel-6.17 6.17.9-1 → 6.17.13-2                                                     │
+           │   proxmox-default-kernel 2.0.1 → 2.0.2                                                         │
+           │ firmware (1)                                                                                   │
+           │   pve-firmware 3.16-1 → 3.17-2                                                                 │
+           │ pve (1)                                                                                        │
+           │   pve-manager 9.1.1 → 9.1.4                                                                    │
+           │ security (2)                                                                                   │
+           │   libc6 2.36-9+deb12u9 → 2.36-9+deb12u10                                                       │
+           │   openssl 3.0.16-1 → 3.0.17-1                                                                  │
+           │ other (1)                                                                                      │
+           │   htop 3.4.0-1 → 3.4.1-1                                                                       │
+           │                                                                                                │
+           │ ! a new kernel: a reboot will be needed (pxu never reboots)                                    │
+           │ /etc is backed up first · no automatic rollback · log in /var/log/pxu                          │
+           │ [Enter] install  [↑↓/jk] scroll  [Esc] cancel                                                  │
+           │                                                                                                │
+           └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [g] config  [?] help  [q] quit
+[r] reload  [a] auto  [o] columns  [l] logs  [S] schedule

@@ -1,0 +1,24 @@
+pxu · config [MOCK]                                                        00:16
+config · automatic update schedule (systemd timer pxu-update) and notifications…
+────────────────────────────────────────────────────────────────────────────────
+┌ Schedule ────────────────────────────────────────────────────────────────────┐
+│ units installed : yes                                                        │
+│ enabled         : yes (state: active)                                        │
+│ schedule        : Mon..Fri *-*-* 03:00                                       │
+│ next run        : Tue 2026-11-10 04:35:12 -03                                │
+│┌ Save the notifications? ───────────────────────────────────────────────────┐│
+││ today: api_url http://apprise.local:8000 · api_key ••• · on all events     ││
+││ new  : api_url http://apprise.local:8000 · api_key ••• · on all events     ││
+││ the rest of /etc/pxu/config.toml is kept as it is                          ││
+││                                                                            ││
+││ [y/Enter] save  [b] back  [Esc] cancel                                     ││
+│└────────────────────────────────────────────────────────────────────────────┘│
+│ Notifications (Apprise)                                                      │
+│ status          : configured, sends via apprise-api (curl)                   │
+│ api_url         : http://apprise.local:8000                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+[S] schedule  [N] notifications  [L] log retention  [t] test notice
+────────────────────────────────────────────────────────────────────────────────
+[S] schedule  [N] notifications  [L] log days  [l] logs  [?] help  [q] quit
+the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…

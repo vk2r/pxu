@@ -1,0 +1,40 @@
+pxu · Proxmox Updater [MOCK]                                 node server · 3 guests · 2 running · 3 with updates   00:16
+[All 3]   Running 2    Stopped 1    Updates 3   / search name, tag, id…                                       sort: vmid
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     ID  TYPE  NAME                     STATE    OS                     CPU  RAM            DISK       UPD all/sec  AUTO
+>   401  LXC   ct-401                   run      debian 12                —  0.2/0.5 GB     4.0 GB     3/1          yes
+    402  LXC   ct-402                   run      alpine 3.20              —  0.2/0.5 GB     4.0 GB     3/1          yes
+    403  LXC   ct-403                   stopped  debian 12                —  —/0.5 GB       4.0 GB     3/1          yes
+
+
+
+
+
+           ┌ confirm ───────────────────────────────────────────────────────────────────────────────────────┐
+           │ Update 3 guests?                                                                               │
+           │                                                                                                │
+           │ order vmid ↑ · backup: auto (keep 0) · stopped: start + restore                                │
+           │ on failure: continue (circuit-breaker after 2 in a row) · reboot: never                        │
+           │ WARNING: backup + rollback cover only each CT's rootfs; bind mounts / mp with backup=0 (e.g. /…│
+           │                                                                                                │
+           │>✓   401 ct-401             3 pkgs (1 sec)                                                      │
+           │ ✓   402 ct-402             3 pkgs (1 sec)                                                      │
+           │                                                                                                │
+           │ per guest: pre-checks (check ≤ 60 m, free ≥ 512 MB) → lock → backup → refresh + simulate       │
+           │ → upgrade (nice 10, io idle) → verify → delete backup; on failure: automatic rollback          │
+           │ [Space] include/exclude  [Enter] start  [Esc] cancel                                           │
+           │                                                                                                │
+           └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [g] config  [?] help  [q] quit
+[r] reload  [a] auto  [o] columns  [l] logs  [S] schedule

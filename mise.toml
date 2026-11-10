@@ -1,0 +1,38 @@
+# Toolchain y tareas de pxu. Proxmox solo necesita el binario; nada de esto va al servidor.
+#   mise install        instala las herramientas de abajo
+#   mise tasks          lista las tareas
+[tools]
+rust = "1.99.1"
+
+[tasks.build]
+description = "Compila el binario de producción en target/release/pxu"
+run = "cargo build --locked --release && ls -l target/release/pxu"
+
+[tasks.test]
+description = "Corre los tests en el perfil dev y en el perfil mock"
+run = [
+  "cargo test --locked",
+  "cargo test --locked --profile mock --features mock",
+]
+
+[tasks.mock]
+description = "Compila el binario de pruebas con MockHost en target/mock/pxu"
+run = "cargo build --locked --profile mock --features mock"
+
+[tasks.demo]
+description = "Abre la TUI con un servidor simulado (mise run demo -- update-ok update --yes)"
+depends = ["mock"]
+usage = 'arg "[args]..." var=#true default="demo" help="Caso simulado y comando"'
+run = 'target/mock/pxu --mock ${usage_args}'
+
+[tasks.lint]
+description = "Avisos de clippy (todavía no son bloqueantes)"
+run = "cargo clippy --locked --all-targets"
+
+[tasks.check]
+description = "Tests y comprobación de que el binario de producción rechaza --mock"
+run = [
+  "mise run test",
+  "cargo build --locked --release",
+  "code=0; target/release/pxu --mock demo list 2>/dev/null || code=$?; test $code -eq 2 && echo \"release rechaza --mock (exit 2)\"",
+]

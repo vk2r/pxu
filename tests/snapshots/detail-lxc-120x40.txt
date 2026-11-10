@@ -1,0 +1,40 @@
+pxu · guest 103 · ct-103 [RO] [MOCK]                                                      LXC · server · running   00:16
+detail · config (left) · state & updates (right)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌ config · /etc/pve/nodes/server/lxc/103.conf ────────────────────────┐┌ state & updates ──────────────────────────────┐
+│vmid 103 · hostname ct-103 · type LXC · node server                  ││running                                        │
+│state running · ostype debian · arch amd64                           ││cpu — · mem 0.3/1.0 GB                         │
+│unprivileged 1 · onboot 1                                            ││disk allocated 25.0 GB                         │
+│tags apps,auto · template no                                         ││ip 192.168.1.29/24 (net0)                      │
+│                                                                     ││                                               │
+│resources                                                            ││check · 1 min ago · read-only                  │
+│  cores 4                                                            ││pm apt (debian 12) · index age 5 h             │
+│  memory 1024 MB · swap 512 MB                                       ││7 updates · 2 security · reboot: no            │
+│  rootfs local-zfs:subvol-103-disk-0 · 5.0 GB                        ││                                               │
+│  mp0 local-zfs:subvol-103-mp0 → /mnt/data · 20.0 GB · backup=1      ││packages (7)                                   │
+│                                                                     ││  openssl 3.0.15-1 → 3.0.16-1  [sec]           │
+│network                                                              ││  libssl3 3.0.15-1 → 3.0.16-1  [sec]           │
+│  net0 name=eth0 bridge=vmbr0 ip=192.168.1.29/24 firewall=1          ││  curl 8.5.0-2 → 8.6.0-1                       │
+│       hwaddr BC:24:11:2A:67:D1 · gw 192.168.1.1                     ││  libcurl4 8.5.0-2 → 8.6.0-1                   │
+│       type=veth                                                     ││  tzdata 2024a-0 → 2024b-0                     │
+│                                                                     ││  base-files 12.4 → 12.5                       │
+│features                                                             ││  nodejs 20.11.0 → 20.12.0                     │
+│  nesting 1 · keyctl 1                                               ││held: docker-ce                                │
+│                                                                     ││                                               │
+│ops                                                                  ││auto-update: yes (config/tag)                  │
+│  snapshots 2 (pxu_pre_202611070430, zfs_auto_5412)                  ││                                               │
+│  pending changes: none                                              ││                                               │
+│  description:                                                       ││                                               │
+│    Hub with a bind mount and two snapshots                          ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+│                                                                     ││                                               │
+└─────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [g] config  [S] schedule  [Esc] back  [?] help  [q] quit
+config is read from the .conf file (no processes); runtime metrics come from cgroup/pidfile only

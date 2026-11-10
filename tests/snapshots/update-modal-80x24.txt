@@ -1,0 +1,24 @@
+pxu [MOCK]                                       server · 2/3 up · 3 upd   00:16
+[All 3]  Run 2   Stop 1   Upd 3  / search…
+────────────────────────────────────────────────────────────────────────────────
+    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+>┌ confirm ───────────────────────────────────────────────────────────────────┐
+ │ Update 3 guests?                                                           │
+ │                                                                            │
+ │ order vmid ↑ · backup: auto (keep 0) · stopped: start + restore            │
+ │ on failure: continue (circuit-breaker after 2 in a row) · reboot: never    │
+ │ WARNING: backup + rollback cover only each CT's rootfs; bind mounts / mp w…│
+ │                                                                            │
+ │>✓   401 ct-401             3 pkgs (1 sec)                                  │
+ │ ✓   402 ct-402             3 pkgs (1 sec)                                  │
+ │                                                                            │
+ │ per guest: pre-checks (check ≤ 60 m, free ≥ 512 MB) → lock → backup → refr…│
+ │ → upgrade (nice 10, io idle) → verify → delete backup; on failure: automat…│
+ │ [Space] include/exclude  [Enter] start  [Esc] cancel                       │
+ │                                                                            │
+ └────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+> 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
+[r] reload  [a] auto  [o] cols  [g] config  [l] logs  [?] help  [q] quit

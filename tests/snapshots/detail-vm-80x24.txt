@@ -1,0 +1,24 @@
+pxu · guest 203 · vm-203 [RO] [MOCK]               VM · server · running   00:16
+detail · config (left) · state (right) · pxu checks and updates LXC only — VMs …
+────────────────────────────────────────────────────────────────────────────────
+┌ config · /etc/pve/nodes/server/qemu-server/203.conf ─────────────────────────┐
+│vmid 203 · name vm-203 · type VM · node server                                │
+│state running · ostype other · machine q35                                    │
+│bios ovmf · agent 1 · onboot 1 · startup up=1                                 │
+│protection 1 · tags infra · template no                                       │
+│                                                                              │
+│cpu & memory                                                                  │
+│  cpu host · sockets 1 × cores 2 · numa 0                                     │
+│  memory 2048 MB · balloon 0 (disabled)                                       │
+│                                                                              │
+│disks (scsihw virtio-scsi-single)                                             │
+│  scsi0 local-lvm:vm-203-disk-0 · 32.0 GB                                     │
+│                                                                              │
+│network & passthrough                                                         │
+│  net0 virtio=BC:24:11:2B:CB:03,bridge=vmbr0,firewall=1                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+vm-203 · read from /etc/pve/nodes/server/qemu-server/203.conf
+────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] scroll  [r] reload  [a] auto  [g] config  [?] help  [q] quit
+config is read from the .conf file (no processes); runtime metrics come from cg…

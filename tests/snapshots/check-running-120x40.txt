@@ -1,0 +1,40 @@
+pxu · check [RO] [MOCK]                                                     read-only · 0/7 checked · cancelling   00:16
+running…
+     ID  NAME                  PM      INDEX  UPD  SEC  REBOOT  RESULT
+  waiting for the first CT…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ packages ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+read-only: 1 command per CT, nothing written in the guests · INDEX = age of the guest's own index (* stale)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [?] help  [q] quit

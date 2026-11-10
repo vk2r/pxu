@@ -1,0 +1,12 @@
+[Unit]
+Description=pxu: chequeo y actualización de LXC
+After=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/local/bin/pxu check --notify
+ExecStart=/usr/local/bin/pxu update --yes
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=4h
+KillMode=mixed
