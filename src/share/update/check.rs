@@ -119,6 +119,8 @@ impl CtResult {
 #[derive(Debug, Clone)]
 pub struct CheckOpts {
     pub refresh: bool,
+    /// Chequeo estrictamente solo lectura (`--no-refresh`, tecla `C`): ignora también `[[ct]] refresh = true`.
+    pub read_only: bool,
     pub refresh_min_age_s: u64,
     pub timeout_s: u64,
     pub nice: i32,
@@ -126,9 +128,11 @@ pub struct CheckOpts {
 }
 
 impl CheckOpts {
-    pub fn from_config(cfg: &Config, refresh_flag: bool) -> CheckOpts {
+    /// `refresh`: `Some(true)` fuerza el refresco, `Some(false)` fuerza solo lectura, `None` lo decide `[check] refresh`.
+    pub fn from_config(cfg: &Config, refresh: Option<bool>) -> CheckOpts {
         CheckOpts {
-            refresh: refresh_flag || cfg.check.refresh,
+            refresh: refresh.unwrap_or(cfg.check.refresh),
+            read_only: refresh == Some(false),
             refresh_min_age_s: cfg.check.refresh_min_age_hours * 3600,
             timeout_s: cfg.check.timeout_s,
             nice: cfg.general.nice,
@@ -162,7 +166,7 @@ pub fn check_one(host: &dyn Host, g: &Guest, cfg: &Config, o: &CheckOpts) -> CtR
     if let Some(l) = &g.lock {
         return CtResult::bare(g, Status::Locked, &format!("locked: {l}"));
     }
-    let refresh = cfg.ct.iter().find(|c| c.vmid == g.vmid).and_then(|c| c.refresh).unwrap_or(o.refresh);
+    let refresh = if o.read_only { false } else { cfg.ct.iter().find(|c| c.vmid == g.vmid).and_then(|c| c.refresh).unwrap_or(o.refresh) };
     let (r, age) = (if refresh { "1" } else { "0" }, o.refresh_min_age_s.to_string());
     let mut argv = vec!["sh", "-c", PROBE_SH, "pxu-probe", r];
     if refresh {
@@ -339,7 +343,7 @@ mod tests {
     fn run_all(h: &dyn Host, only: &[u32]) -> Report {
         let inv = guests::load(h);
         let cfg = Config::load(h).unwrap();
-        run(h, &inv, &cfg, &CheckOpts::from_config(&cfg, false), only, &AtomicBool::new(false), &mut |_| {})
+        run(h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), only, &AtomicBool::new(false), &mut |_| {})
     }
 
     fn lines(s: &str) -> Vec<String> {
@@ -418,7 +422,7 @@ mod tests {
         let cfg = Config::default();
         let cancel = AtomicBool::new(false);
         let mut n = 0;
-        let r = run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, false), &[], &cancel, &mut |_| {
+        let r = run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &cancel, &mut |_| {
             n += 1;
             if n == 5 {
                 cancel.store(true, Ordering::SeqCst);
@@ -453,10 +457,17 @@ mod tests {
 
     /// Ejecuta el script con un PATH que solo contiene awk/date/stat y los stubs dados.
     fn run_probe(tag: &str, stubs: &[(&str, &str)], refresh: &str) -> (Probe, Vec<String>) {
+        let (p, calls, _) = run_probe_root(tag, stubs, refresh, None);
+        (p, calls)
+    }
+
+    /// Como `run_probe`, con raíz falsa (`PXU_PROBE_ROOT`): `seed` = edad en segundos del stamp de apt a crear antes;
+    /// devuelve además la edad del stamp tras la ejecución (None si no existe).
+    fn run_probe_root(tag: &str, stubs: &[(&str, &str)], refresh: &str, seed: Option<u64>) -> (Probe, Vec<String>, Option<u64>) {
         let dir = std::env::temp_dir().join(format!("pxu-probe-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for tool in ["awk", "date", "stat", "sh", "cat"] {
+        for tool in ["awk", "date", "stat", "sh", "cat", "mkdir", "touch"] {
             let p = ["/usr/bin", "/bin"].iter().map(|d| std::path::PathBuf::from(d).join(tool)).find(|p| p.exists()).expect(tool);
             std::os::unix::fs::symlink(p, dir.join(tool)).unwrap();
         }
@@ -466,12 +477,21 @@ mod tests {
             std::fs::write(&f, format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\n{body}\n", marks.display())).unwrap();
             std::fs::set_permissions(&f, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         }
-        let out = std::process::Command::new(dir.join("sh")).args(["-c", PROBE_SH, "pxu-probe", refresh, "0"]).env_clear().env("PATH", &dir).output().unwrap();
+        let root = dir.join("root");
+        let stamp = root.join("var/lib/apt/periodic/update-success-stamp");
+        if let Some(age) = seed {
+            std::fs::create_dir_all(stamp.parent().unwrap()).unwrap();
+            std::fs::write(&stamp, "").unwrap();
+            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(t).unwrap();
+        }
+        let out = std::process::Command::new(dir.join("sh")).args(["-c", PROBE_SH, "pxu-probe", refresh, "0"]).env_clear().env("PATH", &dir).env("PXU_PROBE_ROOT", &root).output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         let p = parse_probe(&text.lines().map(String::from).collect::<Vec<_>>());
         let calls = std::fs::read_to_string(&marks).unwrap_or_default().lines().map(|l| l.rsplit('/').next().unwrap().to_string()).collect();
+        let stamp_age = std::fs::metadata(&stamp).ok().and_then(|m| m.modified().ok()).map(|t| t.elapsed().map(|d| d.as_secs()).unwrap_or(0));
         let _ = std::fs::remove_dir_all(&dir);
-        (p, calls)
+        (p, calls, stamp_age)
     }
 
     #[test]
@@ -526,6 +546,34 @@ mod tests {
         assert_eq!(p.pkgs.len(), 1, "check still runs after the refresh");
     }
 
+    /// La edad del índice es la de DESPUÉS del refresco: ok => ≈0 y stamp de apt tocado; fallo => la previa; sin refresco => sin escribir.
+    #[test]
+    fn probe_sh_cache_age_is_post_refresh() {
+        let ok = "case \"$*\" in *update*) ;; *) ;; esac";
+        let (p, _, stamp) = run_probe_root("age-ok", &[("apt-get", ok)], "1", Some(20 * 3600));
+        assert_eq!(p.refresh, "ok");
+        assert!(p.cache_age.is_some_and(|a| a <= 5), "{:?}", p.cache_age);
+        assert!(stamp.is_some_and(|a| a <= 5), "stamp touched: {stamp:?}");
+        let (p, _, stamp) = run_probe_root("age-ok-noseed", &[("apt-get", ok)], "1", None);
+        assert!(p.cache_age.is_some_and(|a| a <= 5) && stamp.is_some(), "stamp created when missing");
+
+        let fail = "case \"$*\" in *update*) exit 100;; esac";
+        let (p, _, stamp) = run_probe_root("age-fail", &[("apt-get", fail)], "1", Some(20 * 3600));
+        assert!(p.refresh.starts_with("failed"), "{}", p.refresh);
+        assert!(p.cache_age.is_some_and(|a| (20 * 3600..20 * 3600 + 5).contains(&a)), "previous age kept: {:?}", p.cache_age);
+        assert!(stamp.is_some_and(|a| a >= 20 * 3600), "stamp untouched on failure");
+
+        let (p, calls, stamp) = run_probe_root("age-ro", &[("apt-get", ok)], "0", Some(20 * 3600));
+        assert_eq!(p.refresh, "skipped");
+        assert!(p.cache_age.is_some_and(|a| a >= 20 * 3600), "{:?}", p.cache_age);
+        assert!(stamp.is_some_and(|a| a >= 20 * 3600), "read-only does not touch the stamp");
+        assert!(!calls.iter().any(|c| c.contains("update -qq")), "{calls:?}");
+
+        let apk = "case \"$*\" in *update*) ;; esac";
+        let (p, _, _) = run_probe_root("age-apk", &[("apk", apk)], "1", None);
+        assert_eq!((p.refresh.as_str(), p.cache_age), ("ok", Some(0)));
+    }
+
     /// Regresión de solo lectura: un `check` completo no emite escrituras ni refrescos, y con `refresh` sin opt-in todo CT falla.
     #[test]
     fn check_path_is_read_only() {
@@ -535,9 +583,28 @@ mod tests {
         assert_eq!(rep.summary().errors, 0, "read-only wrapper must not refuse the check path");
         let cfg = Config::load(&h).unwrap();
         let inv = guests::load(&h);
-        let o = CheckOpts::from_config(&cfg, true);
+        let o = CheckOpts::from_config(&cfg, Some(true));
         let r = run(&h, &inv, &cfg, &o, &[103], &AtomicBool::new(false), &mut |_| {});
         assert_eq!(r.results[0].status, Status::Error, "refresh without allow_refresh must be refused: {:?}", r.results[0].detail);
         assert!(r.results[0].detail.contains("read-only"));
+    }
+
+    /// `--no-refresh` / `C`: solo lectura estricta; `None` sigue la config (default refresca); un `[[ct]] refresh` no lo cruza.
+    #[test]
+    fn refresh_mode_follows_config_and_read_only_overrides_everything() {
+        let cfg = Config::default();
+        assert!(CheckOpts::from_config(&cfg, None).refresh, "default config refreshes");
+        let ro = CheckOpts::from_config(&cfg, Some(false));
+        assert!(!ro.refresh && ro.read_only);
+        let mut off = Config::default();
+        off.check.refresh = false;
+        assert!(!CheckOpts::from_config(&off, None).refresh);
+        assert!(CheckOpts::from_config(&off, Some(true)).refresh, "--refresh still forces it");
+        let h = fx("basic-37");
+        let cfg: Config = toml::from_str("[check]\nrefresh = true\n[[ct]]\nvmid = 103\nrefresh = true\n").unwrap();
+        let inv = guests::load(&h);
+        let r = run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[103], &AtomicBool::new(false), &mut |_| {});
+        assert_ne!(r.results[0].status, Status::Error, "read-only probe is accepted by the read-only host: {:?}", r.results[0].detail);
+        assert!(!r.refresh);
     }
 }

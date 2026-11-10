@@ -50,7 +50,7 @@ Formato de datos: updates `n/s` (total/seguridad), tamaños `x/y GB`, edad del �
 
 ## 4. Mapa de teclas
 
-Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, horario, Apprise, retención) → ayuda `?` → búsqueda → confirmación de refresco → tecla de la vista. Un modal captura todas las teclas.
+Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
 
 `Ctrl-C` con una corrida de update activa abre el diálogo de cancelación (§7); sin corrida sale.
 
@@ -65,8 +65,8 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | `s` | cicla el orden: vmid · name · updates · ram |
 | `r` | recarga los `.conf` de `/etc/pve` (solo archivos) |
 | `Enter` | detalle del guest |
-| `c` | chequea los CT visibles (solo lectura) |
-| `C` | chequeo con refresco de índices; pide `y` |
+| `c` | chequeo con refresco de índices (config `[check] refresh`; en `[RO]` sin refresco) |
+| `C` | chequeo solo lectura (sin refresco de índices), sin confirmación |
 | `v` | ver el último resultado del chequeo (si existe o hay uno en curso) |
 | `o` | elegir columnas visibles |
 | `u` | actualizar los CT visibles con updates (pide confirmación); sobre la fila del host, actualiza el host |
@@ -82,7 +82,7 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 
 ### 4.3 Resultado del chequeo (`check_key`, `app.rs:1139-1172`)
 
-`↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` detalle del CT · `c` re-chequear · `C` (o `R`) refresco con `y` · `u` actualizar los CT con updates · `Esc`/`Backspace` vuelve (con un chequeo en curso, lo cancela) · `?` · `q`.
+`↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` detalle del CT · `c` re-chequear con refresco de índices · `C` (o `R`) chequeo solo lectura · `u` actualizar los CT con updates · `Esc`/`Backspace` vuelve (con un chequeo en curso, lo cancela) · `?` · `q`.
 
 ### 4.4 Corrida de update (`update_key`, `app.rs:932-`)
 
@@ -272,8 +272,8 @@ px┌ help · any key closes ─────────────────
   │s            cycle sort: vmid · name · updates · ram                      │
   │r            reload /etc/pve confs (files only)                           │
   │Enter        guest detail                                                 │s
-  │c            check LXC updates (visible CTs, or all) · read-only          │
-  │C            check + refresh package indexes (asks y to confirm)          │s
+  │c            check LXC updates (visible CTs, or all): refreshes indexes   │
+  │C            read-only check: does not refresh the indexes                │s
   │v            show the last check result                                   │s
   │o            choose visible columns (Space toggles; saved in config.toml) │
   │u            update the visible CTs with updates (asks first)             │s
@@ -349,7 +349,7 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [?] help  [q] quit
+[↑↓] select  [Enter] detail  [c] refresh+check  [C] read-only  [?] help  [q] quit
 ```
 
 ### 5.4 Corrida de update

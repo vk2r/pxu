@@ -28,28 +28,34 @@ newest() { # mtime mas reciente de los archivos dados (o vacio)
   [ "$m" -gt 0 ] && echo "$m"
 }
 case $PM in
-  apt) T=$(newest /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists/*Packages* /var/lib/apt/lists/*InRelease);;
+  apt) T=$(newest ${PXU_PROBE_ROOT:-}/var/lib/apt/periodic/update-success-stamp ${PXU_PROBE_ROOT:-}/var/lib/apt/lists/*Packages* ${PXU_PROBE_ROOT:-}/var/lib/apt/lists/*InRelease);;
   apk) T=$(newest /var/cache/apk/*.tar.gz /lib/apk/db/installed);;
   pacman) T=$(newest /var/lib/pacman/sync/*.db);;
   dnf) T=$(newest /var/cache/dnf/*.solv /var/cache/dnf/*/repodata/repomd.xml /var/cache/yum/*/*/repomd.xml);;
   zypper) T=$(newest /var/cache/zypp/solv/*/solv);;
   *) T=;;
 esac
-if [ -n "$T" ] && [ "$NOW" -gt 0 ]; then echo "@@cache_age $((NOW - T))"; else echo "@@cache_age -1"; fi
 NOTE=""
 if [ "$R" = 1 ] && [ "$T" ] && [ "$((NOW - T))" -lt "${2:-0}" ]; then R=0; NOTE=fresh; fi
 if [ "$R" = 1 ]; then
   case $PM in
-    apt) if apt-get update -qq >/dev/null 2>&1; then echo "@@refresh ok"; else echo "@@refresh failed:$?"; fi;;
-    apk) if apk update >/dev/null 2>&1; then echo "@@refresh ok"; else echo "@@refresh failed:$?"; fi;;
+    apt) if apt-get update -qq >/dev/null 2>&1; then
+           # "Hit" no reescribe lists/: el stamp de APT::Periodic marca el ultimo refresco exitoso
+           S=${PXU_PROBE_ROOT:-}/var/lib/apt/periodic
+           { mkdir -p "$S" && touch "$S/update-success-stamp"; } >/dev/null 2>&1
+           echo "@@refresh ok"; T=$NOW
+         else echo "@@refresh failed:$?"; fi;;
+    apk) if apk update >/dev/null 2>&1; then echo "@@refresh ok"; T=$NOW; else echo "@@refresh failed:$?"; fi;;
     pacman) if has checkupdates; then echo "@@refresh unavailable-checkupdates-used"; else echo "@@refresh unavailable"; fi;;
-    dnf) if $(command -v dnf || command -v yum) -q makecache >/dev/null 2>&1; then echo "@@refresh ok"; else echo "@@refresh failed:$?"; fi;;
-    zypper) if zypper -n -q refresh >/dev/null 2>&1; then echo "@@refresh ok"; else echo "@@refresh failed:$?"; fi;;
+    dnf) if $(command -v dnf || command -v yum) -q makecache >/dev/null 2>&1; then echo "@@refresh ok"; T=$NOW; else echo "@@refresh failed:$?"; fi;;
+    zypper) if zypper -n -q refresh >/dev/null 2>&1; then echo "@@refresh ok"; T=$NOW; else echo "@@refresh failed:$?"; fi;;
     *) echo "@@refresh skipped";;
   esac
 else
   echo "@@refresh ${NOTE:-skipped}"
 fi
+# edad del indice FINAL: tras un refresco ok es 0 (T=$NOW); si fallo o no hubo, la previa
+if [ -n "$T" ] && [ "$NOW" -gt 0 ]; then echo "@@cache_age $((NOW - T))"; else echo "@@cache_age -1"; fi
 RC=0
 case $PM in
   apt)

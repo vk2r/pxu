@@ -608,7 +608,7 @@ mod tests {
         let inv = guests::load(&h);
         let mut cfg = Config::load(&h).unwrap();
         cfg.apprise.retry_delays_ms = vec![];
-        let rep = check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+        let rep = check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
         let first = notify_check(&h, &cfg.apprise, &rep);
         assert!(first.iter().any(|l| l.starts_with("updates_found: sent")), "{first:?}");
         let second = notify_check(&h, &cfg.apprise, &rep);
@@ -624,7 +624,7 @@ mod tests {
         let inv = guests::load(&h);
         let mut cfg = Config::load(&h).unwrap();
         cfg.apprise.retry_delays_ms = vec![];
-        let rep = check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+        let rep = check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
         let msgs = check_messages(&rep, &cfg.apprise, &state::State::default());
         let host = msgs.iter().find(|m| m.0.title == "pxu: host review").expect("host message");
         assert_eq!(host.0.event, "updates_found");
@@ -640,12 +640,12 @@ mod tests {
         assert!(!check_messages(&rep, &cfg.apprise, &st).iter().any(|m| m.0.title == "pxu: host review"));
         // GPU sin módulo para el kernel nuevo: aviso
         let h2 = ReadOnlyHost::new(World::host_gpu().host_out("dkms", "nvidia/595.112.07, 6.17.9-1-pve, x86_64: installed\n").build());
-        let rep2 = check::run(&h2, &guests::load(&h2), &cfg, &CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+        let rep2 = check::run(&h2, &guests::load(&h2), &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
         let m2 = check_messages(&rep2, &cfg.apprise, &state::State::default());
         assert!(m2.iter().any(|m| m.0.body.contains("no module for kernel 6.17.13-2-pve")));
         // fallo del host: aviso de error aparte; los CT no se ven afectados
         let h3 = ReadOnlyHost::new(World::host_gpu().file("/exec/0/apt-list.out.exit", b"100").build());
-        let rep3 = check::run(&h3, &guests::load(&h3), &cfg, &CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+        let rep3 = check::run(&h3, &guests::load(&h3), &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
         let m3 = check_messages(&rep3, &cfg.apprise, &state::State::default());
         assert!(m3.iter().any(|m| m.0.title == "pxu: host review failed" && m.0.event == "check_error"));
         assert!(!m3.iter().any(|m| m.0.title == "pxu: host review"));

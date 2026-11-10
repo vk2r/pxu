@@ -425,7 +425,7 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
         _ => warn = Some("autoremove skipped: its simulation failed".into()),
     }
     // nueva revisión: la fila refleja el estado real y el reinicio pendiente
-    let opts_check = crate::share::update::check::CheckOpts::from_config(cfg, false);
+    let opts_check = crate::share::update::check::CheckOpts::from_config(cfg, Some(false));
     let info = hostcheck::check_host(host, inv, &opts_check);
     let reboot = info.as_ref().is_some_and(|i| i.reboot_pending());
     let remaining = info.as_ref().map(|i| i.updates());
@@ -1127,7 +1127,7 @@ mod tests {
     fn sched_world(f: impl FnOnce(World) -> World) -> ReadOnlyHost<MockHost> {
         let h = ReadOnlyHost::new(f(World::host_gpu().ct_config(134, &["auto_update = true"])).build());
         let cfg = Config::load(&h).unwrap();
-        let rep = crate::share::update::check::run(&h, &guests::load(&h), &cfg, &crate::share::update::check::CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+        let rep = crate::share::update::check::run(&h, &guests::load(&h), &cfg, &crate::share::update::check::CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
         crate::share::update::check::persist(&h, &rep).unwrap();
         h
     }

@@ -73,8 +73,8 @@ impl Default for GeneralCfg {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckCfg {
-    /// Por defecto NO se refrescan los índices (solo lectura).
-    #[serde(default)]
+    /// Por defecto SÍ se refrescan los índices (`refresh = false` lo apaga: chequeo solo lectura).
+    #[serde(default = "d_refresh")]
     pub refresh: bool,
     #[serde(default = "d_min_age")]
     pub refresh_min_age_hours: u64,
@@ -84,8 +84,11 @@ pub struct CheckCfg {
     #[serde(default = "d_stale_days")]
     pub index_stale_days: u64,
 }
+fn d_refresh() -> bool {
+    true
+}
 fn d_min_age() -> u64 {
-    24
+    12
 }
 fn d_timeout() -> u64 {
     60
@@ -95,7 +98,7 @@ fn d_stale_days() -> u64 {
 }
 impl Default for CheckCfg {
     fn default() -> Self {
-        CheckCfg { refresh: false, refresh_min_age_hours: d_min_age(), timeout_s: d_timeout(), index_stale_days: d_stale_days() }
+        CheckCfg { refresh: d_refresh(), refresh_min_age_hours: d_min_age(), timeout_s: d_timeout(), index_stale_days: d_stale_days() }
     }
 }
 
@@ -805,6 +808,16 @@ mod tests {
     fn host(cfg: &str) -> ReadOnlyHost<MockHost> {
         ReadOnlyHost::new(World::demo().config_raw(cfg).build())
     }
+    #[test]
+    fn check_refreshes_by_default_and_can_be_turned_off() {
+        let d = CheckCfg::default();
+        assert!(d.refresh && d.refresh_min_age_hours == 12);
+        let c: Config = toml::from_str("[check]\ntimeout_s = 30\n").unwrap();
+        assert!(c.check.refresh && c.check.refresh_min_age_hours == 12, "missing keys take the new defaults");
+        let c: Config = toml::from_str("[check]\nrefresh = false\n").unwrap();
+        assert!(!c.check.refresh);
+    }
+
     fn text(h: &dyn Host) -> String {
         String::from_utf8(h.read_file(Path::new(CONFIG_PATH)).unwrap()).unwrap()
     }

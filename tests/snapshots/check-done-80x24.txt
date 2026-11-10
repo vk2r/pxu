@@ -20,5 +20,5 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [Esc] back  [?] help
-[q] quit
+[↑↓] select  [Enter] detail  [c] refresh+check  [C] read-only  [Esc] back
+[?] help  [q] quit

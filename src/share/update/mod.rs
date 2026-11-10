@@ -659,7 +659,7 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
     let units_cmd = ["systemctl", "--failed", "--no-legend", "--plain"];
     // --- refresco + simulación (reutiliza el sondeo con refresh=1 y edad mínima 0)
     cx.step(Step::Refresh);
-    let co = CheckOpts { refresh: true, refresh_min_age_s: 0, timeout_s: cfg.check.timeout_s, nice: cfg.general.nice, stale_after_s: cfg.check.index_stale_days * 86400 };
+    let co = CheckOpts { refresh: true, read_only: false, refresh_min_age_s: 0, timeout_s: cfg.check.timeout_s, nice: cfg.general.nice, stale_after_s: cfg.check.index_stale_days * 86400 };
     cx.say("$ (refresh index + simulate)");
     let res = check::check_one(host, gr, cfg, &co);
     let Some(info) = res.info.filter(|_| res.status == Status::Ok) else {

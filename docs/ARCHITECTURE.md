@@ -21,7 +21,7 @@ Status: v0.1, in development. Tested on PVE 9.2 (real update and rollback on a D
 | Concurrency | **No async runtime.** The TUI spawns one thread per job (check, update); the CLI works on the main thread | `src/tui/mod.rs`, `src/cli/mod.rs` |
 | Listing | Reads `/etc/pve/**/*.conf` and `/sys/fs/cgroup`; without launching processes | §1 |
 | Execution in CT | **A single execution per CT per check** (embedded `probe.sh` script) with `lxc-attach` | §2.1 |
-| Check | Read-only by default: it doesn't refresh the indexes | §2.3 |
+| Check | Refreshes the indexes by default (`[check] refresh`); `--no-refresh` / `C` = read-only | §2.3 |
 | Update | Sequential; global lock + per-CT lock; prior temporary backup (snapshot or vzdump) with automatic rollback; post-update verification | §3 |
 | Proxmox host and NVIDIA | Reviewed on every `check`; only updated on explicit order or with an opt-in in config | §3.6, §3.7 |
 | Notifications | Apprise API via `curl` (fallback: `apprise` CLI); a single notification per run | §4 |
@@ -71,7 +71,7 @@ lxc-attach -n <vmid> --clear-env --set-var PATH=/usr/local/sbin:/usr/local/bin:/
 @@v 1
 @@os <ID> <VERSION_ID> "<ID_LIKE>"
 @@pm apt|apk|pacman|dnf|zypper|none     # detected by binary present
-@@cache_age <seconds>                   # -1 if it can't be known
+@@cache_age <seconds>                   # index age AFTER the refresh (0 if it succeeded); -1 if unknown; emitted once, after @@refresh
 @@refresh skipped|fresh|ok|failed:<rc>|unavailable|unavailable-checkupdates-used
 @@pkg <name> <current> <new> <security 0|1>
 @@held <name>
@@ -96,8 +96,8 @@ The upgrades are in `update/mod.rs::upgrade_argv`, which is the single source fo
 
 ### 2.3 Modes
 
-- **Read-only (default):** `[check] refresh = false`. Shows the state of the index the CT already has, with its age.
-- **Refresh:** `[check] refresh = true`, `[[ct]] refresh = true`, `pxu check --refresh` or the TUI's refresh key. With `refresh_min_age_hours` (24) it only refreshes if the index is older.
+- **Refresh (default):** `[check] refresh = true`. `pxu check` and the TUI's `c` refresh the index inside each CT first. With `refresh_min_age_hours` (12) it only refreshes if the index is older (12 h, not 24: with a daily timer a 24 h limit would skip every other day). `--refresh` is still accepted.
+- **Read-only:** `pxu check --no-refresh` or the TUI's `C` (also `c` in `[RO]`) never write in the guests, not even with `[[ct]] refresh = true`. `[check] refresh = false` and `[[ct]] refresh = false` turn the refresh off in the config. Shows the state of the index the CT already has, with its age.
 - An index older than `[check] index_stale_days` (7) is marked `stale`.
 - Stopped CTs, VMs and remote guests are not checked (`check::targets`).
 
@@ -241,8 +241,8 @@ io_class = "idle"             # "idle" | "best-effort"
 log_retention_days = 30       # days of logs in /var/log/pxu; 0 = don't delete; cap 3650
 
 [check]
-refresh = false               # by default it does NOT refresh indexes
-refresh_min_age_hours = 24    # with refresh, only if the index is older
+refresh = true                # by default it refreshes the indexes (false = read-only check)
+refresh_min_age_hours = 12    # with refresh, only if the index is older
 timeout_s = 60
 index_stale_days = 7          # older index ⇒ stale
 
@@ -302,7 +302,7 @@ The TUI also writes those overrides: `a` toggles the `auto_update` of the select
 ```
 pxu                                   # TUI
 pxu list   [--json] [--all-nodes]
-pxu check  [--json] [--refresh] [--notify] [--ct 101,103] [vmid...]
+pxu check  [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]
 pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
 pxu update --host [--yes]
 pxu config check

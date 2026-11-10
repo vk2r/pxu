@@ -36,5 +36,5 @@ held: none · reboot required: no
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 read-only: 1 command per CT, nothing written in the guests · INDEX = age of the guest's own index (* stale)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [Esc] back/cancel
-[?] help  [q] quit
+[↑↓/jk] select  [Enter] detail  [c] refresh+check  [C] read-only check  [u] update (asks)  [Esc] back/cancel  [?] help
+[q] quit

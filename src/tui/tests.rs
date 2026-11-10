@@ -178,7 +178,7 @@ fn quit_and_reload_actions() {
 }
 
 /// Ejecuta lo que haría el worker (mismo `check::run`) y alimenta la app como lo hace el bucle.
-fn run_check(a: &mut App, name: &str, refresh: bool, only: &[u32]) {
+fn run_check(a: &mut App, name: &str, refresh: Option<bool>, only: &[u32]) {
     use pxu::share::update::check::{self, CheckOpts};
     use std::sync::atomic::AtomicBool;
     let h = fixture(name);
@@ -192,13 +192,13 @@ fn run_check(a: &mut App, name: &str, refresh: bool, only: &[u32]) {
 fn check_key_starts_a_job_and_view_reports_13_with_updates() {
     let mut a = app("basic-37");
     let act = a.on_key(key(KeyCode::Char('c')));
-    assert_eq!(act, Action::Check { refresh: false, only: vec![] });
+    assert_eq!(act, Action::Check { refresh: Some(false), only: vec![] }); // app() está en [RO]: `c` no refresca
     assert_eq!(a.view, View::Check);
     assert!(a.check.running);
     assert_eq!(a.check.total, 37);
     // mientras corre, una segunda `c` no lanza otro trabajo
     assert_eq!(a.on_key(key(KeyCode::Char('c'))), Action::None);
-    run_check(&mut a, "basic-37", false, &[]);
+    run_check(&mut a, "basic-37", Some(false), &[]);
     assert!(!a.check.running);
     assert_eq!(a.check.report.as_ref().unwrap().summary().with_updates, 13);
     snap("check-done", &a);
@@ -210,22 +210,24 @@ fn check_key_starts_a_job_and_view_reports_13_with_updates() {
 }
 
 #[test]
-fn check_filtered_list_only_checks_the_visible_cts_and_refresh_needs_confirmation() {
+fn check_filtered_list_only_checks_the_visible_cts_and_c_refreshes_while_capital_c_is_read_only() {
     let mut a = rw_app("basic-37");
     press(&mut a, "4");
     match a.on_key(key(KeyCode::Char('c'))) {
-        Action::Check { refresh: false, only } => assert_eq!(only.len(), 13),
+        Action::Check { refresh: None, only } => assert_eq!(only.len(), 13),
         o => panic!("{o:?}"),
     }
+    assert!(a.check.refresh, "c refreshes by default (shown as REFRESH)");
     a.check.running = false;
     a.view = View::List;
-    // C no lanza nada: pide y/otra tecla cancela
-    assert_eq!(a.on_key(key(KeyCode::Char('C'))), Action::None);
-    assert!(a.confirm_refresh);
-    assert_eq!(a.on_key(key(KeyCode::Char('n'))), Action::None);
-    assert!(!a.confirm_refresh);
-    a.on_key(key(KeyCode::Char('C')));
-    assert!(matches!(a.on_key(key(KeyCode::Char('y'))), Action::Check { refresh: true, .. }));
+    // C: check solo lectura, sin confirmación
+    assert!(matches!(a.on_key(key(KeyCode::Char('C'))), Action::Check { refresh: Some(false), .. }));
+    assert!(!a.check.refresh);
+    a.check.running = false;
+    // con `[check] refresh = false`, `c` también es solo lectura
+    a.refresh_default = false;
+    assert!(matches!(a.on_key(key(KeyCode::Char('c'))), Action::Check { refresh: None, .. }));
+    assert!(!a.check.refresh);
 }
 
 #[test]
@@ -236,7 +238,7 @@ fn check_view_running_cancel_and_failures() {
     assert_eq!(a.on_key(key(KeyCode::Esc)), Action::CancelCheck);
     assert_eq!(a.view, View::Check);
     snap("check-running", &a);
-    run_check(&mut a, "failures", false, &[]);
+    run_check(&mut a, "failures", Some(false), &[]);
     assert_eq!(a.check.report.as_ref().unwrap().exit_code(), 12);
     snap("check-failures", &a);
 }
@@ -346,15 +348,13 @@ fn update_key_is_refused_in_read_only_and_without_positive_check() {
 }
 
 #[test]
-fn refresh_is_blocked_in_read_only_but_plain_check_still_works() {
+fn in_read_only_c_checks_without_refreshing_and_says_so() {
     let mut a = app("basic-37"); // read_only = true
-    assert_eq!(a.on_key(key(KeyCode::Char('C'))), Action::None);
-    assert!(a.status.contains("read-only"), "{}", a.status);
-    assert!(!a.confirm_refresh, "no confirmation prompt in [RO]");
-    // aunque alguien llegara a confirmar, `y` no arranca un refresh
-    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::None);
-    // `c` (sin refresco) sigue funcionando
-    assert!(matches!(a.on_key(key(KeyCode::Char('c'))), Action::Check { refresh: false, .. }));
+    assert!(matches!(a.on_key(key(KeyCode::Char('c'))), Action::Check { refresh: Some(false), .. }));
+    assert!(!a.check.refresh);
+    assert!(a.status.contains("read-only") && a.status.contains("without refreshing"), "{}", a.status);
+    a.check.running = false;
+    assert!(matches!(a.on_key(key(KeyCode::Char('C'))), Action::Check { refresh: Some(false), .. }));
 }
 
 #[test]
@@ -365,12 +365,10 @@ fn checks_are_blocked_while_an_update_runs() {
     for k in ['c', 'C'] {
         assert_eq!(a.on_key(key(KeyCode::Char(k))), Action::None, "{k}");
         assert!(a.status.contains("update is running"), "{k}: {}", a.status);
-        assert!(!a.confirm_refresh && !a.check.running, "{k}");
+        assert!(!a.check.running, "{k}");
     }
-    a.confirm_refresh = true;
-    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::None, "no refresh even if a confirmation was left pending");
     a.update.running = false;
-    assert!(matches!(a.on_key(key(KeyCode::Char('c'))), Action::Check { refresh: false, .. }));
+    assert!(matches!(a.on_key(key(KeyCode::Char('c'))), Action::Check { refresh: None, .. }));
 }
 
 #[test]
@@ -1126,7 +1124,7 @@ fn host_app_with(h: ReadOnlyHost<MockHost>) -> (App, ReadOnlyHost<MockHost>) {
     use pxu::share::update::check::{self, CheckOpts};
     use std::sync::atomic::AtomicBool;
     let cfg = pxu::share::config::Config::load(&h).unwrap();
-    let rep = check::run(&h, &guests::load(&h), &cfg, &CheckOpts::from_config(&cfg, false), &[], &AtomicBool::new(false), &mut |_| {});
+    let rep = check::run(&h, &guests::load(&h), &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
     check::persist(&h, &rep).unwrap();
     let mut a = App::new(guests::load(&h), true, true);
     a.clock = "00:16".into();

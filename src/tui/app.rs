@@ -69,7 +69,7 @@ pub enum Action {
     Reload,
     Quit,
     /// Lanza un chequeo en el worker (`only` vacío = todos los LXC locales).
-    Check { refresh: bool, only: Vec<u32> },
+    Check { refresh: Option<bool>, only: Vec<u32> },
     CancelCheck,
     /// `u`: el bucle calcula los candidatos (necesita host y config) y abre el modal.
     PrepareUpdate { only: Vec<u32> },
@@ -331,7 +331,8 @@ pub struct App {
     pub cpu_waiting: bool,
     pub check: CheckState,
     /// `C`/`R` pidió refrescar índices: espera `y` (DESIGN §5.3: separado de `c` y con confirmación).
-    pub confirm_refresh: bool,
+    /// `[check] refresh` de la config: lo que hace `c` fuera de `[RO]` (default true).
+    pub refresh_default: bool,
     pub update: UpdateState,
     pub modal: Option<UpdateModal>,
     pub auto_modal: Option<AutoModal>,
@@ -379,7 +380,7 @@ impl App {
             cpu_prev: HashMap::new(),
             cpu_waiting: false,
             check: CheckState::default(),
-            confirm_refresh: false,
+            refresh_default: true,
             update: UpdateState::default(),
             modal: None,
             auto_modal: None,
@@ -539,15 +540,6 @@ impl App {
                 _ => {}
             }
             self.clamp();
-            return Action::None;
-        }
-        if self.confirm_refresh {
-            self.confirm_refresh = false;
-            self.status.clear();
-            if k.code == KeyCode::Char('y') {
-                return self.start_check(true);
-            }
-            self.status = "refresh cancelled".into();
             return Action::None;
         }
         self.status.clear();
@@ -1050,8 +1042,8 @@ impl App {
                     self.detail_scroll = 0;
                 }
             }
-            KeyCode::Char('c') => return self.start_check(false),
-            KeyCode::Char('C') => self.ask_refresh(),
+            KeyCode::Char('c') => return self.start_check(None),
+            KeyCode::Char('C') => return self.start_check(Some(false)),
             KeyCode::Char('o') => self.col_modal = Some((0, false)),
             KeyCode::Char('v') if self.check.report.is_some() || self.check.running => self.view = View::Check,
             KeyCode::Char('u') => {
@@ -1090,20 +1082,8 @@ impl App {
         Action::None
     }
 
-    fn ask_refresh(&mut self) {
-        if self.read_only_refresh_blocked(true) {
-            return;
-        }
-        self.confirm_refresh = true;
-        self.status = "refresh runs the package manager's index update inside each CT (writes its cache). Press y to confirm".into();
-    }
-
-    /// `refresh` escribe la caché de paquetes de cada CT: en `[RO]` está bloqueado (`c` sin refresco sigue valiendo).
-    fn read_only_refresh_blocked(&mut self, refresh: bool) -> bool {
-        if refresh && self.read_only {
-            self.status = "read-only mode: refreshing indexes inside the guests is disabled".into();
-            return true;
-        }
+    /// Un update en curso o un chequeo ya corriendo bloquean otro chequeo (el refresco escribe en los CT).
+    fn check_blocked(&mut self) -> bool {
         if self.update.running {
             // el sondeo con refresco escribe en los CT: durante un update solo trabaja el motor de update
             self.status = "an update is running: checks (c/C/R) are disabled until it finishes".into();
@@ -1117,10 +1097,13 @@ impl App {
     }
 
     /// Desde la lista se chequea lo filtrado/buscado; sin filtro, todos los LXC.
-    fn start_check(&mut self, refresh: bool) -> Action {
-        if self.read_only_refresh_blocked(refresh) {
+    /// `refresh`: `None` = refresca según `[check] refresh` (`c`); `Some(false)` = solo lectura (`C`). En `[RO]`, `c` no refresca.
+    fn start_check(&mut self, refresh: Option<bool>) -> Action {
+        if self.check_blocked() {
             return Action::None;
         }
+        let ro_note = self.read_only && refresh.is_none() && self.refresh_default;
+        let refresh = if self.read_only { Some(false) } else { refresh };
         let only: Vec<u32> = if self.view == View::List && (self.filter != Filter::All || !self.search.is_empty()) {
             self.visible().iter().map(|g| g.vmid).collect()
         } else {
@@ -1131,7 +1114,11 @@ impl App {
             self.status = "no LXC to check in this selection".into();
             return Action::None;
         }
-        self.check = CheckState { total, running: true, refresh, ..Default::default() };
+        let shown = refresh.unwrap_or(self.refresh_default);
+        self.check = CheckState { total, running: true, refresh: shown, ..Default::default() };
+        if ro_note {
+            self.status = "read-only mode: checking without refreshing the indexes".into();
+        }
         self.view = View::Check;
         Action::Check { refresh, only }
     }
@@ -1148,8 +1135,8 @@ impl App {
                 self.view = View::List;
             }
             KeyCode::Char('?') => self.help = true,
-            KeyCode::Char('c') => return self.start_check(false),
-            KeyCode::Char('C' | 'R') => self.ask_refresh(),
+            KeyCode::Char('c') => return self.start_check(None),
+            KeyCode::Char('C' | 'R') => return self.start_check(Some(false)),
             KeyCode::Down | KeyCode::Char('j') => self.check.cursor = (self.check.cursor + 1).min(n.saturating_sub(1)),
             KeyCode::Up | KeyCode::Char('k') => self.check.cursor = self.check.cursor.saturating_sub(1),
             KeyCode::PageDown => self.check.cursor = (self.check.cursor + 10).min(n.saturating_sub(1)),
@@ -1199,7 +1186,7 @@ impl App {
             KeyCode::Esc | KeyCode::Backspace => self.view = View::List,
             KeyCode::Char('?') => self.help = true,
             KeyCode::Char('r') => return Action::Reload,
-            KeyCode::Char('c') => return self.start_check(false),
+            KeyCode::Char('c') => return self.start_check(None),
             KeyCode::Char('g') => return Action::OpenConfig,
             KeyCode::Char('S') => return self.ask_schedule(),
             KeyCode::Char('a') => {

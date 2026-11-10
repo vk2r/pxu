@@ -35,7 +35,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let refresh = matches!(cmd, Cmd::Check { refresh: true, .. } | Cmd::Tui); // la TUI solo refresca tras confirmación (`C` + `y`)
+    let refresh = !matches!(cmd, Cmd::Check { refresh: Some(false), .. }); // `pxu check --no-refresh` = host estrictamente solo lectura; la TUI decide por tecla (`c` refresca, `C` no)
     let host = match make_host(mock, refresh) {
         Ok(h) => h,
         Err(e) => {

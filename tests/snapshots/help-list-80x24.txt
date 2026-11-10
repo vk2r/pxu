@@ -6,8 +6,8 @@ px┌ help · any key closes ─────────────────
   │s            cycle sort: vmid · name · updates · ram                      │
   │r            reload /etc/pve confs (files only)                           │
   │Enter        guest detail                                                 │
-  │c            check LXC updates (visible CTs, or all) · read-only          │
-  │C            check + refresh package indexes (asks y to confirm)          │
+  │c            check LXC updates (visible CTs, or all): refreshes the packa…│
+  │C            read-only check: does not refresh the indexes                │
   │v            show the last check result                                   │
   │o            choose visible columns (Space toggles; saved in config.toml) │
   │u            update the visible CTs with updates (asks first)             │

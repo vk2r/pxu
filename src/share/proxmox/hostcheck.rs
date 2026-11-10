@@ -835,7 +835,7 @@ c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI]
         let h = ReadOnlyHost::new(w.build());
         let inv = crate::share::proxmox::guests::load(&h);
         let cfg = Config::load(&h).unwrap();
-        let info = check_host(&h, &inv, &CheckOpts::from_config(&cfg, false));
+        let info = check_host(&h, &inv, &CheckOpts::from_config(&cfg, Some(false)));
         (h, info, inv)
     }
 
@@ -960,7 +960,7 @@ c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI]
         let h = ReadOnlyHost::new(w.build());
         let inv = crate::share::proxmox::guests::load(&h);
         let cfg = Config::load(&h).unwrap();
-        let r = crate::share::update::check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, false), &[], &std::sync::atomic::AtomicBool::new(false), &mut |_| {});
+        let r = crate::share::update::check::run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &std::sync::atomic::AtomicBool::new(false), &mut |_| {});
         let host = r.host.as_ref().unwrap();
         assert!(host.error.as_deref().unwrap().contains("rc 100"), "{:?}", host.error);
         assert_eq!(r.results.len(), 5, "CTs are still checked");
@@ -968,7 +968,7 @@ c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI]
         // sin apt (NotFound) no hay fila
         let h = ReadOnlyHost::new(World::new().ct(Ct::new(101)).build());
         let inv = crate::share::proxmox::guests::load(&h);
-        assert!(check_host(&h, &inv, &CheckOpts::from_config(&Config::load(&h).unwrap(), false)).is_none());
+        assert!(check_host(&h, &inv, &CheckOpts::from_config(&Config::load(&h).unwrap(), Some(false))).is_none());
     }
 
     #[test]
@@ -976,7 +976,7 @@ c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI]
         let h = ReadOnlyHost::allowing_refresh(gpu_world().host_out("apt-update", "E: Failed\n").file("/exec/0/apt-update.out.exit", b"100").build());
         let inv = crate::share::proxmox::guests::load(&h);
         let cfg = Config::load(&h).unwrap();
-        let i = check_host(&h, &inv, &CheckOpts::from_config(&cfg, true)).unwrap();
+        let i = check_host(&h, &inv, &CheckOpts::from_config(&cfg, Some(true))).unwrap();
         assert!(i.error.is_none() && i.notes.iter().any(|n| n.contains("apt-get update failed")), "{:?}", i.notes);
         assert_eq!(h.inner().recorded().first(), Some(&Recorded::Host(APT_UPDATE.iter().map(|s| s.to_string()).collect())));
     }

@@ -55,7 +55,7 @@ enum Msg {
 }
 
 /// Un hilo por chequeo; el bucle principal sigue bloqueado en `read()` salvo mientras hay trabajo (poll 150 ms).
-fn spawn_check<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, cancel: &'s AtomicBool, refresh: bool, only: Vec<u32>) -> Receiver<Msg> {
+fn spawn_check<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, cancel: &'s AtomicBool, refresh: Option<bool>, only: Vec<u32>) -> Receiver<Msg> {
     let (tx, rx) = mpsc::channel();
     cancel.store(false, Ordering::SeqCst);
     sc.spawn(move || {
@@ -380,6 +380,7 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
     let mut app = App::new(guests::load(host), force_read_only || no_config, host.is_mock());
     if let Ok(c) = Config::load(host) {
         app.columns = c.ui.visible_columns();
+        app.refresh_default = c.check.refresh;
     }
     app.forced_ro = force_read_only;
     app.ro_reason = ro_reason;

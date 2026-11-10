@@ -1089,8 +1089,8 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
             "s            cycle sort: vmid · name · updates · ram",
             "r            reload /etc/pve confs (files only)",
             "Enter        guest detail",
-            "c            check LXC updates (visible CTs, or all) · read-only",
-            "C            check + refresh package indexes (asks y to confirm)",
+            "c            check LXC updates (visible CTs, or all): refreshes the package indexes",
+            "C            read-only check: does not refresh the indexes",
             "v            show the last check result",
             "o            choose visible columns (Space toggles; saved in config.toml)",
             "u            update the visible CTs with updates (asks first)",
@@ -1107,7 +1107,7 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         View::Logs => vec!["↑↓ / j k     select · PgUp PgDn 10 · g / G first / last", "Enter        open the log (or double click)", "Esc / l      back to the main screen", "?            this help · q quit"],
         View::Config => vec!["S            change the update schedule (asks first; server time)", "L            change log_retention_days (0 = never delete)", "l            run logs", "N            edit [apprise] (api_url, key or urls, events; secrets masked; asks first)", "t            send a test notice (like `pxu notify-test`)", "r            re-read the timer state", "Esc          back to the list", "?            this help · q quit"],
         View::Update => vec!["x / Esc      cancel: finish the CT in progress, then stop", "↑↓ PgUp PgDn scroll the log · f / End follow · Home oldest", "Esc          back to the list (when the run is over)", "?            this help"],
-        View::Check => vec!["↑↓ / j k     select CT (packages shown below)", "u            update the CTs with updates (asks first)", "c            re-check · C / R refresh + check (confirm y)", "Enter        guest detail", "Esc          cancel a running check, then back", "?            this help · q quit"],
+        View::Check => vec!["↑↓ / j k     select CT (packages shown below)", "u            update the CTs with updates (asks first)", "c            re-check (refreshes the indexes) · C / R read-only check", "Enter        guest detail", "Esc          cancel a running check, then back", "?            this help · q quit"],
         View::Detail(_) => vec!["u            update this CT (asks first)", "a            toggle this CT's scheduled auto-update (asks first)",
             "             host: host_auto · host/GPU CT: NVIDIA driver window", "g / S        config view · change the update schedule", "↑↓ / j k     scroll", "PgUp PgDn    scroll 10 · Home top", "r            reload confs", "Esc          back to the list", "?            this help · q quit"],
     };
@@ -1133,9 +1133,9 @@ fn draw_check(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let ck = &app.check;
     let pk_h: u16 = if area.height >= 40 { 10 } else { 7 };
     let keys = if wide {
-        keybar_wrap(th, &[("↑↓/jk", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh+check (confirm)"), ("u", "update (asks)"), ("Esc", "back/cancel"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓/jk", "select"), ("Enter", "detail"), ("c", "refresh+check"), ("C", "read-only check"), ("u", "update (asks)"), ("Esc", "back/cancel"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     } else {
-        keybar_wrap(th, &[("↑↓", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+        keybar_wrap(th, &[("↑↓", "select"), ("Enter", "detail"), ("c", "refresh+check"), ("C", "read-only"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
     };
     let parts = Layout::vertical([
         Constraint::Length(1), // header

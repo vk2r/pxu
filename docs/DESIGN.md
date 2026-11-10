@@ -50,7 +50,7 @@ Data format: updates `n/s` (total/security), sizes `x/y GB`, index age `5h`, `32
 
 ## 4. Key map
 
-Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, schedule, Apprise, retention) → help `?` → search → refresh confirmation → view key. A modal captures all keys.
+Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, schedule, Apprise, retention) → help `?` → search → view key. A modal captures all keys.
 
 `Ctrl-C` with an active update run opens the cancel dialog (§7); without a run it exits.
 
@@ -65,8 +65,8 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | `s` | cycles the order: vmid · name · updates · ram |
 | `r` | reloads the `.conf` files from `/etc/pve` (files only) |
 | `Enter` | guest detail |
-| `c` | checks the visible CTs (read-only) |
-| `C` | check with index refresh; asks for `y` |
+| `c` | check with index refresh (config `[check] refresh`; in `[RO]` without refresh) |
+| `C` | read-only check (no index refresh), no confirmation |
 | `v` | view the last check result (if there is one or one is in progress) |
 | `o` | choose visible columns |
 | `u` | update the visible CTs with updates (asks for confirmation); on the host row, updates the host |
@@ -82,7 +82,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 
 ### 4.3 Check result (`check_key`, `app.rs:1139-1172`)
 
-`↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` CT detail · `c` re-check · `C` (or `R`) refresh with `y` · `u` update the CTs with updates · `Esc`/`Backspace` back (with a check in progress, it cancels it) · `?` · `q`.
+`↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` CT detail · `c` re-check with index refresh · `C` (or `R`) read-only check · `u` update the CTs with updates · `Esc`/`Backspace` back (with a check in progress, it cancels it) · `?` · `q`.
 
 ### 4.4 Update run (`update_key`, `app.rs:932-`)
 
@@ -272,8 +272,8 @@ px┌ help · any key closes ─────────────────
   │s            cycle sort: vmid · name · updates · ram                      │
   │r            reload /etc/pve confs (files only)                           │
   │Enter        guest detail                                                 │s
-  │c            check LXC updates (visible CTs, or all) · read-only          │
-  │C            check + refresh package indexes (asks y to confirm)          │s
+  │c            check LXC updates (visible CTs, or all): refreshes indexes   │
+  │C            read-only check: does not refresh the indexes                │s
   │v            show the last check result                                   │s
   │o            choose visible columns (Space toggles; saved in config.toml) │
   │u            update the visible CTs with updates (asks first)             │s
@@ -349,7 +349,7 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [?] help  [q] quit
+[↑↓] select  [Enter] detail  [c] refresh+check  [C] read-only  [?] help  [q] quit
 ```
 
 ### 5.4 Update run

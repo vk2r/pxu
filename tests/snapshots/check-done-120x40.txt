@@ -36,5 +36,5 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [Esc] back/cancel
-[?] help  [q] quit
+[↑↓/jk] select  [Enter] detail  [c] refresh+check  [C] read-only check  [u] update (asks)  [Esc] back/cancel  [?] help
+[q] quit

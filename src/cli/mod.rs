@@ -145,8 +145,8 @@ fn host_text(h: &hostcheck::HostInfo) -> String {
     s
 }
 
-/// `pxu check [--refresh] [--json] [--notify] [vmid...]`. Códigos: 0 sin updates · 10 hay updates · 12 algún CT falló · 2 uso/config.
-pub fn cmd_check(host: &dyn Host, only: &[u32], refresh: bool, json: bool, notify_flag: bool) -> i32 {
+/// `pxu check [--no-refresh] [--json] [--notify] [vmid...]`. Códigos: 0 sin updates · 10 hay updates · 12 algún CT falló · 2 uso/config.
+pub fn cmd_check(host: &dyn Host, only: &[u32], refresh: Option<bool>, json: bool, notify_flag: bool) -> i32 {
     let cfg = match Config::load(host) {
         Ok(c) => c,
         Err(e) => {
@@ -429,7 +429,7 @@ fn update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
     loop {
         // revisión de solo lectura: lo que se va a confirmar
         let inv = guests::load(host);
-        let Some(info) = hostcheck::check_host(host, &inv, &CheckOpts::from_config(&cfg, false)) else {
+        let Some(info) = hostcheck::check_host(host, &inv, &CheckOpts::from_config(&cfg, Some(false))) else {
             eprintln!("pxu: this is not a Debian/Proxmox host (no apt): nothing to update");
             return update::EXIT_USAGE;
         };

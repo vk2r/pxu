@@ -1,5 +1,5 @@
 //! Argumentos de la línea de comandos.
-pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config check|notify-test] [options]\n  pxu                      open the TUI\n  pxu list [--json] [--all-nodes]\n                           one line per LXC/VM (config read from /etc/pve, no processes)\n  pxu check [--json] [--refresh] [--notify] [--ct 101,103] [vmid...]\n                           updates per LXC, one exec per CT, read-only unless --refresh\n                           exit: 0 none · 10 updates · 12 a CT failed · 2 usage/config\n  pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
+pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config check|notify-test] [options]\n  pxu                      open the TUI\n  pxu list [--json] [--all-nodes]\n                           one line per LXC/VM (config read from /etc/pve, no processes)\n  pxu check [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]\n                           updates per LXC, one exec per CT; refreshes the package indexes by default\n                           ([check] refresh = false turns it off; --no-refresh = read-only check; --refresh kept)\n                           exit: 0 none · 10 updates · 12 a CT failed · 2 usage/config\n  pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
                            upgrade CTs one at a time (temporary backup, simulate, upgrade, verify; automatic rollback\n                           to the backup if it fails, then the backup is deleted). Only CTs with a
                            positive recent `pxu check`; default: CTs with auto_update. The only command that writes.
                            exit: 0 ok · 20 a CT failed · 30 stopped (2 failures in a row / Ctrl-C) · 3 busy · 2 usage
@@ -12,7 +12,7 @@ pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config chec
 pub enum Cmd {
     Tui,
     List { json: bool, all_nodes: bool },
-    Check { only: Vec<u32>, refresh: bool, json: bool, notify: bool },
+    Check { only: Vec<u32>, refresh: Option<bool>, json: bool, notify: bool },
     Update { only: Vec<u32>, json: bool, yes: bool, notify: bool, host: bool },
     ConfigCheck,
     NotifyTest,
@@ -23,14 +23,15 @@ pub fn parse() -> Result<(Cmd, Option<String>), lexopt::Error> {
     let mut p = lexopt::Parser::from_env();
     let mut mock = std::env::var("PXU_MOCK").ok();
     let (mut json, mut all_nodes, mut cmd) = (false, false, None::<&'static str>);
-    let (mut refresh, mut notify, mut only) = (false, false, Vec::<u32>::new());
+    let (mut refresh, mut notify, mut only) = (None::<bool>, false, Vec::<u32>::new());
     let (mut yes, mut no_notify, mut want_check, mut host_flag) = (false, false, false, false);
     while let Some(a) = p.next()? {
         match a {
             Long("mock") => mock = Some(p.value()?.string()?),
             Long("json") => json = true,
             Long("all-nodes") => all_nodes = true,
-            Long("refresh") => refresh = true,
+            Long("refresh") => refresh = Some(true),
+            Long("no-refresh") => refresh = Some(false),
             Long("notify") => notify = true,
             Long("yes") | Short('y') => yes = true,
             Long("no-notify") => no_notify = true,

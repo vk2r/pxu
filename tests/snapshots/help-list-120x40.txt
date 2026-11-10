@@ -14,8 +14,8 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
   109  LXC│s            cycle sort: vmid · name · updates · ram                                              │
   110  LXC│r            reload /etc/pve confs (files only)                                                   │
   111  LXC│Enter        guest detail                                                                         │
-  112  LXC│c            check LXC updates (visible CTs, or all) · read-only                                  │
-  113  LXC│C            check + refresh package indexes (asks y to confirm)                                  │
+  112  LXC│c            check LXC updates (visible CTs, or all): refreshes the package indexes               │
+  113  LXC│C            read-only check: does not refresh the indexes                                        │
   114  LXC│v            show the last check result                                                           │
   115  LXC│o            choose visible columns (Space toggles; saved in config.toml)                         │
   116  LXC│u            update the visible CTs with updates (asks first)                                     │
