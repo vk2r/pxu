@@ -1,5 +1,5 @@
 [Unit]
-Description=pxu: chequeo y actualización diaria de LXC
+Description=pxu: daily LXC check and update
 
 [Timer]
 OnCalendar=*-*-* 04:30

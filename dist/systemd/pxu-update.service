@@ -1,5 +1,5 @@
 [Unit]
-Description=pxu: chequeo y actualización de LXC
+Description=pxu: LXC check and update
 After=pve-cluster.service
 
 [Service]

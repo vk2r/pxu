@@ -39,7 +39,7 @@ Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then
    ```
 
 `--timer` enables the daily run. Without it, only the program is installed.
-The installer is safe to rerun and never overwrites your configuration.
+The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat these three steps.
 
 Paths: program `/usr/local/bin/pxu`; configuration `/etc/pxu/config.toml` (you create it); logs `/var/log/pxu/`. The installer creates `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu` with mode `0700`.
 
@@ -91,10 +91,6 @@ Each run ends with **a single notification**: a table with the server first and 
 
 Keys are never shown on screen.
 
-## Update pxu
-
-Build again with `mise run build`, copy the files again and repeat `sh install.sh ./pxu --timer` on Proxmox. Your configuration is kept.
-
 ## Uninstall
 
 On the server, as root:
@@ -106,8 +102,8 @@ On the server, as root:
 
 ## Common problems
 
-- **"hay que ejecutarlo como root"** (must be run as root) during install: run `install.sh` as root on the server.
-- **"este equipo no parece Proxmox"** (this machine doesn't look like Proxmox) during install: run it on the Proxmox server, or use `--force`, which skips that check.
+- **"must be run as root"** during install: run `install.sh` as root on the server.
+- **"this machine does not look like Proxmox"** during install: run it on the Proxmox server, or use `--force`, which skips that check.
 - **The TUI won't let you update and says "read-only"**: `/etc/pxu/config.toml` is missing or has errors. Mark a container with `a`, or check the file with `pxu config check`. The file must be owned by root with `0600` permissions.
 - **A container doesn't update**: it must be marked with `a` (or have a tag listed in `auto_update_tags`), and you must have checked it with `c` less than an hour ago.
 - **Notifications don't arrive**: test with `t` in Config. Check the address of your Apprise API.

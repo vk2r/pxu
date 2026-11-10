@@ -39,7 +39,7 @@ Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e inst�
    ```
 
 `--timer` activa la corrida diaria. Sin él, se instala solo el programa.
-El instalador se puede repetir sin problema y nunca sobrescribe tu configuración.
+El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite estos tres pasos.
 
 Rutas: programa `/usr/local/bin/pxu`; configuración `/etc/pxu/config.toml` (la creas tú); logs `/var/log/pxu/`. El instalador crea `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu` con modo `0700`.
 
@@ -91,10 +91,6 @@ Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y 
 
 Las claves nunca se muestran en pantalla.
 
-## Actualizar pxu
-
-Compila de nuevo con `mise run build`, copia otra vez los archivos y repite `sh install.sh ./pxu --timer` en Proxmox. Tu configuración se conserva.
-
 ## Desinstalar
 
 En el servidor, como root:
@@ -106,8 +102,8 @@ En el servidor, como root:
 
 ## Problemas comunes
 
-- **«hay que ejecutarlo como root»** al instalar: ejecuta `install.sh` como root en el servidor.
-- **«este equipo no parece Proxmox»** al instalar: ejecútalo en el servidor Proxmox, o usa `--force`, que se salta esa comprobación.
+- **"must be run as root"** («hay que ejecutarlo como root») al instalar: ejecuta `install.sh` como root en el servidor.
+- **"this machine does not look like Proxmox"** («este equipo no parece Proxmox») al instalar: ejecútalo en el servidor Proxmox, o usa `--force`, que se salta esa comprobación.
 - **La TUI no deja actualizar y dice «read-only»** (solo lectura): falta `/etc/pxu/config.toml` o tiene errores. Marca un contenedor con `a`, o revisa el archivo con `pxu config check`. El archivo debe ser de root y con permisos `0600`.
 - **Un contenedor no se actualiza**: tiene que estar marcado con `a` (o tener una etiqueta listada en `auto_update_tags`), y haberlo comprobado con `c` hace menos de una hora.
 - **No llegan avisos**: prueba con `t` en Config. Revisa la dirección de tu Apprise API.
