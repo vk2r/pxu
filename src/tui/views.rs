@@ -201,6 +201,17 @@ fn columns(width: u16, gpu: bool, shown: &[String]) -> Vec<Col> {
         let mut v: Vec<Col> = fixed.into_iter().map(|(t, w)| c(t, w)).collect();
         v.push(c("NAME", name));
         v.extend(post.into_iter().map(|p| if p.title == "TAGS" { c("TAGS", tags_w) } else { p }));
+        // Tras los topes de NAME/TAGS puede sobrar ancho: se reparte por turnos entre las columnas de texto
+        // (NAME primero; ID, TYPE, CPU y la última columna no crecen) para que la tabla y la selección lleguen al borde derecho.
+        let total: usize = 2 + v.iter().map(|x| x.w).sum::<usize>() + 2 * (v.len() - 1);
+        let mut extra = (width as usize).saturating_sub(total);
+        let grow: Vec<usize> = (0..v.len() - 1).filter(|&i| !matches!(v[i].title, "ID" | "TYPE" | "CPU")).collect();
+        let mut i = 0;
+        while extra > 0 {
+            v[grow[i % grow.len()]].w += 1;
+            extra -= 1;
+            i += 1;
+        }
         v
     } else {
         let mut v = vec![c("ID", 4), c("NAME", 0), c("STATE", 7)];

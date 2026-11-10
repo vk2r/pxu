@@ -1640,3 +1640,26 @@ fn log_retention_dialog_takes_digits_and_saves_a_number() {
     press(&mut a, "L");
     assert!(a.log_modal.is_none() && a.status.contains("--read-only"));
 }
+
+#[test]
+fn list_table_and_selection_reach_right_edge_on_wide_terminal() {
+    use ratatui::style::Modifier;
+    let a = app("basic-37");
+    let th = Theme { color: true };
+    for w in [112u16, 160, 230] {
+        let mut t = Terminal::new(TestBackend::new(w, 40)).unwrap();
+        t.draw(|f| draw(f, &a, &th)).unwrap();
+        let buf = t.backend().buffer().clone();
+        // Fila 4: guest seleccionado (cursor en 0). Su vídeo inverso debe cubrir hasta la última columna.
+        assert!(buf[(w - 1, 4)].modifier.contains(Modifier::REVERSED), "w={w}: selection bar stops before the right edge");
+        // La última columna (AUTO) ocupa el borde derecho: su cabecera cae en el último tramo y los "yes" también.
+        let line = |y: u16| -> String { (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        let head = line(3);
+        let auto_x = head[..head.find("AUTO").unwrap()].chars().count();
+        let gap = w as usize - (auto_x + 4);
+        let rowgap = w as usize - line(5).trim_end().chars().count();
+        assert!(gap <= 1, "w={w}: AUTO header {gap} cols from edge");
+        assert!(rowgap <= 3, "w={w}: row values {rowgap} cols from edge");
+    }
+}
+

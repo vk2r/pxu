@@ -4,6 +4,8 @@ English | [Español](SECURITY-REVIEW.es.md)
 
 Security status of the current code: attack surface, threat model and findings with their status. Each status has been checked against the code (file:line or test name). Architecture references are in [ARCHITECTURE.md](ARCHITECTURE.md) and interface references in [DESIGN.md](DESIGN.md).
 
+Revision: committed on 2026-11-09 (`f726c66`, initial commit). The date and commit of the original review were not recorded because the git history was flattened; the statuses below were not re-checked against this commit when the documentation was reorganized.
+
 Statuses: **fixed** (the cause no longer exists), **mitigated** (the risk is reduced but a described residue remains), **accepted** (a conscious decision), **open** (not fixed).
 
 ---

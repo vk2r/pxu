@@ -1,10 +1,14 @@
 English | [Español](ARCHITECTURE.es.md)
 
 # ARCHITECTURE — `pxu`
+pxu is a lightweight LXC container updater for Proxmox VE, designed as an alternative to ProxMenux. It is a single Rust binary with a TUI (ratatui) and a CLI. It has no daemon and no dependencies on the host, and uses a few MB of RAM while it runs.
+
 
 Technical reference of how `pxu` works today. The TUI is described in [DESIGN.md](DESIGN.md); the security analysis, in [SECURITY-REVIEW.md](SECURITY-REVIEW.md). Installation and usage: [README.md](../README.md); building and testing: [development.md](../development.md).
 
 Known limitation: the logic is tested against a simulated server (`MockHost`, §8). Behavior with every storage type and Proxmox version has not been verified on a real server.
+
+Status: v0.1, in development. Tested on PVE 9.2 (real update and rollback on a Debian 13 CT). Apprise notifications and the rollback of a CT that was stopped are only tested with simulated data.
 
 ---
 
@@ -157,7 +161,7 @@ Results per CT: `ok`, `warn`, `failed`, `skipped`, `cancelled`.
 
 ### 3.4 Backup registry (`update/backup.rs`)
 
-`/var/lib/pxu/backups.json` records each pxu backup with state `active` (in progress; if pxu dies, the next run turns it into `held`), `held` (never deleted) or `kept` (pruning candidate). Only what pxu created is deleted: `pxu-<14 digits>[-N]` snapshots and vzdump volumes recorded in the registry. Foreign snapshots (`manual-*`, `zfs_auto_*`…) are not touched. Each entry is validated on load; a corrupt registry is set aside as `backups.json.corrupt-<epoch>` and that run prunes nothing.
+`/var/lib/pxu/backups.json` records each pxu backup with state `active` (in progress; if pxu dies, the next run turns it into `held`), `held` (never deleted) or `kept` (pruning candidate). Only what pxu created is deleted: `pxu-<14 digits>[-N]` snapshots and vzdump volumes recorded in the registry. Foreign snapshots (`manual-*`, `zfs_auto_*`…) are not touched. Each entry is validated on load; a corrupt registry is set aside as `backups.json.corrupt-<epoch>` and that run prunes nothing. pxu only deletes the backups in its own registry, and each write command is tied to the CT being updated.
 
 ### 3.5 Process priority and output
 
@@ -205,6 +209,22 @@ Two notifications are never sent for the same run. With all events in `on` (defa
 ### 4.3 Queue
 
 If sending fails, the message is saved in `/var/lib/pxu/outbox/` (one JSON per message) and retried at the end of the next run. Maximum 50 messages and 7 days.
+
+### 4.4 Notification format
+
+Each update run (timer, `pxu update` or the TUI) ends with **a single notification**: a Markdown table (`Upgrades | Result | Packages | GPU driver | Time | Details | Manual`, the host first and then each CT, including failed and skipped ones) under the title `pxu: update run on <host> — N ok, N warn, N failed · <dur>` (+ `STOPPED` if it was stopped, + `· NVIDIA failed`). With more than 25 rows, the ones that are not ok come first, then up to 25 ok and `+N more ok (see log)`. The notification level is success, warning or failure according to the worst result.
+
+- `run_summary` event: always sent when the run ends. `update_failed` event: if it is the only one (without `run_summary`), the same notification is sent only when some CT or the NVIDIA driver failed. Old configs remain valid.
+
+### 4.5 Setup from the TUI
+
+In the Config view (`g`) the "Notifications (Apprise)" section shows the status of `[apprise]` with secrets hidden: `api_url` with only scheme and host, `api_key` as `•••` and each destination URL as `tgram://…`.
+
+- `N` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots.
+- With Enter it validates the entire resulting config with the same code as `pxu config check`; if it doesn't validate (or no usable transport remains) it writes nothing and says why. Then it asks for confirmation with "today → new" (secrets hidden): `y`/Enter saves, `b` goes back to editing, Esc cancels.
+- It saves only `[apprise]`: the rest of `config.toml` and its comments are preserved, the write is atomic (root, `0600`) and, if the file doesn't exist, it creates it. The key and the URLs are mutually exclusive: changing mode removes the other.
+- `t` sends a test notification, the same as `pxu notify-test` (shows "sending…", then OK or the error with code 5, without dumping secrets).
+- With `--read-only`, editing and testing are rejected: the test goes out over the network, so it counts as an action.
 
 ---
 
@@ -269,6 +289,12 @@ keep = 2
 
 Priority of `auto_update`: `[[ct]] auto_update` > `auto_update_tags` tag > no. The host (vmid 0) doesn't go through here: `[[ct]] vmid = 0` with `auto_update` or `nvidia_auto` is a config error; `host_auto` / `host_nvidia_auto` are used.
 
+### 5.1 Validation and editing from the TUI
+
+The TUI also writes those overrides: `a` toggles the `auto_update` of the selected CT (modal with "today: … → new state"; `y`/Enter confirms, Esc cancels). It only changes the `auto_update` line of that vmid's `[[ct]]` block, or adds a block at the end; comments and order are preserved. The resulting TOML is validated and written atomically (root, `0600`). An override of `false` wins over the CT's tag.
+
+`pxu update` and the TUI validate the config the same way as `pxu config check` before using it: unknown values (`on_failure = "Stop"`, `apt_mode = "Upgrade"`) or misspelled keys (`on_falure`) are errors. `pxu update` exits with code 2 and shows them; the TUI starts in read-only mode with the reason in the status bar. Warnings don't block.
+
 ---
 
 ## 6. CLI and timer
@@ -327,6 +353,26 @@ Persistent=true
 
 The TUI's `S` key saves another schedule as a `pxu-update.timer.d` drop-in that replaces `OnCalendar`; `install.sh --uninstall` deletes it. The log of each scheduled run and its retention: §7.
 
+You can edit the units before installing them:
+
+```sh
+cat dist/systemd/pxu-update.service dist/systemd/pxu-update.timer
+```
+
+The `-` in front of `check` makes its code 10 ("there are updates") not stop the unit.
+
+### Schedule from the TUI
+
+Without touching `systemctl` by hand: in the Config view (`g`) you see the real state of the timer (installed units, enabled, effective schedule and next run), and `S` (also from the list or the detail) opens the schedule dialog:
+
+- Enable or disable the timer, and choose daily at HH:MM, Monday to Friday at HH:MM, weekly (day + HH:MM) or a free-form `OnCalendar`. Times are the server's.
+- Before confirming it validates the schedule with `systemd-analyze calendar` and shows the next run; if it doesn't validate, it writes nothing.
+- After confirmation ("today: … → new"; `y`/Enter saves, Esc cancels) it writes the drop-in `/etc/systemd/system/pxu-update.timer.d/schedule.conf` (empty `OnCalendar=` + the new one, 0644, atomic), runs `systemctl daemon-reload` and `enable --now` or `disable --now`.
+- If the units are not installed, the dialog installs them (they are the same as in `dist/systemd/`, embedded in the binary).
+- It warns if there is no `config.toml` or no CT with auto-update (the update would do nothing) or if the config is invalid (it would fail with code 2). Rejected in forced read-only mode.
+
+`install.sh --uninstall` also deletes that drop-in.
+
 ---
 
 ## 7. Logs
@@ -338,6 +384,10 @@ One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the n
 - Retention by days: `[general] log_retention_days` (30; `0` = don't delete). When each run ends, the oldest `run-*.log` are deleted; `prune_in` only touches names in pxu's format. Logs in the previous format (`host-*.log`, `nvidia-*.log`, per-CT folders) also expire by days, but the Logs page only lists `run-*.log`.
 - The log masks URLs with user and password (`fmt::mask_url_creds`) and replaces control characters (`fmt::clean`).
 - The TUI lists and opens them with the `l` key (up to `LIST_MAX = 1000` logs and `VIEW_MAX_LINES = 100 000` lines); see DESIGN §5.
+- Each run writes **one log**: `/var/log/pxu/run-YYYYMMDD-HHMM.log` (UTC in the name; `-SS` if one from that minute already exists; `0600`). It is created at the start and grows while it runs: one section per host, NVIDIA driver and CT, with the time of each line, and at the end the summary identical to the notification; it is also written if the run is stopped or cancelled (with the reason). `/var/log/pxu/<vmid>/…`, `host-….log` and `nvidia-….log` are no longer created. An abrupt cut (SIGKILL, host crash) leaves the log partial, which the Logs page lists as `⛔ INCOMPLETE`.
+- `[general] log_retention_days = 30` (default): when each run ends, pxu logs older than N days are deleted, including the old formats and empty `<vmid>` folders; `0` = never delete (max 3650). Only regular files with a pxu name inside `/var/log/pxu` are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
+- TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `L` in the Config view edits `log_retention_days`.
+- Results shown in the Logs page: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` if something failed, `⛔ STOPPED` if the run was stopped, and `⛔ INCOMPLETE` if it was cut off abruptly (for example, the server shut down mid-run) or is still in progress. The list says "no run logs yet" until there has been a run.
 
 ---
 
@@ -345,27 +395,7 @@ One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the n
 
 ### 8.1 Tree
 
-A single `pxu` package: a library (`src/lib.rs` → `share/`, no terminal) and the binary (`main.rs`, `cli/`, `tui/`) on top. `cli/` and `tui/` only depend on `share/`, not on each other.
-
-```
-src/
-├─ main.rs                 # chooses CLI or TUI; wraps the host in ReadOnlyHost
-├─ lib.rs                  # pub mod share
-├─ cli/{mod,args}.rs       # commands; lexopt
-├─ tui/{mod,app,views,logs,sched,apprise,tests}.rs
-└─ share/
-   ├─ config.rs  model.rs  fmt.rs  labels.rs  state.rs  schedule.rs
-   ├─ notify.rs                         # Apprise
-   ├─ proxmox/{conf,guests,hostcheck}.rs + probe.sh
-   ├─ update/{mod,check,backup,hostupdate,nvidia,report,runlog}.rs
-   ├─ host/{mod,real,readonly}.rs       # Host trait, RealHost, ReadOnlyHost
-   └─ mock/{mod,scenario}.rs            # MockHost + World builder
-tests/snapshots/           # TUI captures (80×24 and 120×40)
-dist/systemd/              # pxu-update.service and pxu-update.timer
-install.sh   mise.toml
-```
-
-Dependencies (`Cargo.toml`, all without default features except `lexopt` and `libc`): `ratatui`, `crossterm`, `serde`, `toml`, `toml_edit` (to edit the config preserving comments), `serde_json`, `lexopt`, `libc`. There is no async runtime, `clap`, `regex` or `chrono`. The `release` profile uses `opt-level = "s"`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"` and `strip`.
+The code tree, the dependencies and the build profile live in [development.md](../development.md) ("Code map"). The sections below describe the `Host` trait, the test builder and the tests.
 
 ### 8.2 The `Host` trait
 
@@ -387,7 +417,7 @@ fn set_update_enabled / set_update_target / now
 
 ### 8.3 `World` builder and cases
 
-A case declares only what changes (distro, running/stopped, storage with or without snapshot, injected failures, ProxMenux locks, VMs and guests of another node, backup policy). Predefined cases: `demo`, `update-ok`, `update-fail`, `distros`, `cluster`, `failures`, `vms`, `host`. The values are made up, not captures of a server.
+A case declares only what changes (distro, running/stopped, storage with or without snapshot, injected failures, ProxMenux locks, VMs and guests of another node, backup policy). Predefined cases: `demo`, `update-ok`, `update-fail`, `distros`, `cluster`, `failures`, `vms`, `host`. The values are made up, not captures of a server. Each test builds its own with the builder (`World::new().ct(Ct::new(101).distro(Distro::Alpine).stopped())…`).
 
 ### 8.4 Tests
 

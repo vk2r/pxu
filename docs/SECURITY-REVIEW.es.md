@@ -4,6 +4,8 @@
 
 Estado de seguridad del código actual: superficie, modelo de amenazas y hallazgos con su estado. Cada estado está comprobado contra el código (archivo:línea o nombre del test). Las referencias de arquitectura están en [ARCHITECTURE.es.md](ARCHITECTURE.es.md) y las de interfaz en [DESIGN.es.md](DESIGN.es.md).
 
+Revisión: confirmada el 2026-11-09 (`f726c66`, commit inicial). La fecha y el commit de la revisión original no quedaron registrados porque se aplanó el historial de git; los estados de abajo no se volvieron a comprobar contra este commit al reorganizar la documentación.
+
 Estados: **corregido** (la causa ya no existe), **mitigado** (el riesgo se reduce pero queda un residuo descrito), **aceptado** (decisión consciente), **abierto** (sin corregir).
 
 ---
