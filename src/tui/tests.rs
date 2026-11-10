@@ -1642,24 +1642,111 @@ fn log_retention_dialog_takes_digits_and_saves_a_number() {
 }
 
 #[test]
-fn list_table_and_selection_reach_right_edge_on_wide_terminal() {
+fn list_table_keeps_two_space_gaps_and_tags_use_extra_width() {
     use ratatui::style::Modifier;
-    let a = app("basic-37");
+    let mut a = app("basic-37");
+    let long = "alpha-tag,bravo-tag,charlie-tag,delta-tag,echo-tag,foxtrot-tag,golf-tag";
+    for g in a.inv.guests.iter_mut() {
+        g.tags = long.split(',').map(String::from).collect();
+    }
+    a.columns.push("tags".into());
     let th = Theme { color: true };
-    for w in [112u16, 160, 230] {
+    let mut shown = Vec::new();
+    for w in [120u16, 230] {
         let mut t = Terminal::new(TestBackend::new(w, 40)).unwrap();
         t.draw(|f| draw(f, &a, &th)).unwrap();
         let buf = t.backend().buffer().clone();
-        // Fila 4: guest seleccionado (cursor en 0). Su vídeo inverso debe cubrir hasta la última columna.
-        assert!(buf[(w - 1, 4)].modifier.contains(Modifier::REVERSED), "w={w}: selection bar stops before the right edge");
-        // La última columna (AUTO) ocupa el borde derecho: su cabecera cae en el último tramo y los "yes" también.
         let line = |y: u16| -> String { (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        // Selección: el vídeo inverso cubre toda la fila, como antes.
+        assert!(buf[(w - 1, 4)].modifier.contains(Modifier::REVERSED), "w={w}: selection bar must span the row");
+        // Huecos de 2 espacios: cada cabecera va precedida por exactamente 2 espacios (sin reparto del sobrante).
         let head = line(3);
-        let auto_x = head[..head.find("AUTO").unwrap()].chars().count();
-        let gap = w as usize - (auto_x + 4);
-        let rowgap = w as usize - line(5).trim_end().chars().count();
-        assert!(gap <= 1, "w={w}: AUTO header {gap} cols from edge");
-        assert!(rowgap <= 3, "w={w}: row values {rowgap} cols from edge");
+        let titles: Vec<&str> = head.split("  ").filter(|t| !t.trim().is_empty()).collect();
+        assert!(titles.len() >= 6, "w={w}: header {head:?}");
+        let tags_x = head.find("TAGS").unwrap();
+        let name_x = head.find("NAME").unwrap();
+        assert!(tags_x > name_x + 9, "w={w}");
+        assert_eq!(&head[tags_x - 2..tags_x], "  ", "w={w}: gap before TAGS");
+        // La línea 5 (primer guest): cuánto de las tags se ve.
+        let row = line(5);
+        shown.push(row.matches("-tag").count());
+        // La tabla no se estira con espacios: AUTO no está pegado al borde si TAGS aún tiene texto.
+    }
+    assert!(shown[1] > shown[0], "TAGS must show more text at 230 than at 120: {shown:?}");
+}
+
+#[test]
+fn footer_key_bars_single_line_left_aligned() {
+    let keys = ["[↑↓/jk] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[o] columns", "[l] logs", "[g] config", "[S] schedule", "[?] help", "[q] quit"];
+    let a = app("basic-37");
+    // 230 columnas: todas las teclas en una sola línea, con huecos de 2 espacios.
+    let (out, _) = render(&a, 230, 40, true);
+    let want = keys.join("  ");
+    let n = out.lines().filter(|l| l.contains("[q] quit")).count();
+    assert_eq!(n, 1);
+    assert!(out.lines().any(|l| l == want), "list keys must be one line with 2-space gaps");
+    assert!(!out.lines().any(|l| l.contains("[r] reload") && !l.contains("[q] quit")), "no second key line at 230");
+    // 80 columnas: ninguna tecla queda cortada.
+    let (out, _) = render(&a, 80, 24, true);
+    for k in ["[↑↓] move", "[1-4] filter", "[/] search", "[s] sort", "[c] check", "[u] update (asks)", "[r] reload", "[a] auto", "[o] cols", "[g] config", "[l] logs", "[?] help", "[q] quit"] {
+        assert!(out.contains(k), "80 cols: missing {k}");
+    }
+    for w in [80u16, 120, 160, 230] {
+        let (out, _) = render(&a, w, 40, true);
+        assert!(out.lines().all(|l| l.chars().count() <= w as usize), "w={w}: line too wide");
     }
 }
 
+#[test]
+fn list_name_column_is_as_wide_as_longest_name() {
+    let mut a = app("basic-37");
+    a.inv.guests[0].name = "find-my-device".into();
+    let th = Theme { color: true };
+    let longest = a.inv.guests.iter().map(|g| g.name.chars().count()).max().unwrap().max(4);
+    assert_eq!(longest, 14);
+    for tags in [true, false] {
+        a.columns.retain(|c| c != "tags");
+        if tags {
+            a.columns.push("tags".into());
+        }
+        for w in [120u16, 230] {
+            let mut t = Terminal::new(TestBackend::new(w, 40)).unwrap();
+            t.draw(|f| draw(f, &a, &th)).unwrap();
+            let buf = t.backend().buffer().clone();
+            let head: String = (0..w).map(|x| buf[(x, 3)].symbol().to_string()).collect();
+            let name_x = head.find("NAME").unwrap();
+            // NAME termina donde empieza STATE menos el hueco de 2 espacios.
+            let next_x = head.find("STATE").unwrap();
+            let name_w = next_x - 2 - name_x;
+            assert_eq!(name_w, longest, "w={w} tags={tags}: NAME width");
+        }
+    }
+}
+
+#[test]
+fn list_columns_measure_content_and_tags_hide_when_too_narrow() {
+    let mut a = app("basic-37");
+    a.inv.guests[0].name = "find-my-device".into();
+    for g in a.inv.guests.iter_mut().take(8) {
+        g.tags = vec!["172.17.0.1".into(), "172.18.0.1".into(), "192.168.1.11".into()];
+    }
+    let th = Theme { color: true };
+    let width_of = |head: &str, a: &str, b: &str| head.find(b).unwrap() - 2 - head.find(a).unwrap();
+    for w in [120u16, 230] {
+        let mut t = Terminal::new(TestBackend::new(w, 40)).unwrap();
+        t.draw(|f| draw(f, &a, &th)).unwrap();
+        let buf = t.backend().buffer().clone();
+        let head: String = (0..w).map(|x| buf[(x, 3)].symbol().to_string()).collect();
+        assert_eq!(width_of(&head, "NAME", "STATE"), 14, "w={w}: NAME is never cut");
+        let os = a.inv.guests.iter().map(|g| g.os_label.chars().count()).max().unwrap().max(2);
+        // CPU va alineada a la derecha y mide 6 fijo: su cabecera empieza 3 columnas después del inicio.
+        assert_eq!(width_of(&head, "OS", "CPU") - 3, os, "w={w}: OS");
+        let disk = a.inv.guests.iter().map(|g| g.disk_bytes.map_or(1, |b| pxu::share::fmt::bytes_short(b).chars().count())).max().unwrap().max(4);
+        let after = if head.contains("TAGS") { "TAGS" } else { "UPD" };
+        assert_eq!(width_of(&head, "DISK", after), disk, "w={w}: DISK");
+        if let Some(x) = head.find("TAGS") {
+            let rest: String = head[x..].split("  ").next().unwrap().into();
+            assert!(rest.trim_end().chars().count() >= 4, "w={w}: TAGS shown");
+        }
+    }
+}

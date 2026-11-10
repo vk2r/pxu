@@ -15,10 +15,10 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 ││ secrets are never shown; what you type appears as dots                     ││
 ││                                                                            ││
 ││ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            ││
-│└────────────────────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────────────────┘
+└└────────────────────────────────────────────────────────────────────────────┘┘
 ────────────────────────────────────────────────────────────────────────────────
 [S] schedule  [N] notifications  [L] log retention  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log days  [l] logs  [?] help  [q] quit
+[S] schedule  [N] notifications  [L] log days  [l] logs  [t] test  [r] re-read
+[Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…

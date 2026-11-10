@@ -1,18 +1,18 @@
 px┌ help · any key closes ───────────────────────────────────────────────────┐16
 [A│↑↓ / j k     move cursor                                                  │
 ──│PgUp PgDn    move 10 · Home End first/last                                │──
-  │1 2 3 4      filter All / Running / Stopped / Updates                     │TO
+  │1 2 3 4      filter All / Running / Stopped / Updates                     │
 > │/            search name, tag or id (Esc clears)                          │
   │s            cycle sort: vmid · name · updates · ram                      │
   │r            reload /etc/pve confs (files only)                           │
-  │Enter        guest detail                                                 │s
+  │Enter        guest detail                                                 │
   │c            check LXC updates (visible CTs, or all) · read-only          │
-  │C            check + refresh package indexes (asks y to confirm)          │s
-  │v            show the last check result                                   │s
+  │C            check + refresh package indexes (asks y to confirm)          │
+  │v            show the last check result                                   │
   │o            choose visible columns (Space toggles; saved in config.toml) │
-  │u            update the visible CTs with updates (asks first)             │s
+  │u            update the visible CTs with updates (asks first)             │
   │             temporary backup, verify, auto-rollback on failure           │
-  │a            toggle scheduled auto-update of the CT (asks first)          │s
+  │a            toggle scheduled auto-update of the CT (asks first)          │
   │             host row: host_auto · host/GPU CT: NVIDIA driver window      │
   │g / S        config view + timer state · S change schedule (asks first)   │
   │l            run logs (one file per update run)                           │

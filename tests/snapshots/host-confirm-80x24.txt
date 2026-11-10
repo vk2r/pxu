@@ -1,7 +1,7 @@
 pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00:16
 [┌ confirm host update ───────────────────────────────────────────────────────┐
 ─│ Install 7 packages on the Proxmox host (2 security)?                       │─
- │                                                                            │O
+ │                                                                            │
 >│ kernel (2)                                                                 │
  │   proxmox-kernel-6.17 6.17.9-1 → 6.17.13-2                                 │
  │   proxmox-default-kernel 2.0.1 → 2.0.2                                     │

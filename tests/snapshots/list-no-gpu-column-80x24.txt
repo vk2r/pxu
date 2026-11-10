@@ -1,21 +1,21 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
->  100  ct-100           run      debian 12         —  0.2/0.5 GB    0      —
-   101  ct-101           run      debian 12         —  0.3/1.0 GB    4/1    —
-   102  ct-102           run      debian 12         —  0.2/0.5 GB    2/1    —
-   103  ct-103           run      debian 12         —  0.3/1.0 GB    7/2    yes
-   104  ct-104           run      alpine 3.20       —  0.2/0.5 GB    4/1    —
-   105  ct-105           run      fedora 41         —  0.3/1.0 GB    0      yes
-   106  ct-106           run      debian 12         —  0.2/0.5 GB    3/1    yes
-   107  ct-107           run      debian 12         —  0.3/1.0 GB    4/1    —
-   108  ct-108           run      debian 12         —  0.2/0.5 GB    2/1    yes
-   109  ct-109           run      alpine 3.20       —  0.3/1.0 GB    0      —
-   110  ct-110           run      debian 12         —  0.2/0.5 GB    4/1    yes
-   111  ct-111           run      alpine 3.20       —  0.3/1.0 GB    0      —
-   112  ct-112           run      alpine 3.20       —  0.2/0.5 GB    3/1    —
-   113  ct-113           run      debian 12         —  0.3/1.0 GB    0      —
+   ID  NAME    STATE    OS              CPU  RAM         UPD  AUTO
+> 100  ct-100  run      debian 12         —  0.2/0.5 GB  0    —
+  101  ct-101  run      debian 12         —  0.3/1.0 GB  4/1  —
+  102  ct-102  run      debian 12         —  0.2/0.5 GB  2/1  —
+  103  ct-103  run      debian 12         —  0.3/1.0 GB  7/2  yes
+  104  ct-104  run      alpine 3.20       —  0.2/0.5 GB  4/1  —
+  105  ct-105  run      fedora 41         —  0.3/1.0 GB  0    yes
+  106  ct-106  run      debian 12         —  0.2/0.5 GB  3/1  yes
+  107  ct-107  run      debian 12         —  0.3/1.0 GB  4/1  —
+  108  ct-108  run      debian 12         —  0.2/0.5 GB  2/1  yes
+  109  ct-109  run      alpine 3.20       —  0.3/1.0 GB  0    —
+  110  ct-110  run      debian 12         —  0.2/0.5 GB  4/1  yes
+  111  ct-111  run      alpine 3.20       —  0.3/1.0 GB  0    —
+  112  ct-112  run      alpine 3.20       —  0.2/0.5 GB  3/1  —
+  113  ct-113  run      debian 12         —  0.3/1.0 GB  0    —
 ▼ 23 below (next 114 ct-114)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail

@@ -23,7 +23,6 @@ pxu · check [RO] [MOCK]                                                    read
     119  ct-119                —           —    —    —  —       skip: stopped
     120  ct-120                apk        5h    0    0  no      ok
     121  ct-121                apt        5h    3    1  no      ok
-    122  ct-122                apt        5h    4    1  no      ok
  packages · 100 ct-100 · apt ───────────────────────────────────────────────────────────────────────────────────────────
 up to date
 
@@ -37,4 +36,5 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [?] help  [q] quit
+[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [Esc] back/cancel
+[?] help  [q] quit

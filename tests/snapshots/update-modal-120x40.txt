@@ -1,10 +1,10 @@
 pxu · Proxmox Updater [MOCK]                                 node server · 3 guests · 2 running · 3 with updates   00:16
 [All 3]   Running 2    Stopped 1    Updates 3   / search name, tag, id…                                       sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-     ID  TYPE  NAME                     STATE    OS                     CPU  RAM            DISK       UPD all/sec  AUTO
->   401  LXC   ct-401                   run      debian 12                —  0.2/0.5 GB     4.0 GB     3/1          yes
-    402  LXC   ct-402                   run      alpine 3.20              —  0.2/0.5 GB     4.0 GB     3/1          yes
-    403  LXC   ct-403                   stopped  debian 12                —  —/0.5 GB       4.0 GB     3/1          yes
+   ID  TYPE  NAME    STATE    OS              CPU  RAM         DISK    UPD all/sec  AUTO
+> 401  LXC   ct-401  run      debian 12         —  0.2/0.5 GB  4.0 GB  3/1          yes
+  402  LXC   ct-402  run      alpine 3.20       —  0.2/0.5 GB  4.0 GB  3/1          yes
+  403  LXC   ct-403  stopped  debian 12         —  —/0.5 GB    4.0 GB  3/1          yes
 
 
 
@@ -36,5 +36,5 @@ pxu · Proxmox Updater [MOCK]                                 node server · 3 g
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [g] config  [?] help  [q] quit
-[r] reload  [a] auto  [o] columns  [l] logs  [S] schedule
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
+[l] logs  [g] config  [S] schedule  [?] help  [q] quit

@@ -1,7 +1,7 @@
 pxu [MOCK]                                       server · 2/3 up · 3 upd   00:16
 [All 3]  Run 2   Stop 1   Upd 3  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+   ID  NAME    STATE    OS             CPU  RAM         UPD  AUTO
 >┌ confirm ───────────────────────────────────────────────────────────────────┐
  │ Update 3 guests?                                                           │
  │                                                                            │

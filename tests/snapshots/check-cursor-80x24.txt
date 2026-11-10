@@ -10,7 +10,6 @@ pxu · check [RO] [MOCK]            read-only · finished 00:16 · took 0 s   00
     106  ct-106          apt        5h    3    1  no      ok
     107  ct-107          apt        5h    4    1  no      ok
     108  ct-108          apt        5h    2    1  no      ok
-    109  ct-109          apk        5h    0    0  no      ok
  packages · 102 ct-102 · apt ───────────────────────────────────────────────────
 pkg-0                     1.0               → 1.1
 libssl3                   3.0.15-1          → 3.0.16-1          sec
@@ -21,4 +20,5 @@ held: none · reboot required: no
 ────────────────────────────────────────────────────────────────────────────────
 read-only: 1 command per CT, nothing written in the guests · INDEX = age of the…
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [?] help  [q] quit
+[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [Esc] back  [?] help
+[q] quit

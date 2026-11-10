@@ -23,7 +23,6 @@ pxu · check [RO] [MOCK]                                                    read
 
 
 
-
  packages · 104 ct-104 · apt ───────────────────────────────────────────────────────────────────────────────────────────
 curl                      8.5               → 8.6               sec
 libssl3                   3.0.1             → 3.0.2
@@ -37,4 +36,5 @@ held: none · reboot required: no
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 read-only: 1 command per CT, nothing written in the guests · INDEX = age of the guest's own index (* stale)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [?] help  [q] quit
+[↑↓/jk] select  [Enter] detail  [c] re-check  [C] refresh+check (confirm)  [u] update (asks)  [Esc] back/cancel
+[?] help  [q] quit

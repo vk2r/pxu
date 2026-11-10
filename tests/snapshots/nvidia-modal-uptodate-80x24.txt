@@ -1,7 +1,7 @@
 pxu [MOCK]                                       server · 5/6 up · 1 upd   00:16
 [All 6]  Run 5   Stop 1   Upd 1  / search…
 ─┌ NVIDIA driver ─────────────────────────────────────────────────────────────┐─
- │ NVIDIA driver of CT 134 ct-134                                             │O
+ │ NVIDIA driver of CT 134 ct-134                                             │
 >│                                                                            │
  │ [x] Upgrade GPU driver                                                     │
  │                                                                            │

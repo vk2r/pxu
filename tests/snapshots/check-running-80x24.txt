@@ -10,7 +10,6 @@ running…
 
 
 
-
  packages ──────────────────────────────────────────────────────────────────────
 
 
@@ -21,4 +20,5 @@ running…
 ────────────────────────────────────────────────────────────────────────────────
 read-only: 1 command per CT, nothing written in the guests · INDEX = age of the…
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [?] help  [q] quit
+[↑↓] select  [Enter] detail  [c] re-check  [C] refresh  [Esc] back  [?] help
+[q] quit

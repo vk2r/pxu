@@ -1,10 +1,10 @@
 pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 guests · 34 running · 13 with updates   00:16
  All 37    Running 34   [Stopped 3]   Updates 13   / search name, tag, id…                                    sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-     ID  TYPE  NAME                     STATE    OS                     CPU  RAM            DISK       UPD all/sec  AUTO
->   117  LXC   ct-117                   stopped  debian                   —  —/1.0 GB       4.0 GB     —            —
-    118  LXC   ct-118                   stopped  debian                   —  —/0.5 GB       5.0 GB     —            —
-    119  LXC   ct-119                   stopped  debian                   —  —/1.0 GB       6.0 GB     —            yes
+   ID  TYPE  NAME    STATE    OS               CPU  RAM         DISK     UPD all/sec  AUTO
+> 117  LXC   ct-117  stopped  debian             —  —/1.0 GB    4.0 GB   —            —
+  118  LXC   ct-118  stopped  debian             —  —/0.5 GB    5.0 GB   —            —
+  119  LXC   ct-119  stopped  debian             —  —/1.0 GB    6.0 GB   —            yes
 
 
 
@@ -36,5 +36,5 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 117 ct-117 · debian · no check data · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [g] config  [?] help  [q] quit
-[r] reload  [a] auto  [o] columns  [l] logs  [S] schedule
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [o] columns
+[l] logs  [g] config  [S] schedule  [?] help  [q] quit

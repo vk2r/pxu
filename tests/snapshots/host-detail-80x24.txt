@@ -15,10 +15,10 @@ detail · host review · u installs host updates after a confirmation
 │security (2)                                                                  │
 │  libc6 2.36-9+deb12u9 → 2.36-9+deb12u10                                      │
 │  openssl 3.0.16-1 → 3.0.17-1                                                 │
-│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
 server · u installs host updates after confirmation · a: scheduled run never to…
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [g] config
+[S] schedule  [Esc] back  [?] help  [q] quit
 host_auto OFF: timer skips the host; press a to include it

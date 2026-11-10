@@ -85,6 +85,32 @@ fn mbar(th: &Theme, items: &[(&str, &str)], keep: usize, w: usize) -> Line<'stat
     l
 }
 
+/// Barras de atajos en una sola secuencia, con huecos de 2 espacios y alineadas a la izquierda: van en una
+/// línea si caben en `w`; si no, pasan a la siguiente llenando cada línea con todas las acciones que
+/// entren. Si hacen falta más de `max_lines`, quita acciones antes de las últimas `keep`.
+fn keybar_wrap(th: &Theme, items: &[(&str, &str)], keep: usize, w: usize, max_lines: usize) -> Vec<Line<'static>> {
+    let len = |it: &(&str, &str)| it.0.chars().count() + it.1.chars().count() + 3;
+    let mut v: Vec<(&str, &str)> = items.to_vec();
+    loop {
+        let mut rows: Vec<Vec<(&str, &str)>> = vec![Vec::new()];
+        let mut used = 0;
+        for it in &v {
+            let row = rows.last_mut().unwrap();
+            if !row.is_empty() && used + 2 + len(it) > w {
+                rows.push(vec![*it]);
+                used = len(it);
+            } else {
+                used += len(it) + if row.is_empty() { 0 } else { 2 };
+                row.push(*it);
+            }
+        }
+        if rows.len() <= max_lines || v.len() <= keep {
+            return rows.iter().map(|r| keybar(th, r, 0, usize::MAX)).collect();
+        }
+        v.remove(v.len() - keep - 1);
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     let area = f.area();
     if area.width < MIN_W || area.height < MIN_H {
@@ -159,75 +185,74 @@ struct Col {
     w: usize,
 }
 
-/// `gpu`: algún guest usa GPU. `shown`: columnas opcionales visibles (`[ui] columns`).
+/// `cw(título, ancho_gpu)`: contenido más largo de esa columna entre los guests actuales (sin contar la cabecera).
+/// `shown`: columnas opcionales visibles (`[ui] columns`). `gpu`: algún guest usa GPU.
 /// ≥112 columnas: la columna GPU va antes de UPD; por debajo sustituye a OS. Sin GPU en uso no aparece.
-/// El sitio de las columnas ocultas pasa a NAME (y, con TAGS visible, se reparte con ella).
-fn columns(width: u16, gpu: bool, shown: &[String]) -> Vec<Col> {
+/// Cada columna mide max(cabecera, contenido); CPU es fija (su valor cambia cada segundo y la tabla no debe saltar).
+/// NAME va primero y solo se recorta con … si no cabe. TAGS recibe lo que sobra, hasta su texto más largo;
+/// si le quedan menos de 6 columnas se oculta (cabecera incluida). Lo que sobra queda vacío.
+fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> usize) -> Vec<Col> {
     let on = |k: &str| shown.iter().any(|c| c == k);
-    let c = |title, w| Col { title, w };
+    let c = |title: &'static str, fixed: Option<usize>, gw: usize| Col { title, w: fixed.unwrap_or_else(|| cw(title, gw).max(title.chars().count())) };
     if width >= 112 {
-        let mut fixed = vec![("ID", 5)];
+        let mut pre = vec![c("ID", None, 8)];
         if on("type") {
-            fixed.push(("TYPE", 4));
+            pre.push(c("TYPE", None, 8));
         }
-        let mut post: Vec<Col> = vec![c("STATE", 7)];
-        for (k, t, w) in [("os", "OS", 18), ("cpu", "CPU", 6), ("ram", "RAM", 13), ("disk", "DISK", 9)] {
+        let mut post: Vec<Col> = vec![c("STATE", None, 8)];
+        for (k, t) in [("os", "OS"), ("cpu", "CPU"), ("ram", "RAM"), ("disk", "DISK")] {
             if on(k) {
-                post.push(c(t, w));
+                post.push(c(t, if t == "CPU" { Some(6) } else { None }, 8));
             }
         }
-        let tags = on("tags");
-        if tags {
-            post.push(c("TAGS", 0));
-        }
         if gpu && on("gpu") {
-            post.push(c("GPU", 8));
+            post.push(c("GPU", None, 8));
         }
         if on("upd") {
-            post.push(c("UPD all/sec", 11));
+            post.push(c("UPD all/sec", None, 8));
         }
         if on("auto") {
-            post.push(c("AUTO", 4));
+            post.push(c("AUTO", None, 8));
         }
-        let n = fixed.len() + 1 + post.len();
-        let used: usize = fixed.iter().map(|f| f.1).sum::<usize>() + post.iter().map(|p| p.w).sum::<usize>();
+        let n = pre.len() + 1 + post.len();
+        let used: usize = pre.iter().chain(post.iter()).map(|x| x.w).sum();
         let rest = (width as usize).saturating_sub(2 + used + 2 * (n - 1));
-        let (name, tags_w) = if tags {
-            let name = (rest / 2).clamp(9, 24);
-            (name, rest.saturating_sub(name).clamp(6, 24))
-        } else {
-            (rest.clamp(9, 40), 0)
-        };
-        let mut v: Vec<Col> = fixed.into_iter().map(|(t, w)| c(t, w)).collect();
-        v.push(c("NAME", name));
-        v.extend(post.into_iter().map(|p| if p.title == "TAGS" { c("TAGS", tags_w) } else { p }));
-        // Tras los topes de NAME/TAGS puede sobrar ancho: se reparte por turnos entre las columnas de texto
-        // (NAME primero; ID, TYPE, CPU y la última columna no crecen) para que la tabla y la selección lleguen al borde derecho.
-        let total: usize = 2 + v.iter().map(|x| x.w).sum::<usize>() + 2 * (v.len() - 1);
-        let mut extra = (width as usize).saturating_sub(total);
-        let grow: Vec<usize> = (0..v.len() - 1).filter(|&i| !matches!(v[i].title, "ID" | "TYPE" | "CPU")).collect();
-        let mut i = 0;
-        while extra > 0 {
-            v[grow[i % grow.len()]].w += 1;
-            extra -= 1;
-            i += 1;
+        let name_full = cw("NAME", 8).max(4);
+        let mut name = name_full.min(rest).max(4);
+        let mut tags_w = 0;
+        if on("tags") {
+            let tags_full = cw("TAGS", 8).max(4);
+            // El hueco de TAGS cuesta 2 columnas más; NAME conserva su ancho completo.
+            let avail = rest.saturating_sub(2 + name_full);
+            if avail >= tags_full.min(6) {
+                tags_w = tags_full.min(avail);
+                name = name_full;
+            }
         }
+        let mut v = pre;
+        v.push(c("NAME", Some(name), 8));
+        // TAGS va antes de GPU/UPD/AUTO: se inserta tras DISK (o la última columna de datos).
+        let at = post.iter().position(|x| matches!(x.title, "GPU" | "UPD all/sec" | "AUTO")).unwrap_or(post.len());
+        if tags_w > 0 {
+            post.insert(at, Col { title: "TAGS", w: tags_w });
+        }
+        v.extend(post);
         v
     } else {
-        let mut v = vec![c("ID", 4), c("NAME", 0), c("STATE", 7)];
+        let mut v = vec![c("ID", None, 6), c("NAME", Some(0), 6), c("STATE", None, 6)];
         if gpu && on("gpu") {
-            v.push(c("GPU", 6));
+            v.push(c("GPU", None, 6));
         } else if on("os") {
-            v.push(c("OS", 12));
+            v.push(c("OS", None, 6));
         }
-        for (k, t, w) in [("cpu", "CPU", 5), ("ram", "RAM", 12), ("upd", "UPD", 5), ("auto", "AUTO", 4)] {
+        for (k, t) in [("cpu", "CPU"), ("ram", "RAM"), ("upd", "UPD"), ("auto", "AUTO")] {
             if on(k) {
-                v.push(c(t, w));
+                v.push(c(t, if t == "CPU" { Some(5) } else { None }, 6));
             }
         }
         let used: usize = v.iter().map(|x| x.w).sum();
-        let name = (width as usize).saturating_sub(2 + used + 2 * (v.len() - 1)).clamp(10, 32);
-        v[1].w = name;
+        let avail = (width as usize).saturating_sub(2 + used + 2 * (v.len() - 1));
+        v[1].w = cw("NAME", 6).max(4).min(avail).max(4);
         v
     }
 }
@@ -281,7 +306,7 @@ fn cell(g: &Guest, app: &App, title: &str, w: usize) -> String {
     }
 }
 
-fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool) -> Line<'static> {
+fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool, w: usize) -> Line<'static> {
     let mut spans = vec![Span::raw(if selected { "> " } else { "  " })];
     for (i, c) in cols.iter().enumerate() {
         let text = trunc(&cell(g, app, c.title, c.w), c.w);
@@ -320,9 +345,11 @@ fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool) -> L
             spans.push(Span::raw("  "));
         }
     }
-    let line = Line::from(spans);
+    let mut line = Line::from(spans);
     if selected {
-        // La selección en video inverso pisa colores; el `>` cubre NO_COLOR.
+        // La selección en video inverso pisa colores; el `>` cubre NO_COLOR. Cubre todo el ancho de la pantalla.
+        let used: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        line.spans.push(Span::raw(" ".repeat(w.saturating_sub(used))));
         line.style(th.sel())
     } else {
         line
@@ -331,6 +358,12 @@ fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool) -> L
 
 fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let w = area.width;
+    // Teclas: una sola línea si caben; si no, dos (la fila sobrante va a la tabla).
+    let keys = if w < 112 {
+        keybar_wrap(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("o", "cols"), ("g", "config"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    } else {
+        keybar_wrap(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("r", "reload"), ("a", "auto"), ("o", "columns"), ("l", "logs"), ("g", "config"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    };
     let parts = Layout::vertical([
         Constraint::Length(1), // header
         Constraint::Length(1), // filtros
@@ -341,7 +374,7 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         Constraint::Length(1), // regla
         Constraint::Length(1), // línea de estado
         Constraint::Length(1), // regla
-        Constraint::Length(2), // teclas
+        Constraint::Length(keys.len() as u16), // teclas
     ])
     .split(area);
 
@@ -390,7 +423,8 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(two_sided(fs, sort, w)), parts[1]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[2]);
 
-    let cols = columns(w, app.inv.any_gpu(), &app.columns);
+    let cw = |title: &str, gw: usize| app.inv.guests.iter().map(|g| cell(g, app, title, gw).chars().count()).max().unwrap_or(0);
+    let cols = columns(w, app.inv.any_gpu(), &app.columns, &cw);
     let mut head = vec![Span::raw("  ")];
     for (i, c) in cols.iter().enumerate() {
         let t = trunc(c.title, c.w);
@@ -406,7 +440,7 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let vis = app.visible();
     let h = parts[4].height as usize;
     let off = if app.cursor >= h { app.cursor + 1 - h } else { 0 };
-    let lines: Vec<Line> = vis.iter().enumerate().skip(off).take(h).map(|(i, g)| row_line(g, app, &cols, th, i == app.cursor)).collect();
+    let lines: Vec<Line> = vis.iter().enumerate().skip(off).take(h).map(|(i, g)| row_line(g, app, &cols, th, i == app.cursor, w as usize)).collect();
     if lines.is_empty() {
         f.render_widget(Paragraph::new("  no guests match this filter").style(th.muted()), parts[4]);
     } else {
@@ -456,17 +490,7 @@ fn draw_list(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[8]);
 
-    let lines = if narrow {
-        // 80 columnas: las acciones no caben en una línea; el resto pasa a la segunda, con la leyenda.
-        let k1 = keybar(th, &[("↑↓", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)")], 0, w as usize);
-        let k2 = keybar(th, &[("r", "reload"), ("a", "auto"), ("o", "cols"), ("g", "config"), ("l", "logs"), ("S", "schedule"), ("?", "help"), ("q", "quit")], 2, w as usize);
-        vec![k1, k2]
-    } else {
-        let k1 = keybar(th, &[("↑↓/jk", "move"), ("1-4", "filter"), ("/", "search"), ("s", "sort"), ("c", "check"), ("u", "update (asks)"), ("g", "config"), ("?", "help"), ("q", "quit")], 2, w as usize);
-        let k2 = keybar(th, &[("r", "reload"), ("a", "auto"), ("o", "columns"), ("l", "logs"), ("S", "schedule")], 2, w as usize);
-        vec![k1, k2]
-    };
-    f.render_widget(Paragraph::new(lines), parts[9]);
+    f.render_widget(Paragraph::new(keys), parts[9]);
 }
 
 // ---------------------------------------------------------------- detalle
@@ -975,7 +999,12 @@ fn draw_detail(f: &mut Frame, app: &App, th: &Theme, area: Rect, id: u32) {
         f.render_widget(Paragraph::new("guest vanished (press Esc)"), area);
         return;
     };
-    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)]).split(area);
+    let mut keys = vec![("↑↓/jk", "scroll"), ("r", "reload"), ("a", "auto"), ("g", "config"), ("S", "schedule"), ("Esc", "back"), ("?", "help"), ("q", "quit")];
+    if g.kind != GuestKind::Vm {
+        keys.insert(1, ("u", "update (asks)"));
+    }
+    let keys = keybar_wrap(th, &keys, 2, w as usize, 2);
+    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(keys.len() as u16 + 1)]).split(area);
 
     let st = match g.state {
         RunState::Running => "running",
@@ -1044,12 +1073,8 @@ fn draw_detail(f: &mut Frame, app: &App, th: &Theme, area: Rect, id: u32) {
     f.render_widget(Paragraph::new(trunc(&hint, w as usize)).style(th.accent()), parts[5]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[4]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
-    let mut keys = vec![("↑↓/jk", "scroll"), ("r", "reload"), ("a", "auto"), ("g", "config"), ("S", "schedule"), ("Esc", "back"), ("?", "help"), ("q", "quit")];
-    if g.kind != GuestKind::Vm {
-        keys.insert(1, ("u", "update (asks)"));
-    }
     let note = if is_host && g.auto_update { "host_auto ON: timer updates host first, CTs if OK; never reboots" } else if is_host { "host_auto OFF: timer skips the host; press a to include it" } else { "config is read from the .conf file (no processes); runtime metrics come from cgroup/pidfile only" };
-    f.render_widget(Paragraph::new(vec![keybar(th, &keys, 2, w as usize), Line::styled(trunc(note, w as usize), th.muted())]), parts[7]);
+    f.render_widget(Paragraph::new(keys.into_iter().chain([Line::styled(trunc(note, w as usize), th.muted())]).collect::<Vec<_>>()), parts[7]);
 }
 
 // ---------------------------------------------------------------- ayuda
@@ -1107,6 +1132,11 @@ fn draw_check(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let wide = w >= 112;
     let ck = &app.check;
     let pk_h: u16 = if area.height >= 40 { 10 } else { 7 };
+    let keys = if wide {
+        keybar_wrap(th, &[("↑↓/jk", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh+check (confirm)"), ("u", "update (asks)"), ("Esc", "back/cancel"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    } else {
+        keybar_wrap(th, &[("↑↓", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    };
     let parts = Layout::vertical([
         Constraint::Length(1), // header
         Constraint::Length(1), // resumen
@@ -1116,7 +1146,7 @@ fn draw_check(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         Constraint::Length(1), // regla
         Constraint::Length(1), // estado
         Constraint::Length(1), // regla
-        Constraint::Length(1), // teclas
+        Constraint::Length(keys.len() as u16), // teclas
     ])
     .split(area);
 
@@ -1214,11 +1244,6 @@ fn draw_check(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(trunc(&st, w as usize)).style(th.accent()), parts[6]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[5]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[7]);
-    let keys = if wide {
-        keybar(th, &[("↑↓/jk", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh+check (confirm)"), ("u", "update (asks)"), ("Esc", "back/cancel"), ("?", "help"), ("q", "quit")], 2, w as usize)
-    } else {
-        keybar(th, &[("↑↓", "select"), ("Enter", "detail"), ("c", "re-check"), ("C", "refresh"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize)
-    };
     f.render_widget(Paragraph::new(keys), parts[8]);
 }
 
@@ -1377,7 +1402,8 @@ fn draw_nvidia_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 
 fn draw_config(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let w = area.width;
-    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)]).split(area);
+    let keys = keybar_wrap(th, &[("S", "schedule"), ("N", "notifications"), ("L", "log days"), ("l", "logs"), ("t", "test"), ("r", "re-read"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2);
+    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(keys.len() as u16 + 1)]).split(area);
     f.render_widget(Paragraph::new(two_sided(vec![Span::styled("pxu · config".to_string(), th.bold()), Span::styled(badges(app), th.warn())], app.clock.clone(), w)), parts[0]);
     f.render_widget(Paragraph::new(trunc("config · automatic update schedule (systemd timer pxu-update) and notifications (Apprise)", w as usize)).style(th.muted()), parts[1]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[2]);
@@ -1419,7 +1445,7 @@ fn draw_config(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(trunc(&hint, w as usize)).style(th.accent()), parts[5]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[4]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
-    f.render_widget(Paragraph::new(vec![keybar(th, &[("S", "schedule"), ("N", "notifications"), ("L", "log days"), ("l", "logs"), ("t", "test"), ("r", "re-read"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize), Line::styled(trunc("the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; then the CTs with auto-update)", w as usize), th.muted())]), parts[7]);
+    f.render_widget(Paragraph::new(keys.into_iter().chain([Line::styled(trunc("the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; then the CTs with auto-update)", w as usize), th.muted())]).collect::<Vec<_>>()), parts[7]);
 }
 
 fn log_result_style(th: &Theme, r: &str) -> Style {
@@ -1440,7 +1466,12 @@ fn draw_logs(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     use pxu::share::update::runlog::{local_ymd_hm, size_text};
     let w = area.width;
     let lg = &app.logs;
-    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).split(area);
+    let keys = if lg.viewer.is_some() {
+        keybar_wrap(th, &[("↑↓/PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("n/p", "next/prev"), ("q/Esc", "back"), ("?", "help")], 2, w as usize, 2)
+    } else {
+        keybar_wrap(th, &[("↑↓/jk", "select"), ("Enter", "open"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    };
+    let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(keys.len() as u16)]).split(area);
     let body = parts[3];
     let status = if app.status.is_empty() { String::new() } else { app.status.clone() };
     if let Some(v) = &lg.viewer {
@@ -1463,7 +1494,7 @@ fn draw_logs(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         f.render_widget(Paragraph::new(trunc(&if status.is_empty() { ind } else { status }, w as usize)).style(th.accent()), parts[5]);
         f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[4]);
         f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
-        f.render_widget(Paragraph::new(keybar(th, &[("↑↓/PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("n/p", "next/prev"), ("q/Esc", "back"), ("?", "help")], 2, w as usize)), parts[7]);
+        f.render_widget(Paragraph::new(keys), parts[7]);
         return;
     }
     f.render_widget(Paragraph::new(two_sided(vec![Span::styled("pxu · logs".to_string(), th.bold()), Span::styled(badges(app), th.warn())], app.clock.clone(), w)), parts[0]);
@@ -1508,7 +1539,7 @@ fn draw_logs(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(trunc(&if status.is_empty() { ind } else { status }, w as usize)).style(th.accent()), parts[5]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[4]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
-    f.render_widget(Paragraph::new(keybar(th, &[("↑↓/jk", "select"), ("Enter", "open"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize)), parts[7]);
+    f.render_widget(Paragraph::new(keys), parts[7]);
 }
 
 /// `L` en Config: días de retención (0 = no borrar nunca).
@@ -1682,6 +1713,11 @@ fn queue_line(q: &QItem, now: u64, th: &Theme, w: usize) -> Line<'static> {
 fn draw_update(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let (w, u) = (area.width, &app.update);
     let q_h = (u.queue.len() as u16).clamp(1, (area.height / 3).max(3));
+    let keys = if u.running {
+        keybar_wrap(th, &[("x", "cancel"), ("↑↓", "scroll log"), ("f", "follow"), ("?", "help")], 1, w as usize, 2)
+    } else {
+        keybar_wrap(th, &[("Esc", "back"), ("↑↓", "scroll log"), ("f", "follow"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+    };
     let parts = Layout::vertical([
         Constraint::Length(1), // header
         Constraint::Length(1), // resumen
@@ -1693,7 +1729,7 @@ fn draw_update(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         Constraint::Length(1), // cancelación
         Constraint::Length(1), // estado
         Constraint::Length(1), // regla
-        Constraint::Length(1), // teclas
+        Constraint::Length(keys.len() as u16), // teclas
     ])
     .split(area);
     let count = |o: Outcome| u.queue.iter().filter(|q| q.state == QState::Done(o)).count();
@@ -1741,11 +1777,6 @@ fn draw_update(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let st = if !app.status.is_empty() { app.status.clone() } else { "step times update on log lines or state changes · log: /var/log/pxu/run-*.log".to_string() };
     f.render_widget(Paragraph::new(trunc(&st, w as usize)).style(th.accent()), parts[8]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[9]);
-    let keys = if u.running {
-        keybar(th, &[("x", "cancel"), ("↑↓", "scroll log"), ("f", "follow"), ("?", "help")], 1, w as usize)
-    } else {
-        keybar(th, &[("Esc", "back"), ("↑↓", "scroll log"), ("f", "follow"), ("?", "help"), ("q", "quit")], 2, w as usize)
-    };
     f.render_widget(Paragraph::new(keys), parts[10]);
 }
 

@@ -1,8 +1,8 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / ct-110
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
->  110  ct-110           run      debian 12         —  0.2/0.5 GB    4/1    yes
+   ID  NAME    STATE    OS              CPU  RAM         UPD  AUTO
+> 110  ct-110  run      debian 12         —  0.2/0.5 GB  4/1  yes
 
 
 
