@@ -311,7 +311,7 @@ pub fn body(rep: &RunReport) -> String {
     if shown.is_empty() && nothing_to_do(rep) {
         b += "\nNothing to do: no CT or host had pending updates.\n";
     } else {
-        b += &format!("\n## Update run\n{HEADER}\n");
+        b += &format!("\n{HEADER}\n");
     }
     for r in shown {
         b += &format!("| {} | {} | {} | {} | {} | {} | {} |\n", r.upgrades, r.result, r.packages, r.gpu, r.time, r.details, r.manual);
@@ -359,7 +359,8 @@ mod tests {
     fn all_ok_is_one_table_with_the_seven_columns_and_success_level() {
         let r = rep(vec![ct(113, "cap", Outcome::Ok), ct(114, "web", Outcome::Ok)]);
         let b = body(&r);
-        assert!(b.contains("## Update run\n| Upgrades | Result | Packages | GPU driver | Time | Details | Manual |\n|---|---|---|---|---|---|---|\n"), "{b}");
+        assert!(!b.contains("## "), "no heading before the table: {b}");
+        assert!(b.contains("**\n\n| Upgrades | Result | Packages | GPU driver | Time | Details | Manual |\n|---|---|---|---|---|---|---|\n"), "{b}");
         assert_eq!(b.matches("\n|---").count(), 1, "one table");
         assert_eq!(row_of(&b, "113 cap"), "| 113 cap | ✅ ok | 6 (2 security) | — | 1m 02s |  |  |");
         assert!(title(&r).starts_with("pxu: update run on server — 2 ok · 18m 42s"), "{}", title(&r));

@@ -590,7 +590,7 @@ mod tests {
         let m = parse_header(&text).unwrap();
         assert_eq!((m.started, m.duration, m.node.as_str()), (NOW, 95, "server"));
         assert!(m.result.starts_with("✅ 1 ok"), "{}", m.result);
-        assert!(text.contains("pxu: update run on server — 1 ok") && text.contains("## Update run"), "{text}");
+        assert!(text.contains("pxu: update run on server — 1 ok") && text.contains("\n| Upgrades | Result |"), "{text}");
         assert!(text.find("── CT 113 cap ──").unwrap() < text.find("── summary ──").unwrap(), "summary goes last");
         assert!(text.contains("\n── CT 113 cap ──\n"), "{text}");
         let line = text.lines().find(|l| l.ends_with("  $ pct exec")).unwrap();
