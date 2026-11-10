@@ -2,7 +2,11 @@ English | [Español](README.es.md)
 
 # pxu
 
-pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which containers have updates, updates them one at a time and, if something goes wrong, **rolls back by itself** to the previous state. It can run every day and notify you through Fluxer or any Apprise-compatible service.
+pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which containers have updates, updates them one at a time and, if something goes wrong, **rolls back by itself** to the previous state. It can run every day and notify you through any Apprise-compatible service.
+
+![Container list with updates, backup and auto-update columns](screenshots/01-list.png)
+
+![Update run result](screenshots/05-update.png)
 
 You use it from a terminal screen (the "TUI"). It leaves nothing running in the background.
 

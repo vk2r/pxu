@@ -2,7 +2,11 @@
 
 # pxu
 
-pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede ejecutarse cada día y avisarte por Fluxer u otro servicio compatible con Apprise.
+pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede ejecutarse cada día y avisarte por cualquier servicio compatible con Apprise.
+
+![Lista de contenedores con las columnas de actualizaciones, backup y auto-update](screenshots/01-list.png)
+
+![Resultado de una actualización](screenshots/05-update.png)
 
 Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en segundo plano.
 

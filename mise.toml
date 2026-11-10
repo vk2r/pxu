@@ -3,6 +3,7 @@
 #   mise tasks          lista las tareas
 [tools]
 rust = "1.99.1"
+"github:charmbracelet/freeze" = "0.2.2"
 
 [tasks.build]
 description = "Compila el binario de producción en target/release/pxu"
@@ -36,3 +37,8 @@ run = [
   "cargo build --locked --release",
   "code=0; target/release/pxu --mock demo list 2>/dev/null || code=$?; test $code -eq 2 && echo \"release rechaza --mock (exit 2)\"",
 ]
+
+[tasks.screenshots]
+description = "Regenera screenshots/*.png desde el mock (tmux + freeze, sin tocar el escritorio)"
+depends = ["mock"]
+run = "screenshots/screenshots.sh"
