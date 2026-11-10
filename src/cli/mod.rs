@@ -286,11 +286,16 @@ pub fn cmd_update(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_f
     let todo: Vec<_> = cands.iter().filter(|c| c.skip.is_none()).collect();
     // `[update] host_auto`: el host va primero y los CT solo siguen si termina bien
     let hplan = if only.is_empty() { update::hostupdate::plan_auto(host, &inv, &cfg) } else { update::hostupdate::Plan::Off };
+    let idle = if only.is_empty() { update::idle_auto(&inv, &cands).len() } else { 0 };
     if !json {
-        println!("pxu update — node {}: {} CT to update, {} skipped", inv.node, todo.len(), cands.len() - todo.len());
+        println!("pxu update — node {}: {} CT to update, {} skipped", inv.node, todo.len(), cands.len() - todo.len() + idle);
+        if idle > 0 {
+            println!("  {idle} CT with auto-update: no updates pending");
+        }
         match &hplan {
             update::hostupdate::Plan::Run { packages, security } => println!("  {:<5} {:<18} {} pkg ({} security) — FIRST; the CTs only follow if the host finishes well (never rebooted)", 0, "host", packages, security),
             update::hostupdate::Plan::Skip(w) => println!("  {:<5} {:<18} skipped: {w}", 0, "host"),
+            update::hostupdate::Plan::Off if only.is_empty() && cfg.update.host_auto => println!("  {:<5} {:<18} skipped: no updates pending", 0, "host"),
             update::hostupdate::Plan::Off => {}
         }
         for c in &cands {
@@ -301,19 +306,13 @@ pub fn cmd_update(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_f
         }
     }
     let host_runs = matches!(hplan, update::hostupdate::Plan::Run { .. });
-    if todo.is_empty() && !host_runs {
-        if json {
-            println!("{}", serde_json::to_string_pretty(&update::RunReport { node: String::new(), log_path: None, started_at: 0, finished_at: 0, results: vec![], aborted: None, cancelled: false, nvidia: None }.to_json()).expect("serializable"));
-        } else {
-            println!("nothing to do (run `pxu check` first; only CTs with a positive recent check are updated)");
-        }
-        return update::EXIT_OK;
-    }
+    // Sin nada que hacer la corrida igual pasa por `update::run`: toma el lock y deja su log (`result: nothing to do`) con el motivo de cada omisión.
+    let nothing = todo.is_empty() && !host_runs;
     let none: Vec<String> = todo.iter().filter(|c| cfg.backup_mode(c.vmid) == "none").map(|c| c.vmid.to_string()).collect();
     if !none.is_empty() {
         eprintln!("pxu: WARNING: backup mode \"none\" for CT {}: they are updated WITHOUT a backup and WITHOUT automatic rollback", none.join(", "));
     }
-    if !yes && !json && std::io::stdin().is_terminal() {
+    if !nothing && !yes && !json && std::io::stdin().is_terminal() {
         println!("backup before each CT: {} (temporary; keep {} per CT) · if the update fails the CT is rolled back automatically", cfg.backup.mode, cfg.backup.keep());
         println!("NOTE: backup and rollback cover only each CT's rootfs; bind mounts / mp with backup=0 (e.g. /mnt/pve/...) are NOT saved or reverted");
         if host_runs {
@@ -355,6 +354,11 @@ pub fn cmd_update(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_f
     };
     if json {
         println!("{}", serde_json::to_string_pretty(&rep.to_json()).expect("serializable"));
+    } else if nothing {
+        println!("nothing to do (run `pxu check` first; only CTs with a positive recent check are updated)");
+        if let Some(p) = &rep.log_path {
+            println!("log: {p}");
+        }
     } else {
         print!("\n{}", update_text(&inv.node, &rep));
     }

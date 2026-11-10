@@ -262,8 +262,17 @@ pub fn title(rep: &RunReport) -> String {
     t
 }
 
+/// Corrida en la que nada se actualizó ni se intentó (todo saltado, sin parar ni cancelar): se anota en el log pero no avisa.
+pub fn nothing_to_do(rep: &RunReport) -> bool {
+    let rows = rows(rep);
+    rep.aborted.is_none() && !rep.cancelled && rep.nvidia.is_none() && rows.iter().all(|r| r.outcome == Outcome::Skipped)
+}
+
 /// Resumen corto para la lista de logs: `❌ 3 ok · 1 warn · 2 failed`, `⛔ STOPPED · 1 ok`. Sin contadores en 0.
 pub fn result_line(rep: &RunReport) -> String {
+    if nothing_to_do(rep) {
+        return "✅ nothing to do".into();
+    }
     let rows = rows(rep);
     let mut parts = count_parts(&rows);
     if nvidia_failed(rep) {
@@ -299,7 +308,11 @@ pub fn body(rep: &RunReport) -> String {
     if let Some(a) = &rep.aborted {
         b += &format!("\n⛔ Run stopped: {}\n", cell(a));
     }
-    b += &format!("\n## Update run\n{HEADER}\n");
+    if shown.is_empty() && nothing_to_do(rep) {
+        b += "\nNothing to do: no CT or host had pending updates.\n";
+    } else {
+        b += &format!("\n## Update run\n{HEADER}\n");
+    }
     for r in shown {
         b += &format!("| {} | {} | {} | {} | {} | {} | {} |\n", r.upgrades, r.result, r.packages, r.gpu, r.time, r.details, r.manual);
     }

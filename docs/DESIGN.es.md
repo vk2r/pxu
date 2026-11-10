@@ -356,6 +356,8 @@ a check is already running
 
 Cola con una marca por CT (`✓ ● · ✗ »`), contadores en la cabecera y log en vivo. Si hay un aviso, es **uno solo por corrida**: la línea `NOTE: the backup and the rollback cover only the CT's rootfs` del log y el `WARNING` del modal de confirmación (§5.5).
 
+Toda corrida no interactiva de `pxu update` que llega al pre-chequeo (la programada incluida) deja su `/var/log/pxu/run-….log`, aunque no haya nada que actualizar: toma el lock global como cualquier corrida, lista cada CT omitido y el host con su motivo (`no updates pending`, check viejo…) y su cabecera dice `result: ✅ nothing to do`. La página Logs lo muestra con ese resultado (no INCOMPLETE ni fallo), la retención lo poda igual y no envía aviso. Con `host_auto` activo y el host sin actualizaciones, el log y la terminal dicen `host: skipped — no updates pending`; con `host_auto` apagado no se menciona el host. El resumen no lleva tabla vacía, solo `Nothing to do: no CT or host had pending updates.`, y la terminal cuenta como omitidos los CT con auto-update sin pendientes (una línea, no una por CT). `--json` incluye `log_path`.
+
 ```
 pxu · update run [MOCK]                       started 00:16 · sequential   00:16
 ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3

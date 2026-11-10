@@ -356,6 +356,8 @@ a check is already running
 
 Queue with a mark per CT (`✓ ● · ✗ »`), counters in the header and live log. If there is a notice, it is **only one per run**: the log line `NOTE: the backup and the rollback cover only the CT's rootfs` and the `WARNING` of the confirmation modal (§5.5).
 
+Every non-interactive `pxu update` run that reaches the pre-check (the scheduled one included) leaves its `/var/log/pxu/run-….log`, even with nothing to update: it takes the global lock like any run, lists each skipped CT and the host with its reason (`no updates pending`, old check…) and its header says `result: ✅ nothing to do`. The Logs page shows it with that result (not INCOMPLETE or failed), retention prunes it like the rest and it sends no notification. With `host_auto` on and no host updates, the log and the terminal say `host: skipped — no updates pending`; with it off the host is not mentioned. The summary has no empty table, only `Nothing to do: no CT or host had pending updates.`, and the terminal counts as skipped the auto-update CTs with nothing pending (one line, not one per CT). `--json` carries `log_path`.
+
 ```
 pxu · update run [MOCK]                       started 00:16 · sequential   00:16
 ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3

@@ -361,6 +361,20 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     let mut queue: Vec<(u32, String)> = if plan == hostupdate::Plan::Off { vec![] } else { vec![(0, "host".into())] };
     queue.extend(cands.iter().map(|c| (c.vmid, c.name.clone())));
     ev(Event::Queue(queue));
+    // `select` no lista los CT con auto-update sin nada pendiente: el log los nombra igual, para que una corrida vacía diga por qué.
+    if opts.only.is_empty() {
+        let auto = idle_auto(inv, &cands);
+        for g in &auto {
+            ev(Event::Line(g.vmid, format!("CT {} {}: skipped — no updates pending", g.vmid, g.name)));
+        }
+        if plan == hostupdate::Plan::Off && cfg.update.host_auto {
+            // `plan_auto` solo devuelve `Off` con `host_auto` cuando el host no tiene nada pendiente
+            ev(Event::Line(0, "host: skipped — no updates pending".into()));
+        }
+        if auto.is_empty() && cands.is_empty() {
+            ev(Event::Line(0, "no CT with the auto-update tag has anything to update".into()));
+        }
+    }
     let max_fail = if cfg.update.on_failure == "stop" { 1 } else { cfg.update.max_consecutive_failures.max(1) };
     let (mut results, mut streak, mut aborted, mut cancelled) = (Vec::new(), 0u32, None::<String>, false);
     if plan != hostupdate::Plan::Off {
@@ -411,6 +425,7 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
             continue;
         }
         if let Some(why) = &c.skip {
+            ev(Event::Line(g.vmid, format!("CT {} {}: skipped — {why}", g.vmid, g.name)));
             finish(bare(Outcome::Skipped, why), ev, &mut results);
             continue;
         }
@@ -448,7 +463,10 @@ fn run_host(host: &dyn Host, inv: &Inventory, cfg: &Config, plan: &hostupdate::P
     };
     let hostupdate::Plan::Run { .. } = plan else {
         return match plan {
-            hostupdate::Plan::Skip(why) => skipped(why, ev),
+            hostupdate::Plan::Skip(why) => {
+                ev(Event::Line(0, format!("host: skipped — {why}")));
+                skipped(why, ev)
+            }
             _ => skipped("not part of this run", ev),
         };
     };
@@ -1004,10 +1022,15 @@ fn persist_info(host: &dyn Host, vmid: u32, info: &CheckInfo) {
 
 // ---------------------------------------------------------------- notificaciones
 
+/// CT con la etiqueta de auto-update que `select` no lista porque no tienen nada pendiente.
+pub fn idle_auto<'a>(inv: &'a Inventory, cands: &[Candidate]) -> Vec<&'a Guest> {
+    inv.guests.iter().filter(|g| g.kind == GuestKind::Lxc && g.auto_update && !cands.iter().any(|c| c.vmid == g.vmid)).collect()
+}
+
 /// Un único aviso al final de la corrida (tabla de `report`). Se envía con `run_summary`; con solo `update_failed`, únicamente si algo falló
 /// (un CT, el host o el driver NVIDIA) o la corrida paró por un fallo.
 pub fn messages(report: &RunReport, c: &AppriseCfg) -> Vec<Message> {
-    if report.results.is_empty() && report.nvidia.is_none() {
+    if (report.results.is_empty() && report.nvidia.is_none()) || report::nothing_to_do(report) {
         return vec![];
     }
     let mut m = report::message(report);
@@ -1106,6 +1129,9 @@ mod tests {
         let cfg = Config::load(h).unwrap();
         let inv = guests::load(h);
         run(h, &inv, &cfg, &Opts { only: only.to_vec() }, &AtomicBool::new(false), &mut |_| {}).unwrap()
+    }
+    fn inv_of(h: &ReadOnlyHost<MockHost>) -> Inventory {
+        guests::load(h)
     }
     fn guest_cmds(h: &ReadOnlyHost<MockHost>, vmid: u32) -> Vec<String> {
         h.inner().recorded().into_iter().filter_map(|r| match r { Recorded::Guest(v, a) if v == vmid => Some(a.join(" ")), _ => None }).collect()
@@ -1299,6 +1325,24 @@ mod tests {
         assert!(rep.results.iter().all(|r| r.outcome == Outcome::Skipped));
         assert!(guest_cmds(&h, 105).iter().all(|c| !c.contains("upgrade")));
         assert!(host_cmds(&h).is_empty());
+    }
+
+    #[test]
+    fn a_run_with_nothing_to_update_still_writes_its_log_and_does_not_notify() {
+        let h = ReadOnlyHost::new(World::new().backup_mode("auto").require_fresh_minutes(60).ct(Ct::new(501).tags("auto").checked_minutes_ago(5)).build());
+        let rep = go(&h, &[]);
+        assert!(rep.results.iter().all(|r| r.outcome == Outcome::Skipped), "{:?}", rep.results);
+        let path = rep.log_path.clone().expect("a run with nothing to do still has a run log");
+        let text = String::from_utf8(h.read_file(std::path::Path::new(&path)).unwrap()).unwrap();
+        let meta = runlog::parse_header(&text).expect("header");
+        assert!(meta.complete && meta.result == "✅ nothing to do", "{meta:?}");
+        assert!(text.contains("CT 501") && text.contains("no updates pending"), "the log says why each CT was skipped:\n{text}");
+        assert!(!text.contains("| Upgrades"), "no empty table in a nothing-to-do summary:\n{text}");
+        assert!(report::body(&rep).contains("Nothing to do: no CT or host had pending updates."));
+        assert_eq!(idle_auto(&inv_of(&h), &[]).len(), 1, "the terminal count includes auto-update CTs with nothing pending");
+        let listed = runlog::list(&h, std::path::Path::new(LOG_DIR));
+        assert!(listed.iter().any(|e| e.meta.as_ref().is_some_and(|m| m.result == "✅ nothing to do")), "listed in Logs");
+        assert!(messages(&rep, &AppriseCfg::default()).is_empty());
     }
 
     #[test]

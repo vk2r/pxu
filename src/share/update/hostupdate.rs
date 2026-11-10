@@ -1213,6 +1213,8 @@ mod tests {
         assert!(rep.results.iter().all(|r| r.vmid != 0), "{:?}", rep.results);
         assert!(!h.inner().recorded().iter().any(is_install));
         assert_eq!(rep.results.iter().find(|r| r.vmid == 134).unwrap().outcome, Outcome::Ok);
+        let log = String::from_utf8(h.read_file(std::path::Path::new(rep.log_path.as_deref().expect("log"))).unwrap()).unwrap();
+        assert!(log.contains("host: skipped — no updates pending"), "the log says why the host was left out:\n{log}");
     }
 
     #[test]
