@@ -214,11 +214,11 @@ fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> 
         if on("upd") {
             post.push(c("UPD all/sec", None, 8));
         }
-        if on("auto") {
-            post.push(c("AUTO", None, 8));
-        }
         if on("backup") {
             post.push(c("BACKUP", None, 8));
+        }
+        if on("auto") {
+            post.push(c("AUTO", None, 8));
         }
         let n = pre.len() + 1 + post.len();
         let used: usize = pre.iter().chain(post.iter()).map(|x| x.w).sum();
@@ -238,7 +238,7 @@ fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> 
         let mut v = pre;
         v.push(c("NAME", Some(name), 8));
         // TAGS va antes de GPU/UPD/AUTO: se inserta tras DISK (o la última columna de datos).
-        let at = post.iter().position(|x| matches!(x.title, "GPU" | "UPD all/sec" | "AUTO")).unwrap_or(post.len());
+        let at = post.iter().position(|x| matches!(x.title, "GPU" | "UPD all/sec" | "BACKUP" | "AUTO")).unwrap_or(post.len());
         if tags_w > 0 {
             post.insert(at, Col { title: "TAGS", w: tags_w });
         }
@@ -251,7 +251,7 @@ fn columns(width: u16, gpu: bool, shown: &[String], cw: &dyn Fn(&str, usize) -> 
         } else if on("os") {
             v.push(c("OS", None, 6));
         }
-        for (k, t) in [("cpu", "CPU"), ("ram", "RAM"), ("upd", "UPD"), ("auto", "AUTO"), ("backup", "BACKUP")] {
+        for (k, t) in [("cpu", "CPU"), ("ram", "RAM"), ("upd", "UPD"), ("backup", "BACKUP"), ("auto", "AUTO")] {
             if on(k) {
                 v.push(c(t, if t == "CPU" { Some(5) } else { None }, 6));
             }
@@ -308,11 +308,8 @@ fn cell(g: &Guest, app: &App, title: &str, w: usize) -> String {
                 "—".into()
             }
         }
-        "BACKUP" => match (g.kind, g.backup.as_str()) {
-            (GuestKind::Lxc, "snapshot") => "snap".into(),
-            (GuestKind::Lxc, m) => m.into(),
-            _ => "—".into(),
-        },
+        // `yes` = pxu hace backup antes de actualizar (auto/snapshot/vzdump); `-` = ninguno (none), VM y host. El modo exacto está en el detalle y en `b`.
+        "BACKUP" => if g.kind == GuestKind::Lxc && g.backup != "none" { "yes".into() } else { "-".into() },
         _ => String::new(),
     }
 }

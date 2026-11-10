@@ -24,9 +24,9 @@ pub struct Config {
 }
 
 /// Columnas opcionales de la lista (ID, NAME y STATE son fijas), en el orden en que se muestran en la TUI.
-pub const OPTIONAL_COLUMNS: &[&str] = &["type", "os", "cpu", "ram", "disk", "tags", "gpu", "upd", "auto", "backup"];
+pub const OPTIONAL_COLUMNS: &[&str] = &["type", "os", "cpu", "ram", "disk", "tags", "gpu", "upd", "backup", "auto"];
 
-/// `[ui]`: preferencias de la TUI. `columns` ausente ⇒ todas las opcionales salvo `tags` y `backup`.
+/// `[ui]`: preferencias de la TUI. `columns` ausente ⇒ todas las opcionales salvo `tags`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UiCfg {
     #[serde(default)]
@@ -37,7 +37,7 @@ impl UiCfg {
     /// Columnas opcionales visibles, en minúsculas y sin repetir; los nombres desconocidos se ignoran.
     pub fn visible_columns(&self) -> Vec<String> {
         match &self.columns {
-            None => OPTIONAL_COLUMNS.iter().filter(|c| !matches!(**c, "tags" | "backup")).map(|c| c.to_string()).collect(),
+            None => OPTIONAL_COLUMNS.iter().filter(|c| **c != "tags").map(|c| c.to_string()).collect(),
             Some(v) => OPTIONAL_COLUMNS.iter().filter(|c| v.iter().any(|x| x.eq_ignore_ascii_case(c))).map(|c| c.to_string()).collect(),
         }
     }

@@ -1,14 +1,14 @@
 pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00:16
 [All 6]  Run 5   Stop 1   Upd 1  / search…
 ────────────────────────────────────────────────────────────────────────────────
-   ID  NAME    STATE    GPU      CPU  RAM           UPD  AUTO
->   0  server  run      NV ✓       —  24.4/62.5 GB  7/2  —
-  131  ct-131  run      AMD ✓      —  0.2/0.5 GB    0    —
-  134  ct-134  run      NV ✓       —  0.2/0.5 GB    1/0  —
-  135  ct-135  stopped  NV ?       —  —/0.5 GB      0    —
-  140  ct-140  run      —          —  0.2/0.5 GB    0    —
-  150  ct-150  run      —          —  0.2/0.5 GB    0    —
-  200  vm-200  run      pass       —  —/2.0 GB      —    —
+   ID  NAME    STATE    GPU      CPU  RAM           UPD  BACKUP  AUTO
+>   0  server  run      NV ✓       —  24.4/62.5 GB  7/2  -       —
+  131  ct-131  run      AMD ✓      —  0.2/0.5 GB    0    yes     —
+  134  ct-134  run      NV ✓       —  0.2/0.5 GB    1/0  yes     —
+  135  ct-135  stopped  NV ?       —  —/0.5 GB      0    yes     —
+  140  ct-140  run      —          —  0.2/0.5 GB    0    yes     —
+  150  ct-150  run      —          —  0.2/0.5 GB    0    yes     —
+  200  vm-200  run      pass       —  —/2.0 GB      —    -       —
 
 
 

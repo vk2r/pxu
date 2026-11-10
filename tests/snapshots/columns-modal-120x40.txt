@@ -1,37 +1,37 @@
 pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 guests · 34 running · 13 with updates   00:16
 [All 37]   Running 34    Stopped 3    Updates 13   / search name, tag, id…                                    sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   ID  TYPE  NAME    STATE    OS               CPU  RAM         DISK     UPD all/sec  AUTO
-> 100  LXC   ct-100  run      debian 12          —  0.2/0.5 GB  2.0 GB   0            —
-  101  LXC   ct-101  run      debian 12          —  0.3/1.0 GB  3.0 GB   4/1          —
-  102  LXC   ct-102  run      debian 12          —  0.2/0.5 GB  4.0 GB   2/1          —
-  103  LXC   ct-103  run      debian 12          —  0.3/1.0 GB  25.0 GB  7/2          yes
-  104  LXC   ct-104  run      alpine 3.20        —  0.2/0.5 GB  6.0 GB   4/1          —
-  105  LXC   ct-105  run      fedora 41          —  0.3/1.0 GB  2.0 GB   0            yes
-  106  LXC   ct-106  run      debian 12          —  0.2/0.5 GB  3.0 GB   3/1          yes
-  107  LXC   ct-107  run      debian 12          —  0.3/1.0 GB  4.0 GB   4/1          —
-  108  LXC   ct-108  run      debian ┌ columns ───────────────────────────────────┐   yes
-  109  LXC   ct-109  run      alpine │ ID, NAME and STATE are always shown        │   —
-  110  LXC   ct-110  run      debian │                                            │   yes
-  111  LXC   ct-111  run      alpine │> [x] TYPE                                  │   —
-  112  LXC   ct-112  run      alpine │  [x] OS                                    │   —
-  113  LXC   ct-113  run      debian │  [x] CPU                                   │   —
-  114  LXC   ct-114  run      debian │  [x] RAM                                   │   —
-  115  LXC   ct-115  run      debian │  [x] DISK                                  │   —
-  116  LXC   ct-116  run      debian │  [ ] TAGS                                  │   yes
-  117  LXC   ct-117  stopped  debian │  [x] GPU                                   │   —
-  118  LXC   ct-118  stopped  debian │  [x] UPD                                   │   —
-  119  LXC   ct-119  stopped  debian │  [x] AUTO                                  │   yes
-  120  LXC   ct-120  run      alpine │  [ ] BACKUP                                │   —
-  121  LXC   ct-121  run      debian │                                            │   —
-  122  LXC   ct-122  run      debian │ [Space] show/hide  [Enter] close           │   —
-  123  LXC   ct-123  run      debian └────────────────────────────────────────────┘   yes
-  124  LXC   ct-124  run      debian 12          —  0.2/0.5 GB  6.0 GB   3/1          —
-  125  LXC   ct-125  run      ubuntu 24.04       —  0.3/1.0 GB  2.0 GB   0            yes
-  126  LXC   ct-126  run      alpine 3.20        —  0.2/0.5 GB  3.0 GB   0            —
-  127  LXC   ct-127  run      ubuntu 24.04       —  0.3/1.0 GB  4.0 GB   0            —
-  128  LXC   ct-128  run      ubuntu 24.04       —  0.2/0.5 GB  5.0 GB   0            —
-  129  LXC   ct-129  run      debian 12          —  0.3/1.0 GB  6.0 GB   0            —
+   ID  TYPE  NAME    STATE    OS               CPU  RAM         DISK     UPD all/sec  BACKUP  AUTO
+> 100  LXC   ct-100  run      debian 12          —  0.2/0.5 GB  2.0 GB   0            yes     —
+  101  LXC   ct-101  run      debian 12          —  0.3/1.0 GB  3.0 GB   4/1          yes     —
+  102  LXC   ct-102  run      debian 12          —  0.2/0.5 GB  4.0 GB   2/1          yes     —
+  103  LXC   ct-103  run      debian 12          —  0.3/1.0 GB  25.0 GB  7/2          yes     yes
+  104  LXC   ct-104  run      alpine 3.20        —  0.2/0.5 GB  6.0 GB   4/1          yes     —
+  105  LXC   ct-105  run      fedora 41          —  0.3/1.0 GB  2.0 GB   0            yes     yes
+  106  LXC   ct-106  run      debian 12          —  0.2/0.5 GB  3.0 GB   3/1          yes     yes
+  107  LXC   ct-107  run      debian 12          —  0.3/1.0 GB  4.0 GB   4/1          yes     —
+  108  LXC   ct-108  run      debian ┌ columns ───────────────────────────────────┐   yes     yes
+  109  LXC   ct-109  run      alpine │ ID, NAME and STATE are always shown        │   yes     —
+  110  LXC   ct-110  run      debian │                                            │   yes     yes
+  111  LXC   ct-111  run      alpine │> [x] TYPE                                  │   yes     —
+  112  LXC   ct-112  run      alpine │  [x] OS                                    │   yes     —
+  113  LXC   ct-113  run      debian │  [x] CPU                                   │   yes     —
+  114  LXC   ct-114  run      debian │  [x] RAM                                   │   yes     —
+  115  LXC   ct-115  run      debian │  [x] DISK                                  │   yes     —
+  116  LXC   ct-116  run      debian │  [ ] TAGS                                  │   yes     yes
+  117  LXC   ct-117  stopped  debian │  [x] GPU                                   │   yes     —
+  118  LXC   ct-118  stopped  debian │  [x] UPD                                   │   yes     —
+  119  LXC   ct-119  stopped  debian │  [x] BACKUP                                │   yes     yes
+  120  LXC   ct-120  run      alpine │  [x] AUTO                                  │   yes     —
+  121  LXC   ct-121  run      debian │                                            │   yes     —
+  122  LXC   ct-122  run      debian │ [Space] show/hide  [Enter] close           │   yes     —
+  123  LXC   ct-123  run      debian └────────────────────────────────────────────┘   yes     yes
+  124  LXC   ct-124  run      debian 12          —  0.2/0.5 GB  6.0 GB   3/1          yes     —
+  125  LXC   ct-125  run      ubuntu 24.04       —  0.3/1.0 GB  2.0 GB   0            yes     yes
+  126  LXC   ct-126  run      alpine 3.20        —  0.2/0.5 GB  3.0 GB   0            yes     —
+  127  LXC   ct-127  run      ubuntu 24.04       —  0.3/1.0 GB  4.0 GB   0            yes     —
+  128  LXC   ct-128  run      ubuntu 24.04       —  0.2/0.5 GB  5.0 GB   0            yes     —
+  129  LXC   ct-129  run      debian 12          —  0.3/1.0 GB  6.0 GB   0            yes     —
 ▼ 7 below (next 130 ct-130)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail

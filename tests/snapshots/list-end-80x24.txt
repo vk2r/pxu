@@ -1,21 +1,21 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-   ID  NAME    STATE    OS              CPU  RAM         UPD  AUTO
-  123  ct-123  run      debian 12         —  0.3/1.0 GB  0    yes
-  124  ct-124  run      debian 12         —  0.2/0.5 GB  3/1  —
-  125  ct-125  run      ubuntu 24.04      —  0.3/1.0 GB  0    yes
-  126  ct-126  run      alpine 3.20       —  0.2/0.5 GB  0    —
-  127  ct-127  run      ubuntu 24.04      —  0.3/1.0 GB  0    —
-  128  ct-128  run      ubuntu 24.04      —  0.2/0.5 GB  0    —
-  129  ct-129  run      debian 12         —  0.3/1.0 GB  0    —
-  130  ct-130  run      debian 12         —  0.2/0.5 GB  0    —
-  131  ct-131  run      debian 12         —  0.3/1.0 GB  0    —
-  132  ct-132  run      debian 12         —  0.2/0.5 GB  0    —
-  133  ct-133  run      alpine 3.20       —  0.3/1.0 GB  0    —
-  134  ct-134  run      ubuntu 24.04      —  0.2/0.5 GB  0    —
-  135  ct-135  run      debian 12         —  0.3/1.0 GB  0    —
-> 136  ct-136  run      debian 12         —  0.2/0.5 GB  0    —
+   ID  NAME    STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+  123  ct-123  run      debian 12         —  0.3/1.0 GB  0    yes     yes
+  124  ct-124  run      debian 12         —  0.2/0.5 GB  3/1  yes     —
+  125  ct-125  run      ubuntu 24.04      —  0.3/1.0 GB  0    yes     yes
+  126  ct-126  run      alpine 3.20       —  0.2/0.5 GB  0    yes     —
+  127  ct-127  run      ubuntu 24.04      —  0.3/1.0 GB  0    yes     —
+  128  ct-128  run      ubuntu 24.04      —  0.2/0.5 GB  0    yes     —
+  129  ct-129  run      debian 12         —  0.3/1.0 GB  0    yes     —
+  130  ct-130  run      debian 12         —  0.2/0.5 GB  0    yes     —
+  131  ct-131  run      debian 12         —  0.3/1.0 GB  0    yes     —
+  132  ct-132  run      debian 12         —  0.2/0.5 GB  0    yes     —
+  133  ct-133  run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
+  134  ct-134  run      ubuntu 24.04      —  0.2/0.5 GB  0    yes     —
+  135  ct-135  run      debian 12         —  0.3/1.0 GB  0    yes     —
+> 136  ct-136  run      debian 12         —  0.2/0.5 GB  0    yes     —
 ▲ 23 above (first 123 ct-123)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────
 > 136 ct-136 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail

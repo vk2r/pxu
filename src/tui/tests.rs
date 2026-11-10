@@ -1880,21 +1880,32 @@ fn b_without_config_warns_it_will_create_it() {
 }
 
 #[test]
-fn the_backup_column_is_optional_hidden_by_default_and_shows_short_modes() {
+fn the_backup_column_is_visible_by_default_and_shows_only_yes_or_dash() {
     let h = auto_host(Some("[[ct]]\nvmid = 116\nbackup = \"none\"\n[[ct]]\nvmid = 105\nbackup = \"snapshot\"\n"));
-    let mut a = auto_app(&h);
-    let (out, _) = render(&a, 120, 40, true);
-    assert!(!out.contains("BACKUP"), "hidden by default");
-    assert!(pxu::share::config::UiCfg::default().visible_columns().iter().all(|c| c != "backup"));
-    a.columns.push("backup".into());
+    let a = auto_app(&h);
     let (out, _) = render(&a, 120, 40, true);
     let head = out.lines().find(|l| l.contains("BACKUP")).expect("header");
-    assert!(head.find("AUTO").unwrap() < head.find("BACKUP").unwrap(), "{head}");
-    let row = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} "))).unwrap().to_string();
-    assert!(row("116").trim_end().ends_with("none"), "{}", row("116"));
-    assert!(row("105").trim_end().ends_with("snap"), "{}", row("105"));
-    assert!(row("100").trim_end().ends_with("auto"), "{}", row("100"));
-    // selector `o`: aparece como opción y no está marcada de entrada
-    let a2 = auto_app(&h);
-    assert!(!a2.col_shown("backup") && pxu::share::config::OPTIONAL_COLUMNS.contains(&"backup"));
+    assert!(head.find("BACKUP").unwrap() < head.find("AUTO").unwrap(), "{head}");
+    assert!(pxu::share::config::UiCfg::default().visible_columns().iter().any(|c| c == "backup"));
+    let col = head.find("BACKUP").unwrap();
+    let cell = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} "))).unwrap()[col..].split_whitespace().next().unwrap().to_string();
+    assert_eq!(cell("116"), "-", "none (CT override)");
+    assert_eq!(cell("105"), "yes", "snapshot override");
+    assert_eq!(cell("100"), "yes", "global auto");
+    assert!(!out.contains("snap ") && !out.contains("vzdump "), "no exact modes in the list");
+    // selector `o`: marcada de entrada; una config con `columns` explícito sin "backup" no se toca
+    assert!(a.col_shown("backup"));
+    let c = pxu::share::config::UiCfg { columns: Some(vec!["os".into()]) };
+    assert_eq!(c.visible_columns(), vec!["os".to_string()]);
+}
+
+#[test]
+fn the_backup_column_is_a_dash_with_global_none() {
+    let h = auto_host(Some("[backup]\nmode = \"none\"\n[[ct]]\nvmid = 105\nbackup = \"auto\"\n"));
+    let a = auto_app(&h);
+    let (out, _) = render(&a, 120, 40, true);
+    let col = out.lines().find(|l| l.contains("BACKUP")).unwrap().find("BACKUP").unwrap();
+    let cell = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} "))).unwrap()[col..].split_whitespace().next().unwrap().to_string();
+    assert_eq!(cell("100"), "-");
+    assert_eq!(cell("105"), "yes");
 }

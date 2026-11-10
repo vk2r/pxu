@@ -1,21 +1,21 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-   ID  NAME    STATE    OS              CPU  RAM         UPD  AUTO
-> 100  ct-100  ru┌ columns ───────────────────────────────────┐
-  101  ct-101  ru│ ID, NAME and STATE are always shown        │
-  102  ct-102  ru│                                            │
-  103  ct-103  ru│> [x] TYPE                                  │es
-  104  ct-104  ru│  [x] OS                                    │
-  105  ct-105  ru│  [x] CPU                                   │es
-  106  ct-106  ru│  [x] RAM                                   │es
-  107  ct-107  ru│  [x] DISK                                  │
-  108  ct-108  ru│  [ ] TAGS                                  │es
-  109  ct-109  ru│  [x] GPU                                   │
-  110  ct-110  ru│  [x] UPD                                   │es
-  111  ct-111  ru│  [x] AUTO                                  │
-  112  ct-112  ru│  [ ] BACKUP                                │
-  113  ct-113  ru│                                            │
+   ID  NAME    STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+> 100  ct-100  ru┌ columns ───────────────────────────────────┐es     —
+  101  ct-101  ru│ ID, NAME and STATE are always shown        │es     —
+  102  ct-102  ru│                                            │es     —
+  103  ct-103  ru│> [x] TYPE                                  │es     yes
+  104  ct-104  ru│  [x] OS                                    │es     —
+  105  ct-105  ru│  [x] CPU                                   │es     yes
+  106  ct-106  ru│  [x] RAM                                   │es     yes
+  107  ct-107  ru│  [x] DISK                                  │es     —
+  108  ct-108  ru│  [ ] TAGS                                  │es     yes
+  109  ct-109  ru│  [x] GPU                                   │es     —
+  110  ct-110  ru│  [x] UPD                                   │es     yes
+  111  ct-111  ru│  [x] BACKUP                                │es     —
+  112  ct-112  ru│  [x] AUTO                                  │es     —
+  113  ct-113  ru│                                            │es     —
 ▼ 23 below (next │ [Space] show/hide  [Enter] close           │
 ─────────────────└────────────────────────────────────────────┘─────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail

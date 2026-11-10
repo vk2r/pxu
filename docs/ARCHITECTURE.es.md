@@ -278,7 +278,7 @@ timeout_s = 10
 retry_delays_ms = [2000, 8000]
 
 [ui]
-columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto"]   # opcionales: type os cpu ram disk tags gpu upd auto backup (tags y backup ocultas por defecto)
+columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto", "backup"]   # opcionales: type os cpu ram disk tags gpu upd auto backup (tags oculta por defecto)
 
 # Overrides por CT (opcionales)
 [[ct]]
