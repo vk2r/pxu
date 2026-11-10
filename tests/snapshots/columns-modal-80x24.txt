@@ -1,21 +1,21 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-   ID  NAME    STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
-> 100  ct-100  ru┌ columns ───────────────────────────────────┐es     —
-  101  ct-101  ru│ ID, NAME and STATE are always shown        │es     —
-  102  ct-102  ru│                                            │es     —
-  103  ct-103  ru│> [x] TYPE                                  │es     yes
-  104  ct-104  ru│  [x] OS                                    │es     —
-  105  ct-105  ru│  [x] CPU                                   │es     yes
-  106  ct-106  ru│  [x] RAM                                   │es     yes
-  107  ct-107  ru│  [x] DISK                                  │es     —
-  108  ct-108  ru│  [ ] TAGS                                  │es     yes
-  109  ct-109  ru│  [x] GPU                                   │es     —
-  110  ct-110  ru│  [x] UPD                                   │es     yes
-  111  ct-111  ru│  [x] BACKUP                                │es     —
-  112  ct-112  ru│  [x] AUTO                                  │es     —
-  113  ct-113  ru│                                            │es     —
+   ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+> 100  ct-100    ┌ columns ───────────────────────────────────┐0    yes     —
+  101  ct-101    │ ID, NAME and STATE are always shown        │4/1  yes     —
+  102  ct-102    │                                            │2/1  yes     —
+  103  ct-103    │> [x] TYPE                                  │7/2  yes     yes
+  104  ct-104    │  [x] OS                                    │4/1  yes     —
+  105  ct-105    │  [x] CPU                                   │0    yes     yes
+  106  ct-106    │  [x] RAM                                   │3/1  yes     yes
+  107  ct-107    │  [x] DISK                                  │4/1  yes     —
+  108  ct-108    │  [ ] TAGS                                  │2/1  yes     yes
+  109  ct-109    │  [x] GPU                                   │0    yes     —
+  110  ct-110    │  [x] UPD                                   │4/1  yes     yes
+  111  ct-111    │  [x] BACKUP                                │0    yes     —
+  112  ct-112    │  [x] AUTO                                  │3/1  yes     —
+  113  vaultwarde│                                            │0    yes     —
 ▼ 23 below (next │ [Space] show/hide  [Enter] close           │
 ─────────────────└────────────────────────────────────────────┘─────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail

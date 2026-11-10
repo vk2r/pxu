@@ -103,11 +103,11 @@ pub fn demo(vols: &[Vol], now: u64) -> Fixture {
             let (y, m, dd) = civil(noon(now, d) / DAY);
             format!("{y:04}-{m:02}-{dd:02}T03:0{}:00Z", id % 6)
         };
-        let mut pbs_at = |days: u64| {
+        let mut pbs_at = |days: u64, protected: bool| {
             let size = sz * 6 / 10;
             pbs_logical += size;
             let t = noon(now, days);
-            pbs.push(serde_json::json!({"volid": format!("remote-backup-3:backup/ct/{id}/{}", stamp(days)), "vmid": id, "content": "backup", "format": "pbs-ct", "size": size, "ctime": t}));
+            pbs.push(serde_json::json!({"volid": format!("remote-backup-3:backup/ct/{id}/{}", stamp(days)), "vmid": id, "content": "backup", "format": "pbs-ct", "size": size, "ctime": t, "protected": protected}));
         };
         match id {
             100 => {}
@@ -116,16 +116,17 @@ pub fn demo(vols: &[Vol], now: u64) -> Fixture {
                 let size = sz * 3 / 10;
                 local.push(serde_json::json!({"volid": format!("local:backup/vzdump-lxc-{id}-2026_04_23-03_00_00.tar.zst"), "vmid": id, "content": "backup", "format": "tar.zst", "size": size, "ctime": t, "notes": format!("ct-{id}")}));
             }
-            133 => pbs_at(45),
+            133 => pbs_at(45, false),
             103 => {
-                pbs_at(2);
+                pbs_at(2, false);
                 let size = sz * 3 / 10;
                 local.push(serde_json::json!({"volid": "local:backup/vzdump-lxc-103-2026_11_07-04_30_00.tar.zst", "vmid": 103, "content": "backup", "format": "tar.zst", "size": size, "ctime": noon(now, 1), "notes": "pxu pre-update ct-103"}));
             }
             _ => {
-                pbs_at(1 + id as u64 % 5);
+                pbs_at(1 + id as u64 % 5, false);
+                // el backup viejo de los CT múltiplo de 3 está protegido (no se puede borrar desde pxu)
                 if id % 3 == 0 {
-                    pbs_at(8 + id as u64 % 5);
+                    pbs_at(8 + id as u64 % 5, true);
                 }
             }
         }

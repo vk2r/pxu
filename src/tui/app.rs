@@ -117,6 +117,8 @@ pub enum Action {
     OpenStorage,
     /// `r` en Storage: vuelve a leer sin bloquear.
     RefreshStorage,
+    /// `y`/Enter en el modal de borrado de un backup (Storage): el bucle ejecuta `pvesm free <volid>` y recarga los datos.
+    DeleteBackup { vmid: u32, item: pxu::share::storage::BackupItem },
     /// Enter / `n` / `p` / doble clic: el bucle lee ese log y lo muestra en el visor.
     OpenLog(std::path::PathBuf),
     /// Enter en el diálogo de retención: guarda `[general] log_retention_days`.
@@ -239,6 +241,33 @@ impl BackupModal {
             lines.push(format!("the rest of {} is kept as it is", pxu::share::config::CONFIG_PATH));
         }
         BackupModal { vmid: g.vmid, name: g.name.clone(), disabled, lines }
+    }
+}
+
+/// Confirmación del borrado de un backup (`x` en el detalle de Storage).
+pub struct BackupDelModal {
+    pub vmid: u32,
+    pub item: pxu::share::storage::BackupItem,
+    pub lines: Vec<String>,
+}
+
+impl BackupDelModal {
+    /// `only`: es el único backup del guest; `pbs`: el storage es un Proxmox Backup Server; `now`: reloj del servidor.
+    pub fn new(vmid: u32, item: pxu::share::storage::BackupItem, only: bool, pbs: bool, now: u64) -> BackupDelModal {
+        use pxu::share::storage::{fmt_gb, when};
+        let mut lines = vec![
+            format!("volume : {}", item.volid),
+            format!("storage: {}{}", item.storage, if pbs { " (Proxmox Backup Server)" } else { "" }),
+            format!("date   : {}   size: {}{}", when(item.ctime, now), fmt_gb(item.size), if item.pxu { "   (pxu pre-update)" } else { "" }),
+        ];
+        if only {
+            lines.push(format!("WARNING: this is the only backup of CT {vmid}"));
+        }
+        if pbs {
+            lines.push("space is freed after garbage collection on the PBS".into());
+        }
+        lines.push(format!("pxu runs: pvesm free {}", item.volid));
+        BackupDelModal { vmid, item, lines }
     }
 }
 
@@ -387,6 +416,7 @@ pub struct App {
     pub modal: Option<UpdateModal>,
     pub auto_modal: Option<AutoModal>,
     pub backup_modal: Option<BackupModal>,
+    pub backup_del: Option<BackupDelModal>,
     pub nvidia_modal: Option<NvidiaModal>,
     pub host_modal: Option<HostModal>,
     pub sched: Option<SchedModal>,
@@ -438,6 +468,7 @@ impl App {
             modal: None,
             auto_modal: None,
             backup_modal: None,
+            backup_del: None,
             nvidia_modal: None,
             host_modal: None,
             sched: None,
@@ -565,6 +596,9 @@ impl App {
         if self.backup_modal.is_some() {
             return self.backup_modal_key(k);
         }
+        if self.backup_del.is_some() {
+            return self.backup_del_key(k);
+        }
         if self.sched.is_some() {
             return self.sched_key(k);
         }
@@ -639,11 +673,47 @@ impl App {
                 Action::None
             }
             StorageKey::Refresh => Action::RefreshStorage,
+            StorageKey::DeleteBackup => self.ask_delete_backup(),
             StorageKey::Help => {
                 self.help = true;
                 Action::None
             }
         }
+    }
+
+    /// `x` en el detalle de Storage: abre la confirmación del borrado del backup seleccionado (nada en solo lectura ni si está protegido).
+    fn ask_delete_backup(&mut self) -> Action {
+        if self.forced_ro {
+            self.status = "read-only mode (--read-only): backups cannot be deleted".into();
+            return Action::None;
+        }
+        if self.read_only {
+            self.status = "no usable config: backups cannot be deleted".into();
+            return Action::None;
+        }
+        let st = &self.storage;
+        let (Some(id), Some(d), Some(b)) = (st.detail, st.data.as_ref(), st.selected_backup()) else {
+            self.status = "no backup selected".into();
+            return Action::None;
+        };
+        if b.protected {
+            self.status = format!("protected: {} cannot be deleted (remove the protection in Proxmox first)", b.volid);
+            return Action::None;
+        }
+        let only = st.backups().len() == 1;
+        let pbs = d.storages.iter().any(|s| s.name == b.storage && s.kind == "pbs");
+        self.backup_del = Some(BackupDelModal::new(id, b.clone(), only, pbs, d.now));
+        Action::None
+    }
+
+    fn backup_del_key(&mut self, k: KeyEvent) -> Action {
+        let Some(m) = self.backup_del.take() else { return Action::None };
+        match k.code {
+            KeyCode::Char('y') | KeyCode::Enter => return Action::DeleteBackup { vmid: m.vmid, item: m.item },
+            KeyCode::Esc | KeyCode::Char('n' | 'q') => self.status = "backup kept".into(),
+            _ => self.backup_del = Some(m),
+        }
+        Action::None
     }
 
     /// `d` en la lista: abre la página al momento (con lo que haya) y el bucle lee los datos en un hilo.

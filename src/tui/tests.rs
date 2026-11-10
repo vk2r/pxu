@@ -1952,10 +1952,11 @@ fn storage_backup_column_is_the_pre_update_yes_dash_and_nothing_is_cut_at_120() 
     let (out, _) = render(&a, 120, 40, true);
     let row = |id: &str| out.lines().find(|l| l.contains(&format!(" {id} ct-"))).unwrap_or_else(|| panic!("row {id}\n{out}")).to_string();
     assert!(row("100").contains("— ") && row("100").contains(" -   ") && row("100").contains("no backup"), "{out}");
-    assert!(row("101").contains(" yes ") && !row("101").contains("local"), "{out}");
+    assert!(row("101").contains(" yes "), "{out}");
     // nombre de storage largo y dos alertas enteros
     assert!(out.contains("remote-backup-3 pbs"), "{out}");
-    assert!(row("133").contains("last backup 44 d ago, disk 99% full"), "{out}");
+    // NAME y WHERE van enteros a 120 columnas: la que cede es ALERT (la doble del 133 se trunca con «…»; la completa está en el detalle)
+    assert!(row("133").contains("remote-backup-3") && row("133").contains("last backup 44 d ago, disk"), "{out}");
 }
 
 #[test]
@@ -2000,7 +2001,7 @@ fn storage_page_snapshots() {
     let mut f = storage_app();
     press(&mut f, "f");
     let (out, _) = render(&f, 120, 40, true);
-    for want in ["no backup", "disk 99% full", "last backup 199 d ago"] {
+    for want in ["no backup", "last backup 44 d ago", "last backup 199 d ago"] {
         assert!(out.contains(want), "{want} missing:\n{out}");
     }
     // ordenado por % real: el 133 (99%) primero; el 131 (thin 99.8% pero real 66%) no sube
@@ -2043,6 +2044,200 @@ fn storage_page_snapshots() {
     b.storage.detail = Some(103);
     let (out, _) = render(&b, 120, 40, true);
     assert!(out.contains("(pxu pre-update) backup/vzdump-lxc-103") && out.contains("remote-backup-3"), "{out}");
+}
+
+/// Detalle del CT `id` ya abierto, con los datos del mock.
+fn storage_detail_app(id: u32) -> App {
+    let mut a = storage_app();
+    a.read_only = false;
+    a.storage.detail = Some(id);
+    a
+}
+
+fn sline(out: &str, needle: &str) -> String {
+    out.lines().find(|l| l.contains(needle)).unwrap_or_else(|| panic!("{needle}\n{out}")).to_string()
+}
+
+#[test]
+fn storage_list_120x40_keeps_realistic_names_and_where_whole() {
+    let a = storage_app();
+    let (out, _) = render(&a, 120, 60, true);
+    for (id, name) in [(114, "llama-swap"), (134, "openweb-ui"), (124, "technitium"), (128, "uptime-kuma"), (113, "vaultwarden1")] {
+        let r = sline(&out, &format!(" {id} {name}"));
+        assert!(r.contains(&format!("{name} ")) && r.contains("remote-backup-3"), "{r}");
+        assert!(!r.contains("…") || r.rfind('…') > r.find("remote-backup-3"), "{r}");
+    }
+}
+
+#[test]
+fn storage_where_column_shows_the_storage_of_the_last_backup() {
+    let mut a = storage_app();
+    let (out, _) = render(&a, 120, 60, true);
+    assert!(sline(&out, "LAST BACKUP").contains("LAST BACKUP WHERE"), "{out}");
+    // PBS en la mayoría, `local` donde el último backup es un vzdump suelto (101), `—` sin backup (100)
+    assert!(sline(&out, " 133 ct-133").contains("remote-backup-3"), "{out}");
+    assert!(sline(&out, " 101 ct-101").contains(" local "), "{out}");
+    let r100 = sline(&out, " 100 ct-100");
+    assert!(r100.contains("— ") && !r100.contains("remote") && !r100.contains("local"), "{r100}");
+    // ignora los restos de pxu: el 103 tiene un vzdump pre-update en `local` más reciente, pero el último backup es el del PBS
+    let r103 = sline(&out, " 103 ct-103");
+    assert!(r103.contains("remote-backup-3") && !r103.contains("local"), "{r103}");
+    // 80x24: la columna se esconde como STATE y la tabla no se rompe
+    let (small, _) = render(&a, 80, 24, true);
+    assert!(!small.contains("WHERE") && small.lines().all(|l| l.chars().count() <= 80), "{small}");
+    // mientras lee, `…`
+    a.storage.data.as_mut().unwrap().partial = true;
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(!sline(&out, " 133 ct-133").contains("remote-backup-3"), "{out}");
+}
+
+#[test]
+fn storage_detail_backups_have_a_cursor_that_follows_and_x_asks_to_delete() {
+    let mut a = storage_detail_app(103); // 2 backups: el PBS (el último) y el vzdump de pxu en local
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(sline(&out, "Backups (2").contains("Backups (2"), "{out}");
+    assert!(sline(&out, "(pxu pre-update) backup/").contains(" > "), "{out}");
+    assert!(sline(&out, "[x] delete backup").contains("select backup"), "{out}");
+    // el cursor baja al segundo y el estilo `sel` está en esa fila
+    press(&mut a, "j");
+    assert_eq!(a.storage.bsel, 1);
+    let (out, t) = render(&a, 120, 40, true);
+    let (y, line) = out.lines().enumerate().find(|(_, l)| l.contains("remote-backup-3 backup/ct/103")).unwrap();
+    assert!(line.contains(" > "), "{line}");
+    assert!(t.backend().buffer()[(5u16, y as u16)].modifier.contains(ratatui::style::Modifier::REVERSED), "{line}");
+    press(&mut a, "j");
+    assert_eq!(a.storage.bsel, 1, "stops at the last backup");
+    press(&mut a, "k");
+    press(&mut a, "k");
+    assert_eq!(a.storage.bsel, 0);
+    // sin backups, ↑↓ desplazan y `x` no abre nada
+    let mut n = storage_detail_app(100);
+    assert!(n.storage.backups().is_empty());
+    assert_eq!(n.on_key(key(KeyCode::Char('x'))), Action::None);
+    assert!(n.backup_del.is_none() && n.status.contains("no backup selected"), "{}", n.status);
+}
+
+#[test]
+fn x_opens_the_delete_modal_with_the_only_backup_warning_and_the_pbs_note() {
+    // CT 131: un solo backup, en el PBS
+    let mut a = storage_detail_app(131);
+    let b = a.storage.selected_backup().unwrap().clone();
+    assert_eq!(a.on_key(key(KeyCode::Char('x'))), Action::None);
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("Delete this backup of CT 131?") && out.contains(&format!("volume : {}", b.volid)), "{out}");
+    assert!(out.contains("storage: remote-backup-3 (Proxmox Backup Server)") && out.contains("size: "), "{out}");
+    assert!(out.contains("WARNING: this is the only backup of CT 131"), "{out}");
+    assert!(out.contains("space is freed after garbage collection on the PBS"), "{out}");
+    assert!(out.contains(&format!("pxu runs: pvesm free {}", b.volid)) && out.contains("y/Enter") && out.contains("Esc/n"), "{out}");
+    // la advertencia sale en `warn`
+    let (_, t) = render(&a, 120, 40, true);
+    let buf = t.backend().buffer();
+    let (y, line) = out.lines().enumerate().find(|(_, l)| l.contains("WARNING")).unwrap();
+    let x = line.find("WARNING").unwrap();
+    assert_eq!(buf[(x as u16, y as u16)].fg, Color::Yellow);
+    // otras teclas no cierran; Esc cancela sin borrar
+    assert_eq!(a.on_key(key(KeyCode::Char('z'))), Action::None);
+    assert!(a.backup_del.is_some());
+    assert_eq!(a.on_key(key(KeyCode::Esc)), Action::None);
+    assert!(a.backup_del.is_none() && a.status == "backup kept");
+    // y confirma: la acción lleva el backup exacto
+    a.on_key(key(KeyCode::Char('x')));
+    assert_eq!(a.on_key(key(KeyCode::Char('y'))), Action::DeleteBackup { vmid: 131, item: b });
+    assert!(a.backup_del.is_none());
+    // un guest con 2 backups no lleva el aviso de único; uno en `local` no lleva la nota del PBS
+    let mut c = storage_detail_app(103);
+    c.on_key(key(KeyCode::Char('x')));
+    let (out, _) = render(&c, 120, 40, true);
+    assert!(out.contains("storage: local") && !out.contains("only backup") && !out.contains("garbage collection") && out.contains("(pxu pre-update)"), "{out}");
+    c.on_key(key(KeyCode::Esc));
+    press(&mut c, "j");
+    c.on_key(key(KeyCode::Char('x')));
+    let (out, _) = render(&c, 120, 40, true);
+    assert!(!out.contains("only backup") && out.contains("garbage collection"), "{out}");
+    snap("storage-backup-delete", &a_with_modal());
+}
+
+fn a_with_modal() -> App {
+    let mut a = storage_detail_app(131);
+    a.on_key(key(KeyCode::Char('x')));
+    a
+}
+
+#[test]
+fn deleting_a_backup_is_blocked_in_read_only_and_for_protected_backups() {
+    // solo lectura (`app.read_only`): el mensaje habitual y ningún modal
+    let mut a = storage_detail_app(131);
+    a.read_only = true;
+    a.on_key(key(KeyCode::Char('x')));
+    assert!(a.backup_del.is_none() && a.status.contains("backups cannot be deleted"), "{}", a.status);
+    a.forced_ro = true;
+    a.on_key(key(KeyCode::Char('x')));
+    assert!(a.status.contains("read-only mode (--read-only)"), "{}", a.status);
+    // protegido: el 102 (múltiplo de 3) tiene un segundo backup protegido
+    let mut p = storage_detail_app(102);
+    assert_eq!(p.storage.backups().len(), 2);
+    press(&mut p, "j");
+    assert!(p.storage.selected_backup().unwrap().protected);
+    let (out, _) = render(&p, 120, 40, true);
+    assert!(out.contains("(protected)"), "{out}");
+    assert_eq!(p.on_key(key(KeyCode::Char('x'))), Action::None);
+    assert!(p.backup_del.is_none() && p.status.starts_with("protected:"), "{}", p.status);
+    // el primero (sin proteger) sí se puede
+    press(&mut p, "k");
+    p.on_key(key(KeyCode::Char('x')));
+    assert!(p.backup_del.is_some());
+}
+
+#[test]
+fn deleting_through_the_mock_removes_the_backup_runs_exactly_pvesm_free_and_cleans_the_registry() {
+    let h = fixture("basic-37");
+    let cfg = pxu::share::config::Config::load(&h).unwrap();
+    let inv = guests::load(&h);
+    let d = pxu::share::storage::load(&h, &inv.guests, &inv.node, &cfg);
+    let g = d.guests.iter().find(|g| g.vmid == 131).unwrap();
+    let b = g.backups[0].clone();
+    assert_eq!(pxu::share::storage::free_argv(&b.volid), ["pvesm", "free", b.volid.as_str()]);
+    let msg = pxu::share::storage::delete_backup(&h, 131, &b).unwrap();
+    assert_eq!(msg, format!("deleted {}", b.volid));
+    // el comando que llegó al host es exactamente `pvesm free <volid>`
+    let pvesm = |h: &pxu::share::mock::MockHost| h.recorded().into_iter().filter_map(|r| match r { pxu::share::mock::Recorded::Host(a) if a.first().map(String::as_str) == Some("pvesm") => Some(a), _ => None }).collect::<Vec<_>>();
+    let sent = pvesm(h.inner());
+    assert_eq!(sent, vec![vec!["pvesm".to_string(), "free".into(), b.volid.clone()]]);
+    // y el backup desaparece de la lectura siguiente (sin backup → alerta)
+    let d2 = pxu::share::storage::load(&h, &inv.guests, &inv.node, &cfg);
+    let g2 = d2.guests.iter().find(|g| g.vmid == 131).unwrap();
+    assert!(g2.backups.is_empty() && g2.alerts.contains(&pxu::share::storage::Alert::NoBackup));
+    // volid de otro guest / protegido: rechazados sin llegar al host
+    let other = pxu::share::storage::BackupItem { volid: "remote-backup-3:backup/ct/132/2026-11-01T03:00:00Z".into(), ..b.clone() };
+    assert!(pxu::share::storage::delete_backup(&h, 131, &other).unwrap_err().contains("not a backup of 131"));
+    let prot = pxu::share::storage::BackupItem { protected: true, ..b.clone() };
+    assert!(pxu::share::storage::delete_backup(&h, 131, &prot).unwrap_err().contains("protected"));
+    assert_eq!(pvesm(h.inner()).len(), 1);
+}
+
+#[test]
+fn backup_volids_must_belong_to_the_guest() {
+    use pxu::share::storage::backup_volid_ok as ok;
+    assert!(ok("remote-backup-3:backup/ct/131/2026-03-28T11:50:10Z", 131));
+    assert!(ok("remote-backup-3:backup/vm/200/2026-03-28T11:50:10Z", 200));
+    assert!(ok("local:backup/vzdump-lxc-131-2026_11_08-03_16_00.tar.zst", 131));
+    assert!(ok("local:backup/vzdump-qemu-200-2026_11_08-03_16_00.vma.zst", 200));
+    for bad in [
+        "remote-backup-3:backup/ct/132/2026-03-28T11:50:10Z",
+        "remote-backup-3:backup/ct/1310/2026-03-28T11:50:10Z",
+        "local:backup/vzdump-lxc-132-x.tar.zst",
+        "local:backup/vzdump-lxc-131.tar.zst",
+        "local:iso/debian.iso",
+        "local:vm-131-disk-0",
+        "local:backup/../vzdump-lxc-131-x.tar",
+        "local:backup/vzdump-lxc-131-x;rm.tar",
+        "local:backup/vzdump-lxc-131-x tar",
+        "-x:backup/ct/131/2026",
+        "backup/ct/131/2026",
+        "local:backup/ct/131",
+    ] {
+        assert!(!ok(bad, 131), "{bad}");
+    }
 }
 
 #[test]

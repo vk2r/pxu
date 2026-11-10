@@ -82,6 +82,8 @@ pub struct MockHost {
     /// Locks de pxu tomados (en memoria).
     locks: Arc<Mutex<HashSet<PathBuf>>>,
     timer: Mutex<MockTimer>,
+    /// Backups borrados con `pvesm free` (página Storage): desaparecen de las lecturas de contenido, sin tocar los datos base.
+    deleted: Mutex<HashSet<String>>,
 }
 
 struct MockLock(Arc<Mutex<HashSet<PathBuf>>>, PathBuf);
@@ -235,7 +237,7 @@ impl MockHost {
     pub fn new(files: BTreeMap<PathBuf, Vec<u8>>, scenario: Scenario) -> Self {
         let scenario_timer = scenario.timer.clone();
         let lock_dir = PathBuf::from("/run/lock");
-        MockHost { files, scenario, log: Mutex::new(Vec::new()), overlay: Mutex::new(BTreeMap::new()), lock_dir, upgraded: Mutex::new(HashSet::new()), host_installed: std::sync::atomic::AtomicBool::new(false), host_backed_up: std::sync::atomic::AtomicBool::new(false), clock_offset: std::sync::atomic::AtomicU64::new(0), locks: Arc::new(Mutex::new(HashSet::new())), timer: Mutex::new(scenario_timer) }
+        MockHost { files, scenario, log: Mutex::new(Vec::new()), overlay: Mutex::new(BTreeMap::new()), lock_dir, upgraded: Mutex::new(HashSet::new()), host_installed: std::sync::atomic::AtomicBool::new(false), host_backed_up: std::sync::atomic::AtomicBool::new(false), clock_offset: std::sync::atomic::AtomicU64::new(0), locks: Arc::new(Mutex::new(HashSet::new())), timer: Mutex::new(scenario_timer), deleted: Mutex::new(HashSet::new()) }
     }
     /// Estado actual del timer simulado (para asserts).
     pub fn timer(&self) -> MockTimer {
@@ -450,9 +452,24 @@ impl Host for MockHost {
                 None => Ok(ExitInfo { code: 2 }),
             },
             ["pvesh", "get", path, ..] if path.ends_with("/content") => match self.scenario.storage.as_ref().and_then(|f| f.content.get(path.split('/').nth(4).unwrap_or(""))) {
-                Some(j) => ok(s, j),
+                Some(j) => {
+                    let gone = self.deleted.lock().unwrap();
+                    if gone.is_empty() {
+                        return ok(s, j);
+                    }
+                    let mut v: serde_json::Value = serde_json::from_str(j).unwrap_or_default();
+                    if let Some(a) = v.as_array_mut() {
+                        a.retain(|c| !c.get("volid").and_then(|x| x.as_str()).is_some_and(|id| gone.contains(id)));
+                    }
+                    ok(s, &v.to_string())
+                }
                 None => Ok(ExitInfo { code: 2 }),
             },
+            // borrar un backup desde Storage: solo lo quita de la lista en memoria (un volid que no existe falla como pvesm)
+            ["pvesm", "free", volid] if self.scenario.storage.as_ref().is_some_and(|f| f.content.values().any(|j| j.contains(&format!("\"{volid}\"")))) => {
+                self.deleted.lock().unwrap().insert(volid.to_string());
+                ok(s, "OK")
+            }
             ["pvesh", "get", path, ..] if path.contains("/storage/") => {
                 let g = |v: Option<f64>, d: f64| (v.unwrap_or(d) * (1u64 << 30) as f64) as u64;
                 let (avail, total) = (g(self.scenario.storage_avail_gb, 800.0), g(self.scenario.storage_total_gb, 1000.0));

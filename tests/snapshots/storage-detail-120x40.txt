@@ -9,7 +9,7 @@ LXC · running · no alerts
   pxu-20261107-043000  (pxu pre-update snapshot)
 
 ── Backups (1, all backup storages) ────────────────────────────────────────────────────────────────────────────────────
-  2026-11-06            1.8G  remote-backup-3 backup/ct/131/2026-11-06T03:05:00Z
+ > 2026-11-06            1.8G  remote-backup-3 backup/ct/131/2026-11-06T03:05:00Z
 
 ── Pre-update backup (pxu) ─────────────────────────────────────────────────────────────────────────────────────────────
   mode: auto
@@ -37,4 +37,4 @@ LXC · running · no alerts
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 lines 1-13 of 13
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[↑↓/PgUp/PgDn] scroll  [g/G] top/end  [r] refresh  [Esc/q] back  [?] help
+[↑↓] select backup  [x] delete backup  [PgUp/PgDn] scroll  [g/G] top/end  [r] refresh  [Esc/q] back  [?] help

@@ -23,15 +23,17 @@ pub struct ReadOnlyHost<H: Host> {
     allow_schedule: AtomicBool,
     /// Opt-in explícito del paso NVIDIA (`set_nvidia_update`): solo los comandos exactos de ese permiso.
     nvidia: Mutex<Option<nvidia::Grant>>,
+    /// Opt-in explícito de la página Storage (`set_backup_delete`): solo `pvesm free <este volid>`, nada más.
+    backup_delete: Mutex<Option<String>>,
 }
 
 impl<H: Host> ReadOnlyHost<H> {
     pub fn new(inner: H) -> Self {
-        ReadOnlyHost { inner, allow_refresh: false, allow_update: AtomicBool::new(false), update_target: AtomicU32::new(0), allow_config: AtomicBool::new(false), allow_schedule: AtomicBool::new(false), allow_host_update: AtomicBool::new(false), nvidia: Mutex::new(None) }
+        ReadOnlyHost { inner, allow_refresh: false, allow_update: AtomicBool::new(false), update_target: AtomicU32::new(0), allow_config: AtomicBool::new(false), allow_schedule: AtomicBool::new(false), allow_host_update: AtomicBool::new(false), nvidia: Mutex::new(None), backup_delete: Mutex::new(None) }
     }
     /// Permite además el sondeo CON refresco de índices (`pxu check --refresh`): escribe la caché del guest.
     pub fn allowing_refresh(inner: H) -> Self {
-        ReadOnlyHost { inner, allow_refresh: true, allow_update: AtomicBool::new(false), update_target: AtomicU32::new(0), allow_config: AtomicBool::new(false), allow_schedule: AtomicBool::new(false), allow_host_update: AtomicBool::new(false), nvidia: Mutex::new(None) }
+        ReadOnlyHost { inner, allow_refresh: true, allow_update: AtomicBool::new(false), update_target: AtomicU32::new(0), allow_config: AtomicBool::new(false), allow_schedule: AtomicBool::new(false), allow_host_update: AtomicBool::new(false), nvidia: Mutex::new(None), backup_delete: Mutex::new(None) }
     }
     fn update_on(&self) -> bool {
         self.allow_update.load(Ordering::SeqCst)
@@ -42,6 +44,9 @@ impl<H: Host> ReadOnlyHost<H> {
     }
     fn host_update_on(&self) -> bool {
         self.allow_host_update.load(Ordering::SeqCst)
+    }
+    fn backup_delete_allows(&self, argv: &[&str]) -> bool {
+        matches!((argv, self.backup_delete.lock().unwrap().as_deref()), (["pvesm", "free", v], Some(g)) if *v == g)
     }
     fn nvidia_allows(&self, f: impl Fn(&nvidia::Grant) -> bool) -> bool {
         self.nvidia.lock().unwrap().as_ref().is_some_and(f)
@@ -186,7 +191,7 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         self.inner.guest_exec(vmid, argv, o, s)
     }
     fn host_cmd(&self, argv: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<ExitInfo> {
-        if !host_cmd_is_read_only(argv) && !(self.allow_refresh && host_cmd_is_refresh(argv)) && !self.target().is_some_and(|t| host_cmd_is_update(argv, t)) && !(self.host_update_on() && hostupdate::is_host_update_argv(argv)) && !self.nvidia_allows(|g| nvidia::is_host_argv(argv, g)) {
+        if !host_cmd_is_read_only(argv) && !(self.allow_refresh && host_cmd_is_refresh(argv)) && !self.target().is_some_and(|t| host_cmd_is_update(argv, t)) && !(self.host_update_on() && hostupdate::is_host_update_argv(argv)) && !self.nvidia_allows(|g| nvidia::is_host_argv(argv, g)) && !self.backup_delete_allows(argv) {
             return Err(denied("host command", argv));
         }
         self.inner.host_cmd(argv, o, s)
@@ -254,6 +259,9 @@ impl<H: Host> Host for ReadOnlyHost<H> {
     }
     fn set_nvidia_update(&self, g: Option<nvidia::Grant>) {
         *self.nvidia.lock().unwrap() = g;
+    }
+    fn set_backup_delete(&self, volid: Option<String>) {
+        *self.backup_delete.lock().unwrap() = volid;
     }
     fn set_host_update_enabled(&self, on: bool) {
         self.allow_host_update.store(on, Ordering::SeqCst);
@@ -396,6 +404,23 @@ mod tests {
         assert!(h.host_cmd(&["pct", "delsnapshot", "103", "pxu-202611080316"], &ExecOpts::default(), &mut sink).is_ok());
         assert_eq!(h.host_cmd(&["pct", "delsnapshot", "103", "mine"], &ExecOpts::default(), &mut sink).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(h.host_cmd(&["pvesm", "free", "local:backup/dump.tar"], &ExecOpts::default(), &mut sink).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn the_backup_delete_opt_in_opens_exactly_one_pvesm_free() {
+        let h = ro();
+        let o = ExecOpts::default();
+        let mut sink = Vec::<String>::new();
+        let v = "remote-backup-3:backup/ct/131/2026-03-28T11:50:10Z";
+        assert_eq!(h.host_cmd(&["pvesm", "free", v], &o, &mut sink).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        {
+            let _g = BackupDeleteOptIn::new(&h, v);
+            assert!(h.host_cmd(&["pvesm", "free", v], &o, &mut sink).is_ok());
+            for bad in [&["pvesm", "free", "remote-backup-3:backup/ct/132/2026-03-28T11:50:10Z"][..], &["pvesm", "free", v, "--force"], &["pvesm", "alloc", v], &["pct", "destroy", "131"]] {
+                assert_eq!(h.host_cmd(bad, &o, &mut sink).unwrap_err().kind(), io::ErrorKind::PermissionDenied, "{bad:?}");
+            }
+        }
+        assert_eq!(h.host_cmd(&["pvesm", "free", v], &o, &mut sink).unwrap_err().kind(), io::ErrorKind::PermissionDenied, "the opt-in is withdrawn on drop");
     }
 
     #[test]

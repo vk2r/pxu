@@ -115,6 +115,8 @@ pub trait Host: Sync {
     fn set_nvidia_update(&self, _g: Option<crate::share::update::nvidia::Grant>) {}
     /// Opt-in explícito de la TUI (tecla `a` tras confirmar): habilita `write_config` (no-op fuera de `ReadOnlyHost`).
     fn set_config_edit(&self, _on: bool) {}
+    /// Opt-in del borrado manual de UN backup (`pvesm free <volid>`, página Storage): solo ese volid exacto.
+    fn set_backup_delete(&self, _volid: Option<String>) {}
     /// Opt-in explícito de la TUI (tecla `S` tras confirmar): habilita `apply_schedule` (no-op fuera de `ReadOnlyHost`).
     fn set_schedule_edit(&self, _on: bool) {}
     fn now(&self) -> SystemTime;
@@ -189,6 +191,22 @@ impl<'a> HostUpdateOptIn<'a> {
 impl Drop for HostUpdateOptIn<'_> {
     fn drop(&mut self) {
         self.0.set_host_update_enabled(false);
+    }
+}
+
+/// Opt-in del borrado de un backup (`pvesm free <volid>`) con RAII: se retira en toda salida. Vale para ese volid y nada más.
+pub struct BackupDeleteOptIn<'a>(&'a dyn Host);
+
+impl<'a> BackupDeleteOptIn<'a> {
+    pub fn new(host: &'a dyn Host, volid: &str) -> Self {
+        host.set_backup_delete(Some(volid.to_string()));
+        BackupDeleteOptIn(host)
+    }
+}
+
+impl Drop for BackupDeleteOptIn<'_> {
+    fn drop(&mut self) {
+        self.0.set_backup_delete(None);
     }
 }
 

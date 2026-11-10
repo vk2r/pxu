@@ -1,8 +1,8 @@
 px┌ help · ↑↓ scroll · any other key closes ─────────────────────────────────┐16
 no│── Keys ──────────────────────────────────────────────────────────────────│
 ──│ ↑↓ / j k            select · PgUp PgDn page · g / G first / last         │──
- l│ Enter / d           space detail: disks, snapshots, backups, pre-update  │ …
- l│                     mode                                                 │
+ l│ Enter / d           space detail: disks, snapshots, backups (x deletes   │ …
+ l│                     one), pre-update mode                                │
  l│ S                   cycle sort: used · alloc · % · last backup (oldest   │
  r│                     first) · id                                          │G
 ──│ f                   show only guests with alerts                         │──
@@ -15,10 +15,10 @@ no│── Keys ─────────────────────
   │ —                   stopped guest or not readable                        │
   │ * in SNAPS          has pxu-* snapshots                                  │
   │ LAST BACKUP         ignores pxu pre-update leftovers                     │
-  │ Dedup (PBS)         logical size of the backups / space used in the      │
- a│                     datastore                                            │3)
-──│── Alerts ────────────────────────────────────────────────────────────────│──
-1 │ no backup           the guest has no backup                              │
+  │ WHERE               storage that holds that last backup (wide screens    │
+ a│                     only)                                                │3)
+──│ Dedup (PBS)         logical size of the backups / space used in the      │──
+1 │                     datastore                                            │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │p
 [q└──────────────────────────────────────────────────────────────────────────┘

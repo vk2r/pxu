@@ -1,13 +1,13 @@
 pxu · Proxmox Updater [MOCK]                                 node server · 6 guests · 5 running · 1 with updates   00:16
 [All 6]   Running 5    Stopped 1    Updates 1   / search name, tag, id…                                       sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   ID  TYPE  NAME    STATE    OS            CPU  RAM         DISK     GPU       UPD all/sec  BACKUP  AUTO
-> 131  LXC   ct-131  run      debian 12       —  0.2/0.5 GB  4.0 GB   AMD ✓     0            yes     —
-  134  LXC   ct-134  run      debian 12       —  0.2/0.5 GB  4.0 GB   NVIDIA ?  1/0          yes     —
-  135  LXC   ct-135  stopped  debian 12       —  —/0.5 GB    4.0 GB   NVIDIA ?  0            yes     —
-  140  LXC   ct-140  run      debian 12       —  0.2/0.5 GB  4.0 GB   —         0            yes     —
-  150  LXC   ct-150  run      debian 12       —  0.2/0.5 GB  4.0 GB   —         0            yes     —
-  200  VM    vm-200  run      l26             —  —/2.0 GB    32.0 GB  pass      —            -       —
+   ID  TYPE  NAME        STATE    OS            CPU  RAM         DISK     GPU       UPD all/sec  BACKUP  AUTO
+> 131  LXC   ct-131      run      debian 12       —  0.2/0.5 GB  4.0 GB   AMD ✓     0            yes     —
+  134  LXC   openweb-ui  run      debian 12       —  0.2/0.5 GB  4.0 GB   NVIDIA ?  1/0          yes     —
+  135  LXC   ct-135      stopped  debian 12       —  —/0.5 GB    4.0 GB   NVIDIA ?  0            yes     —
+  140  LXC   ct-140      run      debian 12       —  0.2/0.5 GB  4.0 GB   —         0            yes     —
+  150  LXC   ct-150      run      debian 12       —  0.2/0.5 GB  4.0 GB   —         0            yes     —
+  200  VM    vm-200      run      l26             —  —/2.0 GB    32.0 GB  pass      —            -       —
 
                ┌ NVIDIA driver ─────────────────────────────────────────────────────────────────────────┐
                │ NVIDIA driver of the host                                                              │

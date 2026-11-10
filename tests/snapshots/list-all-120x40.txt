@@ -1,37 +1,37 @@
 pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 guests · 34 running · 13 with updates   00:16
 [All 37]   Running 34    Stopped 3    Updates 13   / search name, tag, id…                                    sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   ID  TYPE  NAME    STATE    OS               CPU  RAM         DISK     UPD all/sec  BACKUP  AUTO
-  100  LXC   ct-100  run      debian 12          —  0.2/0.5 GB  2.0 GB   0            yes     —
-  101  LXC   ct-101  run      debian 12          —  0.3/1.0 GB  3.0 GB   4/1          yes     —
-  102  LXC   ct-102  run      debian 12          —  0.2/0.5 GB  4.0 GB   2/1          yes     —
-> 103  LXC   ct-103  run      debian 12          —  0.3/1.0 GB  25.0 GB  7/2          yes     yes
-  104  LXC   ct-104  run      alpine 3.20        —  0.2/0.5 GB  6.0 GB   4/1          yes     —
-  105  LXC   ct-105  run      fedora 41          —  0.3/1.0 GB  2.0 GB   0            yes     yes
-  106  LXC   ct-106  run      debian 12          —  0.2/0.5 GB  3.0 GB   3/1          yes     yes
-  107  LXC   ct-107  run      debian 12          —  0.3/1.0 GB  4.0 GB   4/1          yes     —
-  108  LXC   ct-108  run      debian 12          —  0.2/0.5 GB  5.0 GB   2/1          yes     yes
-  109  LXC   ct-109  run      alpine 3.20        —  0.3/1.0 GB  6.0 GB   0            yes     —
-  110  LXC   ct-110  run      debian 12          —  0.2/0.5 GB  2.0 GB   4/1          yes     yes
-  111  LXC   ct-111  run      alpine 3.20        —  0.3/1.0 GB  3.0 GB   0            yes     —
-  112  LXC   ct-112  run      alpine 3.20        —  0.2/0.5 GB  4.0 GB   3/1          yes     —
-  113  LXC   ct-113  run      debian 12          —  0.3/1.0 GB  5.0 GB   0            yes     —
-  114  LXC   ct-114  run      debian 12          —  0.2/0.5 GB  6.0 GB   2/1          yes     —
-  115  LXC   ct-115  run      debian 12          —  0.3/1.0 GB  2.0 GB   0            yes     —
-  116  LXC   ct-116  run      debian 12          —  0.2/0.5 GB  3.0 GB   0            yes     yes
-  117  LXC   ct-117  stopped  debian             —  —/1.0 GB    4.0 GB   —            yes     —
-  118  LXC   ct-118  stopped  debian             —  —/0.5 GB    5.0 GB   —            yes     —
-  119  LXC   ct-119  stopped  debian             —  —/1.0 GB    6.0 GB   —            yes     yes
-  120  LXC   ct-120  run      alpine 3.20        —  0.2/0.5 GB  2.0 GB   0            yes     —
-  121  LXC   ct-121  run      debian 12          —  0.3/1.0 GB  3.0 GB   3/1          yes     —
-  122  LXC   ct-122  run      debian 12          —  0.2/0.5 GB  4.0 GB   4/1          yes     —
-  123  LXC   ct-123  run      debian 12          —  0.3/1.0 GB  5.0 GB   0            yes     yes
-  124  LXC   ct-124  run      debian 12          —  0.2/0.5 GB  6.0 GB   3/1          yes     —
-  125  LXC   ct-125  run      ubuntu 24.04       —  0.3/1.0 GB  2.0 GB   0            yes     yes
-  126  LXC   ct-126  run      alpine 3.20        —  0.2/0.5 GB  3.0 GB   0            yes     —
-  127  LXC   ct-127  run      ubuntu 24.04       —  0.3/1.0 GB  4.0 GB   0            yes     —
-  128  LXC   ct-128  run      ubuntu 24.04       —  0.2/0.5 GB  5.0 GB   0            yes     —
-  129  LXC   ct-129  run      debian 12          —  0.3/1.0 GB  6.0 GB   0            yes     —
+   ID  TYPE  NAME          STATE    OS               CPU  RAM         DISK     UPD all/sec  BACKUP  AUTO
+  100  LXC   ct-100        run      debian 12          —  0.2/0.5 GB  2.0 GB   0            yes     —
+  101  LXC   ct-101        run      debian 12          —  0.3/1.0 GB  3.0 GB   4/1          yes     —
+  102  LXC   ct-102        run      debian 12          —  0.2/0.5 GB  4.0 GB   2/1          yes     —
+> 103  LXC   ct-103        run      debian 12          —  0.3/1.0 GB  25.0 GB  7/2          yes     yes
+  104  LXC   ct-104        run      alpine 3.20        —  0.2/0.5 GB  6.0 GB   4/1          yes     —
+  105  LXC   ct-105        run      fedora 41          —  0.3/1.0 GB  2.0 GB   0            yes     yes
+  106  LXC   ct-106        run      debian 12          —  0.2/0.5 GB  3.0 GB   3/1          yes     yes
+  107  LXC   ct-107        run      debian 12          —  0.3/1.0 GB  4.0 GB   4/1          yes     —
+  108  LXC   ct-108        run      debian 12          —  0.2/0.5 GB  5.0 GB   2/1          yes     yes
+  109  LXC   ct-109        run      alpine 3.20        —  0.3/1.0 GB  6.0 GB   0            yes     —
+  110  LXC   ct-110        run      debian 12          —  0.2/0.5 GB  2.0 GB   4/1          yes     yes
+  111  LXC   ct-111        run      alpine 3.20        —  0.3/1.0 GB  3.0 GB   0            yes     —
+  112  LXC   ct-112        run      alpine 3.20        —  0.2/0.5 GB  4.0 GB   3/1          yes     —
+  113  LXC   vaultwarden1  run      debian 12          —  0.3/1.0 GB  5.0 GB   0            yes     —
+  114  LXC   llama-swap    run      debian 12          —  0.2/0.5 GB  6.0 GB   2/1          yes     —
+  115  LXC   ct-115        run      debian 12          —  0.3/1.0 GB  2.0 GB   0            yes     —
+  116  LXC   ct-116        run      debian 12          —  0.2/0.5 GB  3.0 GB   0            yes     yes
+  117  LXC   ct-117        stopped  debian             —  —/1.0 GB    4.0 GB   —            yes     —
+  118  LXC   ct-118        stopped  debian             —  —/0.5 GB    5.0 GB   —            yes     —
+  119  LXC   ct-119        stopped  debian             —  —/1.0 GB    6.0 GB   —            yes     yes
+  120  LXC   ct-120        run      alpine 3.20        —  0.2/0.5 GB  2.0 GB   0            yes     —
+  121  LXC   ct-121        run      debian 12          —  0.3/1.0 GB  3.0 GB   3/1          yes     —
+  122  LXC   ct-122        run      debian 12          —  0.2/0.5 GB  4.0 GB   4/1          yes     —
+  123  LXC   ct-123        run      debian 12          —  0.3/1.0 GB  5.0 GB   0            yes     yes
+  124  LXC   technitium    run      debian 12          —  0.2/0.5 GB  6.0 GB   3/1          yes     —
+  125  LXC   ct-125        run      ubuntu 24.04       —  0.3/1.0 GB  2.0 GB   0            yes     yes
+  126  LXC   ct-126        run      alpine 3.20        —  0.2/0.5 GB  3.0 GB   0            yes     —
+  127  LXC   ct-127        run      ubuntu 24.04       —  0.3/1.0 GB  4.0 GB   0            yes     —
+  128  LXC   uptime-kuma   run      ubuntu 24.04       —  0.2/0.5 GB  5.0 GB   0            yes     —
+  129  LXC   ct-129        run      debian 12          —  0.3/1.0 GB  6.0 GB   0            yes     —
 ▼ 7 below (next 130 ct-130)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 > 103 ct-103 · debian 12 · 7 updates (2 security) · auto: yes · [Enter] detail

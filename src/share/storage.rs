@@ -47,6 +47,8 @@ pub struct Content {
     pub used: Option<u64>,
     pub ctime: Option<u64>,
     pub notes: String,
+    /// Backup protegido (`protected`): Proxmox no deja borrarlo.
+    pub protected: bool,
 }
 
 /// Una fila de `pvesh get /nodes/<n>/lxc|qemu`: lo que muestra la GUI. Un guest apagado informa `disk = 0`.
@@ -138,6 +140,7 @@ pub fn parse_content(json: &str) -> Result<Vec<Content>, String> {
                 used: num(r.get("used")),
                 ctime: num(r.get("ctime")),
                 notes: r.get("notes").and_then(Value::as_str).unwrap_or("").to_string(),
+                protected: r.get("protected").is_some_and(|x| x.as_u64() == Some(1) || x.as_bool() == Some(true) || x.as_str() == Some("1")),
             })
         })
         .collect())
@@ -314,7 +317,7 @@ impl DiskUse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupItem {
     pub volid: String,
     pub storage: String,
@@ -322,6 +325,8 @@ pub struct BackupItem {
     pub size: u64,
     /// Sobra de un update de pxu (`pxu pre-update …`): no cuenta como backup programado.
     pub pxu: bool,
+    /// Protegido en Proxmox: pxu no ofrece borrarlo.
+    pub protected: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,6 +516,55 @@ pub fn fmt_gb(b: u64) -> String {
     }
 }
 
+/// ¿Es `volid` un backup de ESTE guest? `<storage>:backup/vzdump-<lxc|qemu>-<vmid>-…` o, en un PBS, `<storage>:backup/<ct|vm>/<vmid>/<fecha>`.
+/// Solo caracteres de nombre de archivo / fecha PBS (sin espacios, `;`, `..`): el argv va sin shell, pero se valida igual.
+pub fn backup_volid_ok(volid: &str, vmid: u32) -> bool {
+    let Some((st, rest)) = volid.split_once(':') else { return false };
+    let Some(path) = rest.strip_prefix("backup/") else { return false };
+    let safe = path.len() <= 160 && !path.contains("..") && path.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-:/".contains(&b));
+    let mine = match path.split('/').collect::<Vec<_>>().as_slice() {
+        [file] => ["vzdump-lxc-", "vzdump-qemu-"].iter().any(|p| file.strip_prefix(p).and_then(|r| r.split_once('-')).is_some_and(|(id, tail)| id == vmid.to_string() && !tail.is_empty())),
+        ["ct" | "vm", id, stamp] => *id == vmid.to_string() && !stamp.is_empty(),
+        _ => false,
+    };
+    is_pve_id(st) && safe && mine
+}
+
+/// El único comando que borra un backup: `pvesm free <volid>` (argumentos separados, sin shell).
+pub fn free_argv(volid: &str) -> [&str; 3] {
+    ["pvesm", "free", volid]
+}
+
+/// Borra el backup `b` del guest `vmid` (`pvesm free`), tras validar que es de ese guest y no está protegido; lo quita del registro de pxu si estaba.
+/// `Ok` = mensaje de la barra de estado; `Err` = el motivo (el error de `pvesm` tal cual).
+pub fn delete_backup(host: &dyn Host, vmid: u32, b: &BackupItem) -> Result<String, String> {
+    use crate::share::host::BackupDeleteOptIn;
+    if b.protected {
+        return Err(format!("{} is protected: remove the protection in Proxmox first", b.volid));
+    }
+    if !backup_volid_ok(&b.volid, vmid) {
+        return Err(format!("refused: {} is not a backup of {vmid}", b.volid));
+    }
+    let mut out: Vec<String> = Vec::new();
+    let o = ExecOpts { timeout_s: Some(120), ..ExecOpts::default() };
+    let res = {
+        let _optin = BackupDeleteOptIn::new(host, &b.volid);
+        host.host_cmd(&free_argv(&b.volid), &o, &mut out)
+    };
+    match res {
+        Ok(h) if h.code == 0 => {}
+        Ok(h) => return Err(format!("pvesm free failed (exit {}){}", h.code, out.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).fold(String::new(), |a, l| a + ": " + l))),
+        Err(e) => return Err(e.to_string()),
+    }
+    // si era un backup temporal de pxu, el registro ya no debe apuntar a él (si no se puede guardar, el borrado igualmente ocurrió)
+    let mut reg = crate::share::update::backup::Registry::load(host);
+    if !reg.tainted && reg.entries.iter().any(|e| e.vmid == vmid && e.name == b.volid) {
+        reg.entries.retain(|e| !(e.vmid == vmid && e.name == b.volid));
+        let _ = reg.save(host);
+    }
+    Ok(format!("deleted {}", b.volid))
+}
+
 /// Une lo leído con el inventario y la config: cálculos, alertas y orden de los storages.
 pub fn build(raw: &Raw, guests: &[Guest], node: &str, cfg: &Config, now: u64) -> StorageData {
     let mut d = StorageData { node: node.to_string(), now, ..Default::default() };
@@ -542,7 +596,7 @@ pub fn build(raw: &Raw, guests: &[Guest], node: &str, cfg: &Config, now: u64) ->
             Some(Ok(items)) => {
                 for c in items.iter().filter(|c| c.kind == "backup") {
                     if let Some(id) = c.vmid {
-                        backups.entry(id).or_default().push(BackupItem { volid: c.volid.clone(), storage: r.name.clone(), ctime: c.ctime, size: c.size, pxu: c.notes.starts_with("pxu pre-update") });
+                        backups.entry(id).or_default().push(BackupItem { volid: c.volid.clone(), storage: r.name.clone(), ctime: c.ctime, size: c.size, pxu: c.notes.starts_with("pxu pre-update"), protected: c.protected });
                     }
                 }
             }

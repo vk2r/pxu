@@ -1,22 +1,22 @@
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-   ID  NAME    STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
-  100  ct-100  run      debian 12         —  0.2/0.5 GB  0    yes     —
-  101  ct-101  run      debian 12         —  0.3/1.0 GB  4/1  yes     —
-  102  ct-102  run      debian 12         —  0.2/0.5 GB  2/1  yes     —
-> 103  ct-103  run      debian 12         —  0.3/1.0 GB  7/2  yes     yes
-  104  ct-104  run      alpine 3.20       —  0.2/0.5 GB  4/1  yes     —
-  105  ct-105  run      fedora 41         —  0.3/1.0 GB  0    yes     yes
-  106  ct-106  run      debian 12         —  0.2/0.5 GB  3/1  yes     yes
-  107  ct-107  run      debian 12         —  0.3/1.0 GB  4/1  yes     —
-  108  ct-108  run      debian 12         —  0.2/0.5 GB  2/1  yes     yes
-  109  ct-109  run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
-  110  ct-110  run      debian 12         —  0.2/0.5 GB  4/1  yes     yes
-  111  ct-111  run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
-  112  ct-112  run      alpine 3.20       —  0.2/0.5 GB  3/1  yes     —
-  113  ct-113  run      debian 12         —  0.3/1.0 GB  0    yes     —
-▼ 23 below (next 114 ct-114)   — filter: all · 37 guests
+   ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+  100  ct-100        run      debian 12         —  0.2/0.5 GB  0    yes     —
+  101  ct-101        run      debian 12         —  0.3/1.0 GB  4/1  yes     —
+  102  ct-102        run      debian 12         —  0.2/0.5 GB  2/1  yes     —
+> 103  ct-103        run      debian 12         —  0.3/1.0 GB  7/2  yes     yes
+  104  ct-104        run      alpine 3.20       —  0.2/0.5 GB  4/1  yes     —
+  105  ct-105        run      fedora 41         —  0.3/1.0 GB  0    yes     yes
+  106  ct-106        run      debian 12         —  0.2/0.5 GB  3/1  yes     yes
+  107  ct-107        run      debian 12         —  0.3/1.0 GB  4/1  yes     —
+  108  ct-108        run      debian 12         —  0.2/0.5 GB  2/1  yes     yes
+  109  ct-109        run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
+  110  ct-110        run      debian 12         —  0.2/0.5 GB  4/1  yes     yes
+  111  ct-111        run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
+  112  ct-112        run      alpine 3.20       —  0.2/0.5 GB  3/1  yes     —
+  113  vaultwarden1  run      debian 12         —  0.3/1.0 GB  0    yes     —
+▼ 23 below (next 114 llama-swap)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────
 > 103 ct-103 · debian 12 · 7 updates (2 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────

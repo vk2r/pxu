@@ -591,7 +591,7 @@ impl World {
             l.extend([
                 "arch: amd64".into(),
                 format!("cores: {}", c.cores),
-                format!("hostname: ct-{id}"),
+                format!("hostname: {}", guest_name(id)),
                 if id % 3 == 0 { "features: nesting=1".into() } else { "features: keyctl=1,nesting=1".into() },
                 format!("memory: {}", c.mem),
                 format!("net0: name=eth0,bridge=vmbr0,firewall=1,hwaddr=BC:24:11:2A:{:02X}:{:02X},{},type=veth", id % 256, (id * 7) % 256, c.ip),
@@ -612,7 +612,7 @@ impl World {
             l.push("unprivileged: 1".into());
             l.extend(c.extra.iter().cloned());
             for s in &c.snaps {
-                l.extend([String::new(), format!("[{s}]"), "arch: amd64".into(), format!("hostname: ct-{id}"), format!("memory: {}", c.mem), "snaptime: 1762500000".into()]);
+                l.extend([String::new(), format!("[{s}]"), "arch: amd64".into(), format!("hostname: {}", guest_name(id)), format!("memory: {}", c.mem), "snaptime: 1762500000".into()]);
             }
             put(format!("/etc/pve/nodes/{n}/lxc/{id}.conf"), l.join("\n") + "\n");
             ids.insert(id.to_string(), serde_json::json!({"node": n, "type": "lxc", "version": 1}));
@@ -850,5 +850,17 @@ impl World {
             w = w.stray_conf(s);
         }
         w
+    }
+}
+
+/// Hostname de la demo: unos cuantos realistas de 10-12 letras (para vigilar el ancho de NAME en las listas), el resto `ct-N`.
+fn guest_name(id: u32) -> String {
+    match id {
+        114 => "llama-swap".into(),
+        134 => "openweb-ui".into(),
+        124 => "technitium".into(),
+        128 => "uptime-kuma".into(),
+        113 => "vaultwarden1".into(),
+        _ => format!("ct-{id}"),
     }
 }

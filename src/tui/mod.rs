@@ -557,6 +557,15 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                                 srx = Some(spawn_storage(sc, host, &app));
                             }
                         }
+                        Action::DeleteBackup { vmid, item } => {
+                            app.status = match pxu::share::storage::delete_backup(host, vmid, &item) {
+                                Ok(m) => m,
+                                Err(e) => format!("backup not deleted: {e}"),
+                            };
+                            // relee los datos (si había una lectura en vuelo, su resultado ya es viejo: se descarta)
+                            app.storage.loading = true;
+                            srx = Some(spawn_storage(sc, host, &app));
+                        }
                         Action::OpenLog(p) => open_log(host, &mut app, &p),
                         Action::SaveLogRetention(d) => save_log_retention(host, &mut app, d),
                         Action::AskSchedule => ask_schedule_modal(host, &mut app),

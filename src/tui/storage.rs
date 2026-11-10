@@ -12,6 +12,8 @@ pub enum StorageKey {
     /// `r`: volver a leer (sin bloquear: se conserva lo ya mostrado).
     Refresh,
     Help,
+    /// `x` en el detalle: pide confirmar el borrado del backup seleccionado.
+    DeleteBackup,
 }
 
 pub struct StorageState {
@@ -24,7 +26,11 @@ pub struct StorageState {
     pub only_alerts: bool,
     /// Enter: detalle de espacio de este guest.
     pub detail: Option<u32>,
-    pub top: usize,
+    pub top: Cell<usize>,
+    /// Backup seleccionado en la sección Backups del detalle (índice en `GuestUse::backups`).
+    pub bsel: usize,
+    /// Tras mover el cursor de backups: el dibujo desplaza el detalle hasta dejarlo a la vista.
+    pub follow: Cell<bool>,
     /// Lo fija el dibujo: primera fila visible, filas que caben, alto del detalle.
     pub off: Cell<usize>,
     pub rows_h: Cell<usize>,
@@ -34,7 +40,7 @@ pub struct StorageState {
 
 impl Default for StorageState {
     fn default() -> Self {
-        StorageState { data: None, loading: false, sel: 0, sort: SortBy::Used, only_alerts: false, detail: None, top: 0, off: Cell::new(0), rows_h: Cell::new(0), body_h: Cell::new(0), detail_len: Cell::new(0) }
+        StorageState { data: None, loading: false, sel: 0, sort: SortBy::Used, only_alerts: false, detail: None, top: Cell::new(0), bsel: 0, follow: Cell::new(false), off: Cell::new(0), rows_h: Cell::new(0), body_h: Cell::new(0), detail_len: Cell::new(0) }
     }
 }
 
@@ -54,9 +60,23 @@ impl StorageState {
         self.loading = d.partial;
         self.data = Some(d);
         self.reselect(keep);
+        self.bsel = self.bsel.min(self.backups().len().saturating_sub(1));
         if self.detail.is_some_and(|v| self.data.as_ref().is_some_and(|d| !d.guests.iter().any(|g| g.vmid == v))) {
             self.detail = None;
         }
+    }
+
+    /// Backups del guest abierto en el detalle.
+    pub fn backups(&self) -> &[pxu::share::storage::BackupItem] {
+        match (self.detail, &self.data) {
+            (Some(id), Some(d)) => d.guests.iter().find(|g| g.vmid == id).map_or(&[], |g| g.backups.as_slice()),
+            _ => &[],
+        }
+    }
+
+    /// El backup seleccionado del detalle.
+    pub fn selected_backup(&self) -> Option<&pxu::share::storage::BackupItem> {
+        self.backups().get(self.bsel)
     }
 
     fn reselect(&mut self, keep: Option<u32>) {
@@ -71,7 +91,17 @@ impl StorageState {
 
     fn scroll(&mut self, d: isize) {
         let max = self.detail_len.get().saturating_sub(self.body_h.get().max(1));
-        self.top = (self.top as isize + d).clamp(0, max as isize) as usize;
+        self.top.set((self.top.get() as isize + d).clamp(0, max as isize) as usize);
+    }
+
+    /// ↑↓ en el detalle: con backups mueven el cursor de la sección Backups (el detalle lo sigue); sin ellos, desplazan.
+    fn move_backup(&mut self, d: isize) {
+        let n = self.backups().len();
+        if n == 0 {
+            return self.scroll(d);
+        }
+        self.bsel = (self.bsel as isize + d).clamp(0, n as isize - 1) as usize;
+        self.follow.set(true);
     }
 
     pub fn on_key(&mut self, k: KeyEvent) -> StorageKey {
@@ -80,13 +110,14 @@ impl StorageState {
             match k.code {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Enter => {
                     self.detail = None;
-                    self.top = 0;
+                    self.top.set(0);
                 }
-                KeyCode::Up | KeyCode::Char('k') => self.scroll(-1),
-                KeyCode::Down | KeyCode::Char('j') => self.scroll(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_backup(-1),
+                KeyCode::Down | KeyCode::Char('j') => self.move_backup(1),
+                KeyCode::Char('x') => return StorageKey::DeleteBackup,
                 KeyCode::PageUp => self.scroll(-(self.body_h.get() as isize - 1).max(1)),
                 KeyCode::PageDown => self.scroll((self.body_h.get() as isize - 1).max(1)),
-                KeyCode::Char('g') | KeyCode::Home => self.top = 0,
+                KeyCode::Char('g') | KeyCode::Home => self.top.set(0),
                 KeyCode::Char('G') | KeyCode::End => self.scroll(isize::MAX / 2),
                 KeyCode::Char('r') => return StorageKey::Refresh,
                 KeyCode::Char('?') => return StorageKey::Help,
@@ -105,7 +136,8 @@ impl StorageState {
             KeyCode::Enter | KeyCode::Char('d') => {
                 if let Some(v) = self.selected() {
                     self.detail = Some(v);
-                    self.top = 0;
+                    self.top.set(0);
+                    self.bsel = 0;
                 }
             }
             KeyCode::Char('S') => {

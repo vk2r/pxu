@@ -141,6 +141,9 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     if app.backup_modal.is_some() {
         draw_backup_modal(f, app, th, area);
     }
+    if app.backup_del.is_some() {
+        draw_backup_del_modal(f, app, th, area);
+    }
     if app.nvidia_modal.is_some() {
         draw_nvidia_modal(f, app, th, area);
     }
@@ -1125,11 +1128,11 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
         ],
         View::Logs if app.logs.viewer.is_some() => keys("Keys", vec![("↑↓ / j k", "scroll · PgUp PgDn / Space page · mouse wheel"), ("g / G", "top / end"), ("n / p", "next (older) / previous (newer) log"), ("q / Esc", "back to the list of logs"), ("?", "this help")]),
         View::Logs => keys("Keys", vec![("↑↓ / j k", "select · PgUp PgDn 10 · g / G first / last"), ("Enter", "open the log (or double click)"), ("Esc / l", "back to the main screen"), ("?", "this help · q quit")]),
-        View::Storage if app.storage.detail.is_some() => keys("Keys", vec![("↑↓ / j k", "scroll · PgUp PgDn page · g / G top / end"), ("r", "refresh"), ("Esc / q", "back to the guests"), ("?", "this help")]),
+        View::Storage if app.storage.detail.is_some() => keys("Keys", vec![("↑↓ / j k", "select a backup (the page follows) · with no backups, scroll"), ("x", "delete the selected backup (asks first; runs `pvesm free <volume>`; protected backups cannot be deleted)"), ("PgUp PgDn", "scroll a page · g / G top / end"), ("r", "refresh"), ("Esc / q", "back to the guests"), ("?", "this help")]),
         View::Storage => vec![
             ("Keys", vec![
                 ("↑↓ / j k", "select · PgUp PgDn page · g / G first / last"),
-                ("Enter / d", "space detail: disks, snapshots, backups, pre-update mode"),
+                ("Enter / d", "space detail: disks, snapshots, backups (x deletes one), pre-update mode"),
                 ("S", "cycle sort: used · alloc · % · last backup (oldest first) · id"),
                 ("f", "show only guests with alerts"),
                 ("r", "refresh (reads again; the screen keeps working)"),
@@ -1141,6 +1144,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
                 ("—", "stopped guest or not readable"),
                 ("* in SNAPS", "has pxu-* snapshots"),
                 ("LAST BACKUP", "ignores pxu pre-update leftovers"),
+                ("WHERE", "storage that holds that last backup (wide screens only)"),
                 ("Dedup (PBS)", "logical size of the backups / space used in the datastore"),
             ]),
             ("Alerts", vec![
@@ -1223,7 +1227,7 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let sections = help_sections(app);
     let w = 100.min(area.width.saturating_sub(4));
     let inner_w = (w as usize).saturating_sub(2);
-    let foot = if app.read_only { "read-only: no command that writes can run" } else { "writes only after you confirm (an update run or an auto-update change)" };
+    let foot = if app.read_only { "read-only: no command that writes can run" } else { "writes only after you confirm (an update run, an auto-update change or deleting a backup)" };
     let max_h = area.height as usize;
     // Marco 2 + pie 2 (línea en blanco + texto); si no cabe con separadores, sin ellos; si aún no, scroll.
     let mut body = help_lines(&sections, inner_w, th, true);
@@ -1520,6 +1524,21 @@ fn draw_backup_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+fn draw_backup_del_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+    let Some(m) = &app.backup_del else { return };
+    let r = centered(area, 100, (m.lines.len() as u16 + 6).min(area.height.saturating_sub(2)));
+    f.render_widget(Clear, r);
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" confirm ", th.bold())).border_style(th.accent());
+    let inner = blk.inner(r);
+    f.render_widget(blk, r);
+    let w = inner.width as usize;
+    let mut lines = vec![Line::styled(trunc(&format!(" Delete this backup of CT {}?", m.vmid), w), th.bold()), Line::default()];
+    lines.extend(m.lines.iter().map(|l| Line::styled(trunc(&format!(" {l}"), w), if l.starts_with("WARNING") { th.warn() } else { Style::default() })));
+    lines.push(Line::default());
+    lines.push(mbar(th, &[("y/Enter", "delete"), ("Esc/n", "cancel")], 2, w));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_nvidia_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let Some(m) = &app.nvidia_modal else { return };
     let body = m.lines();
@@ -1767,7 +1786,11 @@ fn draw_storage(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let st = &app.storage;
     let detail = st.detail.and_then(|id| st.data.as_ref().and_then(|d| d.guests.iter().find(|g| g.vmid == id)));
     let keys = if detail.is_some() {
-        keybar_wrap(th, &[("↑↓/PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("r", "refresh"), ("Esc/q", "back"), ("?", "help")], 2, w, 2)
+        if st.backups().is_empty() {
+            keybar_wrap(th, &[("↑↓/PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("r", "refresh"), ("Esc/q", "back"), ("?", "help")], 2, w, 2)
+        } else {
+            keybar_wrap(th, &[("↑↓", "select backup"), ("x", "delete backup"), ("PgUp/PgDn", "scroll"), ("g/G", "top/end"), ("r", "refresh"), ("Esc/q", "back"), ("?", "help")], 2, w, 2)
+        }
     } else {
         keybar_wrap(th, &[("↑↓", "move"), ("Enter", "detail"), ("S", "sort"), ("f", "filter (alerts)"), ("r", "refresh"), ("?", "help"), ("q", "back")], 2, w, 2)
     };
@@ -1804,11 +1827,20 @@ fn draw_storage(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         let span = Line::from(vec![Span::styled(trunc(&format!("{kind} · {}{loading} · ", state_label_of(g.state)), w), th.muted()), Span::styled(trunc(&alerts, w.saturating_sub(14)), if g.alerts.is_empty() { th.ok() } else { th.warn() })]);
         f.render_widget(Paragraph::new(span), parts[1]);
         f.render_widget(rule_line(), parts[2]);
-        let lines = storage_detail_lines(g, d, th, w);
+        let (lines, cur) = storage_detail_lines(g, d, th, w, st.bsel);
         let h = parts[3].height as usize;
         st.body_h.set(h);
         st.detail_len.set(lines.len());
-        let top = st.top.min(lines.len().saturating_sub(h));
+        let mut top = st.top.get().min(lines.len().saturating_sub(h));
+        if st.follow.take() && !st.backups().is_empty() {
+            // el cursor de Backups a la vista
+            if cur < top {
+                top = cur;
+            } else if cur >= top + h {
+                top = cur + 1 - h;
+            }
+        }
+        st.top.set(top);
         f.render_widget(Paragraph::new(lines.iter().skip(top).take(h).cloned().collect::<Vec<_>>()), parts[3]);
         f.render_widget(rule_line(), parts[4]);
         f.render_widget(Paragraph::new(trunc(&status_text(format!("lines {}-{} of {}", top + 1, (top + h).min(lines.len()), lines.len())), w)).style(th.accent()), parts[5]);
@@ -1857,17 +1889,23 @@ fn draw_storage(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     );
     // ancho fijo de la fila: 65 con STATE, 57 sin él (+ nombre y alerta); la alerta se queda con lo que sobra
     let longest = d.guests.iter().map(|g| g.name.chars().count()).max().unwrap_or(0);
-    let name_w = if wide { longest.clamp(8, 20).min(w.saturating_sub(65 + 30).max(8)) } else { longest.clamp(8, 16).min(w.saturating_sub(64).max(8)) };
-    let row_text = |marker: &str, id: &str, name: &str, state: &str, disk: &str, pct: &str, snaps: &str, last: &str, bsize: &str, bk: &str, alert: &str| {
-        let alert_w = if wide { w.saturating_sub(65 + name_w) } else { 6 };
+    // WHERE (storage del último backup): solo en pantallas anchas, como STATE; el ancho sigue al nombre más largo
+    let where_w = if wide { d.guests.iter().filter_map(|g| g.last_backup()).map(|b| b.storage.chars().count()).max().unwrap_or(0).clamp(5, 15) } else { 0 };
+    let name_w = if wide { longest.clamp(8, 20).min(w.saturating_sub(65 + where_w + 1 + 14).max(8)) } else { longest.clamp(8, 16).min(w.saturating_sub(64).max(8)) };
+    let row_text = |marker: &str, id: &str, name: &str, state: &str, disk: &str, pct: &str, snaps: &str, last: &str, wher: &str, bsize: &str, bk: &str, alert: &str| {
+        let alert_w = if wide { w.saturating_sub(65 + where_w + 1 + name_w) } else { 6 };
         let mut s = format!("{marker}{} {}", right(id, 4), left(name, name_w));
         if wide {
             s += &format!(" {}", left(state, 7));
         }
-        s += &format!(" {} {} {} {} {} {} {}", right(disk, 11), right(pct, 4), right(snaps, 5), left(last, 11), right(bsize, 7), left(bk, 6), left(alert, alert_w));
+        s += &format!(" {} {} {} {}", right(disk, 11), right(pct, 4), right(snaps, 5), left(last, 11));
+        if wide {
+            s += &format!(" {}", left(&trunc(wher, where_w), where_w));
+        }
+        s += &format!(" {} {} {}", right(bsize, 7), left(bk, 6), left(alert, alert_w));
         trunc(&s, w)
     };
-    f.render_widget(Paragraph::new(row_text(" ", "ID", "NAME", "STATE", "USED/ALLOC", "%", "SNAPS", "LAST BACKUP", "BK SIZE", "BACKUP", "ALERT")).style(th.bold()), parts[4]);
+    f.render_widget(Paragraph::new(row_text(" ", "ID", "NAME", "STATE", "USED/ALLOC", "%", "SNAPS", "LAST BACKUP", "WHERE", "BK SIZE", "BACKUP", "ALERT")).style(th.bold()), parts[4]);
     let list = d.view(st.sort, st.only_alerts);
     let h = parts[5].height as usize;
     st.rows_h.set(h);
@@ -1899,6 +1937,7 @@ fn draw_storage(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
                 &pct_text(g.pct()),
                 &snaps,
                 &if d.partial { "…".to_string() } else { last.and_then(|b| b.ctime).map_or("—".to_string(), |t| pxu::share::storage::when(Some(t), d.now)[..10].to_string()) },
+                &if d.partial { "…".to_string() } else { last.map_or("—".to_string(), |b| b.storage.clone()) },
                 &if d.partial { "…".to_string() } else { last.map_or("—".to_string(), |b| pxu::share::storage::fmt_gb(b.size)) },
                 backup_cell(g.kind, &g.pre_update),
                 &alert,
@@ -1970,7 +2009,7 @@ fn state_label_of(s: RunState) -> &'static str {
 }
 
 /// Detalle de espacio de un guest: discos, snapshots (`pxu-*` marcados), backups de todos los storages y el modo previo al update.
-fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::storage::StorageData, th: &Theme, w: usize) -> Vec<Line<'static>> {
+fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::storage::StorageData, th: &Theme, w: usize, bsel: usize) -> (Vec<Line<'static>>, usize) {
     use pxu::share::storage::{fmt_gb, when};
     const SNAP_PREFIX_NOTE: &str = "(pxu pre-update snapshot)";
     let mut v: Vec<Line<'static>> = vec![];
@@ -2002,9 +2041,17 @@ fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::stora
     if g.backups.is_empty() {
         v.push(l("  none found".into()));
     }
-    for b in &g.backups {
-        let tag = if b.pxu { "(pxu pre-update) " } else { "" };
-        v.push(l(format!("  {:<18} {:>7}  {:<10} {tag}{}", when(b.ctime, d.now), fmt_gb(b.size), b.storage, b.volid.split_once(':').map_or(b.volid.as_str(), |x| x.1))));
+    let mut cur = 0;
+    for (i, b) in g.backups.iter().enumerate() {
+        let tag = format!("{}{}", if b.protected { "(protected) " } else { "" }, if b.pxu { "(pxu pre-update) " } else { "" });
+        let on = i == bsel.min(g.backups.len() - 1);
+        let text = format!("{} {:<18} {:>7}  {:<10} {tag}{}", if on { " >" } else { "  " }, when(b.ctime, d.now), fmt_gb(b.size), b.storage, b.volid.split_once(':').map_or(b.volid.as_str(), |x| x.1));
+        if on {
+            cur = v.len();
+            v.push(Line::styled(trunc(&text, w), th.sel()));
+        } else {
+            v.push(l(text));
+        }
     }
     v.push(Line::default());
     v.push(Line::styled(rule("Pre-update backup (pxu)", w), th.muted()));
@@ -2014,7 +2061,7 @@ fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::stora
     } else {
         v.push(l("  n/a: pxu updates LXC containers only".into()));
     }
-    v
+    (v, cur)
 }
 
 /// `L` en Config: días de retención (0 = no borrar nunca).
