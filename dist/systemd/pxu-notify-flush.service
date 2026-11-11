@@ -1,0 +1,10 @@
+[Unit]
+Description=pxu: resend queued notifications
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pxu notify-flush
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=5min

@@ -264,6 +264,8 @@ impl Host for RealHost {
         if plan.install_units {
             write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-update.service"), SERVICE_UNIT)?;
             write_unit_atomic(&Path::new(UNIT_DIR).join(TIMER_NAME), TIMER_UNIT)?;
+            write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-notify-flush.service"), FLUSH_SERVICE_UNIT)?;
+            write_unit_atomic(&Path::new(UNIT_DIR).join(FLUSH_TIMER_NAME), FLUSH_TIMER_UNIT)?;
         }
         if let Some(e) = &plan.on_calendar {
             let e = check_expr(e).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -271,6 +273,9 @@ impl Host for RealHost {
         }
         systemctl(&["daemon-reload"])?;
         systemctl(&[if plan.enable { "enable" } else { "disable" }, "--now", TIMER_NAME])?;
+        if plan.install_units && plan.enable {
+            systemctl(&["enable", "--now", FLUSH_TIMER_NAME])?;
+        }
         Ok(())
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {

@@ -194,7 +194,7 @@ Solo con `[update] host_nvidia_auto = true` (host) y `[[ct]] nvidia_auto = true`
 | `cli` | el CLI `apprise` con las URLs en la variable `APPRISE_URLS` |
 | `none` | sin avisos |
 
-`pxu` nunca instala Python ni pip. Los secretos van **fuera de argv**: a `curl` se le pasa su configuración y el cuerpo por stdin (`curl --config -`). Timeout `timeout_s` (10 s) y reintentos con las esperas de `retry_delays_ms` (por defecto 2 s y 8 s). Los mensajes de error se limpian de claves y URLs.
+`pxu` nunca instala Python ni pip. Los secretos van **fuera de argv**: a `curl` se le pasa su configuración y el cuerpo por stdin (`curl --config -`). Timeout `timeout_s` (10 s) y reintentos con las esperas de `retry_delays_ms` (por defecto 5 s, 30 s, 2 min y 5 min, ~7,5 min), solo ante errores transitorios (fallo de curl, HTTP 408/424/429/5xx); otro 4xx (clave o petición inválida) no se reintenta. `pxu check --notify` usa solo las dos primeras esperas para no demorar el update que sigue. Los mensajes de error se limpian de claves y URLs.
 
 ### 4.2 Eventos (`[apprise] on`)
 
@@ -209,11 +209,11 @@ Nunca se mandan dos avisos por la misma corrida. Con todos los eventos en `on` (
 
 ### 4.3 Cola
 
-Si el envío falla, el mensaje se guarda en `/var/lib/pxu/outbox/` (un JSON por mensaje) y se reintenta al final de la corrida siguiente. Máximo 50 mensajes y 7 días.
+Si el envío falla, el mensaje se guarda en `/var/lib/pxu/outbox/` (un JSON por mensaje) y se reintenta al final de la corrida siguiente y cada 15 minutos con `pxu notify-flush` (unidades `pxu-notify-flush.service` + `.timer`, `OnCalendar=*:0/15`, `Persistent=true`, instaladas por `install.sh --timer` y por la tecla `S` de la TUI). `pxu notify-flush` solo escribe en la cola: imprime `outbox: N sent, M still queued`, sale 0 si la cola queda vacía y 5 si queda algo, y con la cola vacía no toca la red. Máximo 50 mensajes y 7 días.
 
 ### 4.4 Formato del aviso
 
-Cada corrida de update (timer, `pxu update` o la TUI) termina con **un solo aviso**: una tabla Markdown (`Upgrades | Result | Packages | GPU driver | Time | Details | Manual`, el host primero y luego cada CT, también los fallidos y omitidos) bajo el título `pxu: update run on <host> — N ok, N warn, N failed · <dur>` (+ `STOPPED` si se detuvo, + `· NVIDIA failed`). Con más de 25 filas van primero las que no están ok, luego hasta 25 ok y `+N more ok (see log)`. El nivel del aviso es success, warning o failure según el peor resultado.
+Cada corrida de update (timer, `pxu update` o la TUI) termina con **un solo aviso**: una tabla Markdown (`Upgrades | Result | Packages | GPU driver | Time | Details | Manual`, el host primero y luego cada CT, también los fallidos y omitidos) bajo el título `pxu: update run on <host> — N ok, N warn, N failed · <dur>` (+ `STOPPED` si se detuvo, + `· NVIDIA failed`). Con más de 25 filas van primero las que no están ok, luego hasta 25 ok y `+N more ok (see log)`. La columna `Manual` solo aparece si alguna fila tiene algo que hacer a mano. El nivel del aviso es success, warning o failure según el peor resultado.
 
 - Evento `run_summary`: se envía siempre al acabar la corrida. Evento `update_failed`: si solo está este (sin `run_summary`), el mismo aviso se envía solo cuando algún CT o el driver NVIDIA falló. Las configs viejas siguen valiendo.
 
@@ -275,7 +275,7 @@ urls = []                     # modo stateless / CLI
 tag = ""
 on = ["updates_found", "update_failed", "run_summary", "check_error"]
 timeout_s = 10
-retry_delays_ms = [2000, 8000]
+retry_delays_ms = [5000, 30000, 120000, 300000]
 
 [ui]
 columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto", "backup"]   # opcionales: type os cpu ram disk tags gpu upd auto backup (tags oculta por defecto)
@@ -312,6 +312,7 @@ pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
 pxu update --host [--yes]
 pxu config check
 pxu notify-test
+pxu notify-flush
 ```
 
 - `update` sin argumentos actualiza los CT con `auto_update` que tengan un chequeo positivo reciente. Con `[update] host_auto`, empieza por el host. `--yes` / `-y` omite las confirmaciones (el timer lo usa); `--no-notify` suprime el aviso.
@@ -326,7 +327,7 @@ pxu notify-test
 | `0` | todos | OK / sin updates / aviso enviado |
 | `2` | todos | uso incorrecto, config inválida o permisos |
 | `3` | `update` | otra corrida en curso |
-| `5` | `notify-test` | el envío falló |
+| `5` | `notify-test`, `notify-flush` | el envío falló / quedan avisos en cola |
 | `10` | `check` | hay updates |
 | `12` | `check` | al menos un CT falló al chequearse (prevalece sobre 10) |
 | `20` | `update` | corrida con fallos parciales |
@@ -355,6 +356,8 @@ OnCalendar=*-*-* 04:30
 RandomizedDelaySec=15m
 Persistent=true
 ```
+
+`dist/systemd/pxu-notify-flush.service` (`pxu notify-flush`, `Nice=10`, `IOSchedulingClass=idle`, `TimeoutStartSec=5min`) y `pxu-notify-flush.timer` (`OnCalendar=*:0/15`, `Persistent=true`) reenvían los avisos en cola; se instalan y activan junto con el timer de update.
 
 La tecla `S` de la TUI guarda otro horario como un drop-in `pxu-update.timer.d` que reemplaza `OnCalendar`; `install.sh --uninstall` lo borra. El log de cada corrida programada y su retención: §7.
 

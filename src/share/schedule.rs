@@ -6,6 +6,9 @@ pub const UNIT_DIR: &str = "/etc/systemd/system";
 pub const TIMER_NAME: &str = "pxu-update.timer";
 pub const SERVICE_UNIT: &str = include_str!("../../dist/systemd/pxu-update.service");
 pub const TIMER_UNIT: &str = include_str!("../../dist/systemd/pxu-update.timer");
+pub const FLUSH_TIMER_NAME: &str = "pxu-notify-flush.timer";
+pub const FLUSH_SERVICE_UNIT: &str = include_str!("../../dist/systemd/pxu-notify-flush.service");
+pub const FLUSH_TIMER_UNIT: &str = include_str!("../../dist/systemd/pxu-notify-flush.timer");
 pub const DROPIN_DIR: &str = "/etc/systemd/system/pxu-update.timer.d";
 pub const DROPIN_PATH: &str = "/etc/systemd/system/pxu-update.timer.d/schedule.conf";
 

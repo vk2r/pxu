@@ -7,7 +7,7 @@ usage() {
     cat <<'USAGE'
 Usage: ./install.sh [--timer] [--force] [--uninstall [--purge]] [path-to-binary]
   path-to-binary   defaults to ./pxu next to the script, else target/release/pxu
-  --timer          install and enable pxu-update.timer (systemd)
+  --timer          install and enable pxu-update.timer and pxu-notify-flush.timer (systemd)
   --force          do not require the machine to be Proxmox
   --uninstall      remove the binary and units; keep /etc/pxu and /var/lib/pxu
   --purge          with --uninstall, also delete /etc/pxu, /var/lib/pxu and /var/log/pxu
@@ -36,7 +36,7 @@ done
 DESTDIR=${DESTDIR:-}
 bindir=$DESTDIR/usr/local/bin
 unitdir=$DESTDIR/etc/systemd/system
-units="pxu-update.service pxu-update.timer"
+units="pxu-update.service pxu-update.timer pxu-notify-flush.service pxu-notify-flush.timer"
 dirs="$DESTDIR/etc/pxu $DESTDIR/var/lib/pxu $DESTDIR/var/log/pxu"
 
 if [ -z "$DESTDIR" ]; then
@@ -54,6 +54,9 @@ systemctl_do() {
 if [ "$uninstall" = 1 ]; then
     if [ -f "$unitdir/pxu-update.timer" ]; then
         systemctl_do disable --now pxu-update.timer 2>/dev/null || true
+    fi
+    if [ -f "$unitdir/pxu-notify-flush.timer" ]; then
+        systemctl_do disable --now pxu-notify-flush.timer 2>/dev/null || true
     fi
     for u in $units; do rm -f "$unitdir/$u"; done
     # drop-in with the schedule the TUI saves (S key)
@@ -104,6 +107,7 @@ if [ "$timer" = 1 ]; then
     for u in $units; do install -m 0644 "$src/$u" "$unitdir/$u"; done
     systemctl_do daemon-reload
     systemctl_do enable --now pxu-update.timer
-    say "pxu-update timer enabled"
+    systemctl_do enable --now pxu-notify-flush.timer
+    say "pxu-update and pxu-notify-flush timers enabled"
 fi
 say "done"

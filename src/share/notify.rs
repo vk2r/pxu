@@ -31,7 +31,7 @@ pub struct AppriseCfg {
     pub on: Vec<String>,
     #[serde(default = "d_timeout")]
     pub timeout_s: u64,
-    /// Esperas entre reintentos (ms). Por defecto 2 s y 8 s.
+    /// Esperas entre reintentos (ms) de errores transitorios. Por defecto 5 s, 30 s, 2 min y 5 min (~7,5 min).
     #[serde(default = "d_retry")]
     pub retry_delays_ms: Vec<u64>,
 }
@@ -49,7 +49,7 @@ fn d_timeout() -> u64 {
     10
 }
 fn d_retry() -> Vec<u64> {
-    vec![2000, 8000]
+    vec![5_000, 30_000, 120_000, 300_000]
 }
 
 impl Default for AppriseCfg {
@@ -196,17 +196,32 @@ pub fn send_once(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transpo
     }
 }
 
-/// Envío con reintentos (esperas de `retry_delays_ms`).
-pub fn send(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transport, String> {
+/// ¿El error merece otro intento? Un 4xx de Apprise (salvo 408/424/429) es de configuración: reintentar no lo arregla.
+fn transient(err: &str) -> bool {
+    let Some(i) = err.find("returned error: ") else { return true };
+    let code: u32 = err[i + 16..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0);
+    matches!(code, 408 | 424 | 429) || code >= 500 || code == 0
+}
+
+/// Envío con reintentos: `delays` (ms) entre intentos, solo si el fallo es transitorio.
+pub fn send_with(host: &dyn Host, c: &AppriseCfg, m: &Message, delays: &[u64]) -> Result<Transport, String> {
     let mut last = send_once(host, c, m);
-    for d in &c.retry_delays_ms {
-        if last.is_ok() || resolve(host, c) == Transport::None {
-            break;
+    for d in delays {
+        match &last {
+            Ok(_) => break,
+            Err(e) if !transient(e) => break,
+            _ if resolve(host, c) == Transport::None => break,
+            _ => {}
         }
         std::thread::sleep(std::time::Duration::from_millis(*d));
         last = send_once(host, c, m);
     }
     last
+}
+
+/// Envío con todas las esperas de `retry_delays_ms`.
+pub fn send(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transport, String> {
+    send_with(host, c, m, &c.retry_delays_ms)
 }
 
 // ---------------------------------------------------------------- cola (outbox)
@@ -254,7 +269,22 @@ pub fn enqueue(host: &dyn Host, m: &Message) -> std::io::Result<()> {
 }
 
 /// Reintenta la cola; devuelve (enviados, pendientes). Un mensaje ilegible se descarta.
+/// Si otro proceso ya la está vaciando (`pxu-outbox.lock` tomado) no envía nada y devuelve (0, pendientes).
 pub fn flush_outbox(host: &dyn Host, c: &AppriseCfg) -> (usize, usize) {
+    try_flush_outbox(host, c).unwrap_or_else(|| (0, outbox_len(host)))
+}
+
+/// Como `flush_outbox`, pero `None` si el lock de la cola está tomado por otro proceso (evita enviar el mismo aviso dos veces).
+/// Si el host no permite locks, se vacía igualmente (mejor un posible duplicado que perder el aviso).
+fn try_flush_outbox(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
+    let _lock = match host.try_lock(&host.lock_dir().join("pxu-outbox.lock"), true) {
+        Ok(Some(g)) => Some(g),
+        Ok(None) => return None,
+        Err(e) => {
+            eprintln!("pxu: outbox lock unavailable: {e}; flushing without it");
+            None
+        }
+    };
     let mut files = outbox_files(host);
     files.sort();
     let (mut sent, mut left) = (0, 0);
@@ -274,7 +304,15 @@ pub fn flush_outbox(host: &dyn Host, c: &AppriseCfg) -> (usize, usize) {
             left += 1;
         }
     }
-    (sent, left)
+    Some((sent, left))
+}
+
+/// `pxu notify-flush`: solo vacía la cola. Devuelve (enviados, pendientes), o `None` si otro proceso ya la está vaciando.
+pub fn notify_flush(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
+    if outbox_len(host) == 0 || resolve(host, c) == Transport::None {
+        return Some((0, outbox_len(host)));
+    }
+    try_flush_outbox(host, c)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,10 +324,14 @@ pub enum Outcome {
 
 /// Envía; si falla, encola. Con transporte `none` no hace nada.
 pub fn notify(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Outcome {
+    notify_with(host, c, m, &c.retry_delays_ms)
+}
+
+fn notify_with(host: &dyn Host, c: &AppriseCfg, m: &Message, delays: &[u64]) -> Outcome {
     if resolve(host, c) == Transport::None {
         return Outcome::Disabled;
     }
-    match send(host, c, m) {
+    match send_with(host, c, m, delays) {
         Ok(t) => Outcome::Sent(t.label()),
         Err(e) => {
             let _ = enqueue(host, m);
@@ -370,7 +412,7 @@ pub fn notify_check(host: &dyn Host, c: &AppriseCfg, report: &Report) -> Vec<Str
         lines.push(format!("outbox: {sent} sent, {left} still queued"));
     }
     for (m, fps) in check_messages(report, c, &st) {
-        match notify(host, c, &m) {
+        match notify_with(host, c, &m, &c.retry_delays_ms[..c.retry_delays_ms.len().min(2)]) {
             Outcome::Sent(t) => lines.push(format!("{}: sent via {t}", m.event)),
             Outcome::Queued(e) => lines.push(format!("{}: send failed ({e}); queued", m.event)),
             Outcome::Disabled => {
@@ -531,47 +573,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    struct Split<'a>(&'a PathHost, MockHost);
+    impl Host for Split<'_> {
+        fn try_lock(&self, p: &Path, create: bool) -> std::io::Result<Option<crate::share::host::LockGuard>> {
+            self.1.try_lock(p, create)
+        }
+        fn file_meta(&self, _: &Path) -> std::io::Result<crate::share::host::FileMeta> {
+            Err(std::io::ErrorKind::Unsupported.into())
+        }
+        fn read_file(&self, p: &Path) -> io::Result<Vec<u8>> {
+            self.1.read_file(p)
+        }
+        fn read_dir(&self, p: &Path) -> io::Result<Vec<PathBuf>> {
+            self.1.read_dir(p)
+        }
+        fn exists(&self, p: &Path) -> bool {
+            self.1.exists(p)
+        }
+        fn guest_exec(&self, v: u32, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> {
+            self.1.guest_exec(v, a, o, s)
+        }
+        fn host_cmd(&self, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> {
+            self.0.host_cmd(a, o, s)
+        }
+        fn write_file(&self, p: &Path, d: &[u8]) -> io::Result<()> {
+            self.1.write_file(p, d)
+        }
+        fn remove_file(&self, p: &Path) -> io::Result<()> {
+            self.1.remove_file(p)
+        }
+        fn lock_dir(&self) -> &Path {
+            self.1.lock_dir()
+        }
+        fn now(&self) -> std::time::SystemTime {
+            self.1.now()
+        }
+    }
+
     #[test]
     fn failure_is_queued_then_flushed_when_curl_recovers() {
         let (dir, _log) = fake_curl("fail", 7);
         let h = PathHost(RealHost::new(), dir.clone());
-        // la cola real escribe en /var/lib/pxu: usamos un MockHost para el FS y el PathHost solo para curl
-        struct Split<'a>(&'a PathHost, MockHost);
-        impl Host for Split<'_> {
-            fn try_lock(&self, _: &Path, _: bool) -> std::io::Result<Option<crate::share::host::LockGuard>> {
-                Err(std::io::ErrorKind::Unsupported.into())
-            }
-            fn file_meta(&self, _: &Path) -> std::io::Result<crate::share::host::FileMeta> {
-                Err(std::io::ErrorKind::Unsupported.into())
-            }
-                        fn read_file(&self, p: &Path) -> io::Result<Vec<u8>> {
-                self.1.read_file(p)
-            }
-            fn read_dir(&self, p: &Path) -> io::Result<Vec<PathBuf>> {
-                self.1.read_dir(p)
-            }
-            fn exists(&self, p: &Path) -> bool {
-                self.1.exists(p)
-            }
-            fn guest_exec(&self, v: u32, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> {
-                self.1.guest_exec(v, a, o, s)
-            }
-            fn host_cmd(&self, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> {
-                self.0.host_cmd(a, o, s)
-            }
-            fn write_file(&self, p: &Path, d: &[u8]) -> io::Result<()> {
-                self.1.write_file(p, d)
-            }
-            fn remove_file(&self, p: &Path) -> io::Result<()> {
-                self.1.remove_file(p)
-            }
-            fn lock_dir(&self) -> &Path {
-                self.1.lock_dir()
-            }
-            fn now(&self) -> std::time::SystemTime {
-                self.1.now()
-            }
-        }
+        // la cola real escribe en /var/lib/pxu: usamos un MockHost para el FS y el PathHost solo para curl (`Split`)
         let s = Split(&h, World::demo().build());
         let c = api("k");
         let o = notify(&s, &c, &msg());
@@ -585,6 +628,134 @@ mod tests {
         s2.1.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
         assert_eq!(flush_outbox(&s2, &c), (1, 0));
         assert_eq!(outbox_len(&s2), 0);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    /// curl falso: las primeras `fails` llamadas salen con `exit` (y el mensaje de `--fail` si es 22), luego responde OK.
+    fn flaky_curl(tag: &str, fails: u32, exit: i32, msg: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("pxu-flaky-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let count = dir.join("count");
+        let script = format!(
+            "#!/bin/sh\ncat >/dev/null\nn=$(cat '{0}' 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > '{0}'\nif [ $n -le {1} ]; then echo '{3}'; exit {2}; fi\necho '{{\"success\":true}}'\n",
+            count.display(), fails, exit, msg
+        );
+        let p = dir.join("curl");
+        std::fs::write(&p, script).unwrap();
+        std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        (dir, count)
+    }
+    fn calls(count: &Path) -> u32 {
+        std::fs::read_to_string(count).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+    }
+
+    #[test]
+    fn defaults_cover_about_ten_minutes() {
+        let total: u64 = AppriseCfg::default().retry_delays_ms.iter().sum();
+        assert_eq!(AppriseCfg::default().retry_delays_ms, vec![5_000, 30_000, 120_000, 300_000]);
+        assert!((400_000..=700_000).contains(&total), "{total}");
+    }
+
+    #[test]
+    fn transient_failures_are_retried_until_the_host_answers() {
+        let (dir, count) = flaky_curl("424", 3, 22, "curl: (22) The requested URL returned error: 424");
+        let h = ReadOnlyHost::new(PathHost(RealHost::new(), dir.clone()));
+        let mut c = api("k");
+        c.retry_delays_ms = vec![1, 1, 1, 1];
+        assert_eq!(send(&h, &c, &msg()), Ok(Transport::Api));
+        assert_eq!(calls(&count), 4, "3 failures + 1 success");
+        // sin reintentos suficientes falla tras 1 + N intentos
+        let (dir2, count2) = flaky_curl("conn", 9, 7, "curl: (7) Failed to connect");
+        let h2 = ReadOnlyHost::new(PathHost(RealHost::new(), dir2.clone()));
+        c.retry_delays_ms = vec![1, 1];
+        assert!(send(&h2, &c, &msg()).is_err());
+        assert_eq!(calls(&count2), 3);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    #[test]
+    fn a_400_or_401_is_not_retried() {
+        for code in ["400", "401"] {
+            let (dir, count) = flaky_curl(code, 9, 22, &format!("curl: (22) The requested URL returned error: {code}"));
+            let h = ReadOnlyHost::new(PathHost(RealHost::new(), dir.clone()));
+            let mut c = api("k");
+            c.retry_delays_ms = vec![1, 1, 1];
+            assert!(send(&h, &c, &msg()).is_err());
+            assert_eq!(calls(&count), 1, "{code}: one attempt only");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        assert!(transient("curl exited with 22: curl: (22) The requested URL returned error: 503"));
+        assert!(!transient("curl exited with 22: curl: (22) The requested URL returned error: 404"));
+    }
+
+    #[test]
+    fn no_transport_does_not_sleep_or_retry() {
+        let h = ReadOnlyHost::new(World::demo().build());
+        let c = AppriseCfg { retry_delays_ms: vec![60_000], ..Default::default() };
+        let t0 = std::time::Instant::now();
+        assert_eq!(notify(&h, &c, &msg()), Outcome::Disabled);
+        assert!(send(&h, &c, &msg()).is_err());
+        assert!(t0.elapsed().as_secs() < 5);
+    }
+
+    #[test]
+    fn flush_outbox_sends_nothing_while_the_outbox_lock_is_held() {
+        let (dir, count) = flaky_curl("flush-lock", 0, 0, "");
+        let h = PathHost(RealHost::new(), dir.clone());
+        let s = Split(&h, World::demo().build());
+        let c = api("k");
+        s.1.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        let guard = s.try_lock(&s.lock_dir().join("pxu-outbox.lock"), true).unwrap().expect("free");
+        assert_eq!(flush_outbox(&s, &c), (0, 1));
+        assert_eq!(notify_flush(&s, &c), None);
+        assert_eq!(calls(&count), 0, "no curl while another process flushes");
+        assert_eq!(outbox_len(&s), 1, "queue untouched");
+        drop(guard);
+        assert_eq!(flush_outbox(&s, &c), (1, 0));
+        assert_eq!(calls(&count), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn flush_outbox_respects_the_outbox_lock_under_read_only_host() {
+        let (dir, count) = flaky_curl("flush-ro", 0, 0, "");
+        let h = PathHost(RealHost::new(), dir.clone());
+        let ro = ReadOnlyHost::new(Split(&h, World::demo().build()));
+        let c = api("k");
+        ro.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        let outbox_lock = ro.lock_dir().join("pxu-outbox.lock");
+        let guard = ro.try_lock(&outbox_lock, true).unwrap().expect("allowed without update opt-in");
+        assert!(ro.try_lock(&ro.lock_dir().join("pxu-run.lock"), true).is_err(), "other locks stay refused");
+        assert_eq!(flush_outbox(&ro, &c), (0, 1));
+        assert_eq!(calls(&count), 0, "no curl while the lock is held");
+        assert_eq!(outbox_len(&ro), 1, "queue untouched");
+        drop(guard);
+        assert_eq!(flush_outbox(&ro, &c), (1, 0));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn notify_flush_empties_the_queue_on_success_and_keeps_it_on_failure() {
+        let (dir, count) = flaky_curl("flush-fail", 99, 7, "curl: (7) Failed to connect");
+        let h = PathHost(RealHost::new(), dir.clone());
+        let s = Split(&h, World::demo().build());
+        let c = api("k");
+        s.1.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        s.1.write_file(&Path::new(OUTBOX_DIR).join("2-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        assert_eq!(notify_flush(&s, &c), Some((0, 2)), "failing: both stay queued");
+        assert_eq!(calls(&count), 1, "stops at the first failure");
+        let (dir2, count2) = flaky_curl("flush-ok", 0, 0, "");
+        let h2 = PathHost(RealHost::new(), dir2.clone());
+        let s2 = Split(&h2, World::demo().build());
+        s2.1.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        assert_eq!(notify_flush(&s2, &c), Some((1, 0)));
+        assert_eq!(outbox_len(&s2), 0);
+        // cola vacía: ni una llamada a curl
+        assert_eq!(notify_flush(&s2, &c), Some((0, 0)));
+        assert_eq!(calls(&count2), 1, "empty queue touches no network");
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(dir2);
     }

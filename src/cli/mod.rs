@@ -180,6 +180,28 @@ pub fn cmd_check(host: &dyn Host, only: &[u32], refresh: Option<bool>, json: boo
     rep.exit_code()
 }
 
+/// `pxu notify-flush`: reenvía la cola. 0 = vacía (o la está vaciando otro proceso), 5 = quedan avisos.
+pub fn cmd_notify_flush(host: &dyn Host) -> i32 {
+    let mut cfg = match Config::load(host) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("pxu: {e}");
+            return EXIT_USAGE;
+        }
+    };
+    cfg.apprise.apply_env(std::env::var("APPRISE_URLS").ok().as_deref());
+    let Some((sent, left)) = notify::notify_flush(host, &cfg.apprise) else {
+        println!("outbox: busy, {} queued", notify::outbox_len(host));
+        return 0;
+    };
+    println!("outbox: {sent} sent, {left} still queued");
+    if left == 0 {
+        0
+    } else {
+        5
+    }
+}
+
 /// `pxu notify-test`: un aviso de prueba por el transporte configurado. 0 enviado · 2 sin transporte/config · 5 envío fallido.
 pub fn cmd_notify_test(host: &dyn Host) -> i32 {
     let mut cfg = match Config::load(host) {

@@ -41,7 +41,7 @@ src/share/            what both use:
   host/               real and read-only Host
   mock/               in-memory simulated Proxmox (tests / --features mock only)
 install.sh            installer for the Proxmox host
-dist/systemd/         pxu-update.service and .timer
+dist/systemd/         pxu-update and pxu-notify-flush (.service and .timer)
 tests/snapshots/      TUI captures
 docs/             ARCHITECTURE.md, DESIGN.md (TUI) and SECURITY-REVIEW.md
 ```
@@ -64,7 +64,7 @@ src/
    ├─ host/{mod,real,readonly}.rs       # Host trait, RealHost, ReadOnlyHost
    └─ mock/{mod,scenario}.rs            # MockHost + World builder
 tests/snapshots/           # TUI captures (80×24 and 120×40)
-dist/systemd/              # pxu-update.service and pxu-update.timer
+dist/systemd/              # pxu-update and pxu-notify-flush units
 install.sh   mise.toml
 ```
 

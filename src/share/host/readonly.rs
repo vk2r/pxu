@@ -243,7 +243,9 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         self.inner.lock_dir()
     }
     fn try_lock(&self, p: &Path, create: bool) -> io::Result<Option<LockGuard>> {
-        if !(self.update_on() || self.host_update_on()) || !lock_path_ok(self.inner.lock_dir(), p, create) {
+        // La cola de avisos se vacía también en solo lectura (`notify-flush`, `check --notify`): su lock no necesita opt-in.
+        let outbox = create && p == self.inner.lock_dir().join("pxu-outbox.lock");
+        if !(outbox || self.update_on() || self.host_update_on()) || !lock_path_ok(self.inner.lock_dir(), p, create) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("read-only mode: refused lock {}", p.display())));
         }
         self.inner.try_lock(p, create)

@@ -7,7 +7,7 @@ use crate::share::notify::{Level, Message};
 
 /// Tope de filas del aviso: primero todas las que no están bien, luego las ok hasta completarlo.
 pub const MAX_ROWS: usize = 25;
-const HEADER: &str = "| Upgrades | Result | Packages | GPU driver | Time | Details | Manual |\n|---|---|---|---|---|---|---|";
+const HEADER: &str = "| Upgrades | Result | Packages | GPU driver | Time | Details |";
 const CELL_MAX: usize = 300;
 
 #[derive(Debug, Clone)]
@@ -311,10 +311,16 @@ pub fn body(rep: &RunReport) -> String {
     if shown.is_empty() && nothing_to_do(rep) {
         b += "\nNothing to do: no CT or host had pending updates.\n";
     } else {
-        b += &format!("\n{HEADER}\n");
-    }
-    for r in shown {
-        b += &format!("| {} | {} | {} | {} | {} | {} | {} |\n", r.upgrades, r.result, r.packages, r.gpu, r.time, r.details, r.manual);
+        let with_manual = shown.iter().any(|r| !r.manual.is_empty());
+        let (extra, sep) = if with_manual { (" Manual |", "---|") } else { ("", "") };
+        b += &format!("\n{HEADER}{extra}\n|---|---|---|---|---|---|{sep}\n");
+        for r in shown {
+            b += &format!("| {} | {} | {} | {} | {} | {} |", r.upgrades, r.result, r.packages, r.gpu, r.time, r.details);
+            if with_manual {
+                b += &format!(" {} |", r.manual);
+            }
+            b += "\n";
+        }
     }
     if hidden > 0 && rows.len() > MAX_ROWS {
         b += &format!("\n+{hidden} more ok (see log)\n");
@@ -360,14 +366,29 @@ mod tests {
         let r = rep(vec![ct(113, "cap", Outcome::Ok), ct(114, "web", Outcome::Ok)]);
         let b = body(&r);
         assert!(!b.contains("## "), "no heading before the table: {b}");
-        assert!(b.contains("**\n\n| Upgrades | Result | Packages | GPU driver | Time | Details | Manual |\n|---|---|---|---|---|---|---|\n"), "{b}");
+        assert!(b.contains("**\n\n| Upgrades | Result | Packages | GPU driver | Time | Details |\n|---|---|---|---|---|---|\n"), "{b}");
+        assert!(!b.contains("Manual"), "no Manual column when no row has a manual step: {b}");
         assert_eq!(b.matches("\n|---").count(), 1, "one table");
-        assert_eq!(row_of(&b, "113 cap"), "| 113 cap | ✅ ok | 6 (2 security) | — | 1m 02s |  |  |");
+        assert_eq!(row_of(&b, "113 cap"), "| 113 cap | ✅ ok | 6 (2 security) | — | 1m 02s |  |");
         assert!(title(&r).starts_with("pxu: update run on server — 2 ok · 18m 42s"), "{}", title(&r));
         assert_eq!(level(&r), Level::Success);
         assert!(b.ends_with("📄 Full report: /var/log/pxu/run-20261110-0612.log"), "{b}");
         assert!(b.starts_with("**Update run on server** · "), "{b}");
         assert!(!b.contains("REBOOT"));
+    }
+
+    #[test]
+    fn manual_column_appears_only_when_a_row_has_a_manual_step() {
+        let mut f = ct(121, "dns", Outcome::Failed);
+        f.rollback = Some("failed".into());
+        let b = body(&rep(vec![ct(113, "cap", Outcome::Ok), f]));
+        assert!(b.contains("| Details | Manual |\n|---|---|---|---|---|---|---|\n"), "{b}");
+        assert!(row_of(&b, "113 cap").ends_with("|  |  |"), "every row gets the cell: {}", row_of(&b, "113 cap"));
+        assert!(row_of(&b, "121 dns").contains("restore CT 121 from its backup"), "{b}");
+        // un solo guest que falló y se restauró solo (el caso de forgejo): sin columna
+        let mut g = ct(132, "forgejo", Outcome::Failed);
+        g.rollback = Some("done".into());
+        assert!(!body(&rep(vec![g])).contains("Manual"));
     }
 
     #[test]
@@ -402,7 +423,7 @@ mod tests {
         let r = rep(vec![f]);
         let b = body(&r);
         let row = row_of(&b, "121 dns");
-        assert!(row.contains("| ❌ failed |") && row.contains("rollback: ✅ restored") && row.ends_with("|  |"), "{row}");
+        assert!(row.contains("| ❌ failed |") && row.contains("rollback: ✅ restored") && row.ends_with("restored |"), "{row}");
         assert_eq!(level(&r), Level::Failure);
     }
 
@@ -426,7 +447,7 @@ mod tests {
         let mut s = ct(122, "mail", Outcome::Skipped);
         s.detail = "no recent positive check".into();
         let b = body(&rep(vec![s]));
-        assert_eq!(row_of(&b, "122 mail"), "| 122 mail | ⏭️ skipped | — | — | — | no recent positive check |  |");
+        assert_eq!(row_of(&b, "122 mail"), "| 122 mail | ⏭️ skipped | — | — | — | no recent positive check |");
     }
 
     #[test]
@@ -486,7 +507,7 @@ mod tests {
         f.detail = "bad | thing\nsecond line `x`".into();
         let b = body(&rep(vec![f]));
         let row = b.lines().find(|l| l.contains("| 5 x")).unwrap();
-        assert_eq!(row.matches('|').count(), 8, "{row}");
+        assert_eq!(row.matches('|').count(), 7, "{row}");
         assert!(!row.contains('`') || row.matches('`').count() % 2 == 0);
     }
 
