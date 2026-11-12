@@ -1,0 +1,78 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the static binary, tests it, attests it with GitHub's build
+# provenance and publishes the release. Nothing is committed back to the repository.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2; exit 1; }
+
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          install: true
+          cache: false
+
+      - name: Test
+        run: mise run check
+
+      - name: Lint
+        run: mise run lint
+
+      # Static musl binary: runs on Proxmox 8 (glibc 2.36) and 9 (glibc 2.41).
+      - name: Build
+        run: mise run release-build
+
+      - name: Package
+        run: mise run package
+
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            target/package/pxu
+            target/package/*.tar.gz
+
+      - name: Keep the signed attestation
+        run: cp "${{ steps.attest.outputs.bundle-path }}" target/package/provenance.sigstore.json
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd target/package
+          cat > notes.md <<NOTES
+          Static x86_64 binary (musl), built from this tag by .github/workflows/release.yml and attested with GitHub build provenance.
+
+          Verify after downloading the files:
+
+          \`\`\`sh
+          sha256sum -c SHA256SUMS
+          gh attestation verify pxu --repo $GITHUB_REPOSITORY --bundle provenance.sigstore.json
+          gh attestation verify pxu-*-x86_64-linux.tar.gz --repo $GITHUB_REPOSITORY --bundle provenance.sigstore.json
+          \`\`\`
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            pxu pxu-*-x86_64-linux.tar.gz SHA256SUMS provenance.sigstore.json \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md

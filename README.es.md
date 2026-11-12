@@ -33,7 +33,31 @@ Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en
 
 ## Instalar pxu
 
-Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e instálalo en Proxmox. Por ahora no hay versiones precompiladas.
+Pxu se instala en Proxmox desde un binario hecho en otro lado. Puedes descargar la versión firmada o compilarlo tú.
+
+### Opción A: descargar la release
+
+Cada release en [GitHub](https://github.com/vk2r/pxu/releases) trae un binario estático (corre en Proxmox 8 y 9), un paquete con `install.sh` y `dist/`, las sumas de verificación y la atestación de compilación de GitHub. GitHub lo compila y lo firma desde el tag de la versión.
+
+1. En tu equipo, descarga de la release `pxu-<versión>-x86_64-linux.tar.gz`, `SHA256SUMS` y `provenance.sigstore.json`, y compruébalos (requiere la [CLI de GitHub](https://cli.github.com)):
+
+   ```sh
+   sha256sum -c --ignore-missing SHA256SUMS
+   gh attestation verify pxu-<versión>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
+   ```
+
+2. Copia el paquete a Proxmox e instala, como root:
+
+   ```sh
+   scp pxu-<versión>-x86_64-linux.tar.gz root@tu-proxmox:/root/
+   ssh root@tu-proxmox
+   tar xzf pxu-<versión>-x86_64-linux.tar.gz && cd pxu-<versión>-x86_64-linux
+   sh install.sh ./pxu --timer
+   ```
+
+### Opción B: compilarlo tú
+
+Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e instálalo en Proxmox.
 
 1. Compila el binario:
 
@@ -57,7 +81,7 @@ Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e inst�
    ```
 
 `--timer` activa la corrida diaria. Sin él, se instala solo el programa.
-El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite estos tres pasos.
+El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite los pasos de la opción que usaste.
 
 ## Probar pxu en modo solo lectura
 

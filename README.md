@@ -33,7 +33,31 @@ You use it from a terminal screen (the "TUI"). It leaves nothing running in the 
 
 ## Install pxu
 
-Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then install it on Proxmox. There are no prebuilt releases yet.
+Pxu is installed on Proxmox from a binary made elsewhere. You can download the signed release or build it yourself.
+
+### Option A: download the release
+
+Each release on [GitHub](https://github.com/vk2r/pxu/releases) has a static binary (it runs on Proxmox 8 and 9), a bundle with `install.sh` and `dist/`, the checksums and GitHub's build attestation. It is built and signed by GitHub from the release tag.
+
+1. On your machine, download `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json` from the release, and check them (needs the [GitHub CLI](https://cli.github.com)):
+
+   ```sh
+   sha256sum -c --ignore-missing SHA256SUMS
+   gh attestation verify pxu-<version>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
+   ```
+
+2. Copy the tarball to Proxmox and install, as root:
+
+   ```sh
+   scp pxu-<version>-x86_64-linux.tar.gz root@your-proxmox:/root/
+   ssh root@your-proxmox
+   tar xzf pxu-<version>-x86_64-linux.tar.gz && cd pxu-<version>-x86_64-linux
+   sh install.sh ./pxu --timer
+   ```
+
+### Option B: build it yourself
+
+Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then install it on Proxmox.
 
 1. Build the binary:
 
@@ -57,7 +81,7 @@ Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then
    ```
 
 `--timer` enables the daily run. Without it, only the program is installed.
-The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat these three steps.
+The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat the steps of the option you used.
 
 ## Try pxu in read-only mode
 

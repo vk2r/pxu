@@ -14,6 +14,8 @@ mise run build                 # target/release/pxu (~1.3 MB, stripped)
 mise run test                  # tests in dev and mock profile, against MockHost, no Proxmox needed
 mise run check                 # tests + release + checks that the production binary rejects --mock
 mise run lint                  # clippy warnings (not blocking yet)
+mise run release-build         # static musl binary for releases (target/x86_64-unknown-linux-musl/release/pxu)
+mise run package               # tarball + SHA256SUMS in target/package (after release-build)
 mise tasks                     # lists all tasks
 ```
 
@@ -27,6 +29,16 @@ mise run demo -- update-ok update --yes   # another case and command
 Predefined cases and the `World` builder: [`docs/ARCHITECTURE.md` §8.3](docs/ARCHITECTURE.md).
 
 `mise run demo` first builds `target/mock/pxu` (`cargo build --profile mock --features mock`). The production binary rejects `--mock` (exits with code 2), and `--release --features mock` doesn't compile.
+
+## Publishing a release
+
+Releases are built and signed by GitHub; the binary is never committed to the repository.
+
+1. Bump `version` in `Cargo.toml`, run `cargo build` (updates `Cargo.lock`) and `mise run check`, and commit.
+2. On `main`, with a clean tree: `mise run publish -- v1.2.3`. `tools/publish.sh` checks that the tag starts with `v`, equals the `Cargo.toml` version and doesn't exist yet, pushes `main` to the `forgejo` remote, creates the annotated tag and pushes it there too. It never forces. Forgejo's push mirror carries both to GitHub; the script only reads the `github` remote, to refuse a tag that already exists there and to wait (up to `PUBLISH_MIRROR_TIMEOUT`, 120 s) until the mirror has delivered each push.
+3. The tag on GitHub starts `.github/workflows/release.yml`: it checks tag and version, runs `mise run check` and `mise run lint`, builds the binary, packages it, attests it (build provenance) and publishes the release with `pxu`, `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json`.
+
+The binary is static (`x86_64-unknown-linux-musl`). A glibc build on ubuntu-24.04 links against glibc 2.39 and would not run on Proxmox 8 (Debian 12, glibc 2.36); the static one runs on 8 and 9. `mise run package` builds the same tarball locally to inspect it. Nothing is pushed straight to GitHub: anything changed there is overwritten by the next mirror sync. `publish` expects the remotes to be called `github` (`git@github.com:vk2r/pxu.git`) and `forgejo`; override with `PUBLISH_GITHUB_REMOTE` / `PUBLISH_FORGEJO_REMOTE`.
 
 ## Screenshots
 

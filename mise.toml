@@ -2,12 +2,26 @@
 #   mise install        instala las herramientas de abajo
 #   mise tasks          lista las tareas
 [tools]
-rust = "1.99.1"
+rust = { version = "1.99.1", targets = "x86_64-unknown-linux-musl" }
 "github:charmbracelet/freeze" = "0.2.2"
 
 [tasks.build]
 description = "Compila el binario de producción en target/release/pxu"
 run = "cargo build --locked --release && ls -l target/release/pxu"
+
+[tasks.release-build]
+description = "Compila el binario estático de la release (musl) en target/x86_64-unknown-linux-musl/release/pxu"
+run = "cargo build --locked --release --target x86_64-unknown-linux-musl"
+
+[tasks.package]
+description = "Empaqueta la release en target/package: pxu, tarball y SHA256SUMS"
+depends = ["release-build"]
+run = "tools/package.sh"
+
+[tasks.publish]
+description = "Sube main a Forgejo (el espejo lo lleva a GitHub); con -- v1.2.3 también crea y sube el tag, que lanza la release"
+usage = 'arg "[tag]" help="Tag de la versión, p. ej. v1.0.0"'
+run = 'tools/publish.sh ${usage_tag}'
 
 [tasks.test]
 description = "Corre los tests en el perfil dev y en el perfil mock"
