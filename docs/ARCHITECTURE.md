@@ -1,7 +1,7 @@
 English | [Español](ARCHITECTURE.es.md)
 
 # ARCHITECTURE — `pxu`
-pxu is a lightweight LXC container updater for Proxmox VE, designed as an alternative to ProxMenux. It is a single Rust binary with a TUI (ratatui) and a CLI. It has no daemon and no dependencies on the host, and uses a few MB of RAM while it runs.
+pxu is a lightweight LXC container updater for Proxmox VE. It is a single Rust binary with a TUI (ratatui) and a CLI. It has no daemon and no dependencies on the host, and uses a few MB of RAM while it runs.
 
 
 Technical reference of how `pxu` works today. The TUI is described in [DESIGN.md](DESIGN.md); the security analysis, in [SECURITY-REVIEW.md](SECURITY-REVIEW.md). Installation and usage: [README.md](../README.md); building and testing: [DEVELOPMENT.md](../DEVELOPMENT.md).
