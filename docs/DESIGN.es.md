@@ -1,8 +1,8 @@
+# Design
+
 [English](DESIGN.md) | Español
 
-# DESIGN — TUI de `pxu`
-
-Referencia de la interfaz de terminal actual (`pxu` sin argumentos). Describe lo que hace el código; para la arquitectura (módulos, estado, modos de chequeo, máquina de estados de la actualización, configuración, systemd) ver [ARCHITECTURE.es.md](ARCHITECTURE.es.md). Los bloques de pantalla son copias literales de los snapshots de `tests/snapshots` (80×24); cada vista tiene también su versión 120×40. Los datos de esos snapshots son de la demo (`[MOCK]`), no de un servidor real.
+Referencia de la interfaz de terminal actual (`pxu` sin argumentos). Describe lo que hace el código; para la arquitectura (módulos, estado, modos de chequeo, máquina de estados de la actualización, configuración, systemd) ver [ARCHITECTURE](ARCHITECTURE.es.md). Los bloques de pantalla son copias literales de los snapshots de `tests/snapshots` (80×24); cada vista tiene también su versión 120×40. Los datos de esos snapshots son de la demo (`[MOCK]`), no de un servidor real.
 
 Código: `src/tui/` — `app.rs` (estado y teclas), `views.rs` (dibujo), `logs.rs` (vista de logs), `sched.rs` / `apprise.rs` (diálogos de Config), `mod.rs` (bucle, ratón, guardado).
 

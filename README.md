@@ -174,10 +174,10 @@ With the `install.sh` you already have on the server (option B):
 
 ## More documentation
 
-- [DEVELOPMENT.md](DEVELOPMENT.md): build, test, screenshots and contribute.
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md): how **pxu** works, installer, configuration, command line, logs.
-- [DESIGN.md](docs/DESIGN.md): the TUI, screen by screen, with all keys.
-- [SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md): security review.
+- [DEVELOPMENT](DEVELOPMENT.md): build, test, screenshots and contribute.
+- [ARCHITECTURE](docs/ARCHITECTURE.md): how **pxu** works, installer, configuration, command line, logs.
+- [DESIGN](docs/DESIGN.md): the TUI, screen by screen, with all keys.
+- [SECURITY-REVIEW](docs/SECURITY-REVIEW.md): security review.
 
 ## License
 

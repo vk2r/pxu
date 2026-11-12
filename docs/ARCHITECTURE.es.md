@@ -1,10 +1,11 @@
+# Architecture
+
 [English](ARCHITECTURE.md) | Español
 
-# ARCHITECTURE — `pxu`
 pxu es un actualizador liviano de contenedores LXC para Proxmox VE. Es un único binario en Rust con TUI (ratatui) y CLI. No tiene daemon ni dependencias en el host y ocupa unos pocos MB de RAM mientras corre.
 
 
-Referencia técnica de cómo funciona `pxu` hoy. La TUI está descrita en [DESIGN.md](DESIGN.es.md); el análisis de seguridad, en [SECURITY-REVIEW.md](SECURITY-REVIEW.es.md). Instalación y uso: [README.md](../README.es.md); compilar y probar: [DEVELOPMENT.md](../DEVELOPMENT.es.md).
+Referencia técnica de cómo funciona `pxu` hoy. La TUI está descrita en [DESIGN](DESIGN.es.md); el análisis de seguridad, en [SECURITY-REVIEW](SECURITY-REVIEW.es.md). Instalación y uso: [README](../README.es.md); compilar y probar: [DEVELOPMENT](../DEVELOPMENT.es.md).
 
 Dónde se probó: las pruebas automáticas corren contra un servidor simulado (`MockHost`, §8), y pxu corre a diario en un servidor real con Proxmox VE 9.2 y storages `dir`, `lvmthin` y `pbs`. Otros tipos de storage (ZFS, Ceph, NFS…) y otras versiones de Proxmox todavía no se han probado en un servidor real.
 
@@ -433,7 +434,7 @@ Un log por corrida: `/var/log/pxu/run-AAAAMMDD-HHMM[SS][-N].log` (hora UTC en el
 
 ### 8.1 Árbol
 
-El árbol del código, las dependencias y el perfil de compilación están en [DEVELOPMENT.md](../DEVELOPMENT.es.md) («Mapa del código»). Las secciones siguientes describen el trait `Host`, el builder de pruebas y las pruebas.
+El árbol del código, las dependencias y el perfil de compilación están en [DEVELOPMENT](../DEVELOPMENT.es.md) («Mapa del código»). Las secciones siguientes describen el trait `Host`, el builder de pruebas y las pruebas.
 
 ### 8.2 El trait `Host`
 
@@ -450,7 +451,7 @@ fn set_update_enabled / set_update_target / now
 ```
 
 - `RealHost` usa `/` y `std::process::Command`.
-- `ReadOnlyHost` envuelve a cualquier host y solo deja pasar comandos de una **lista blanca**; las escrituras exigen opt-ins explícitos y con alcance (CT en curso, host, NVIDIA). Detalle de seguridad: [SECURITY-REVIEW.md](SECURITY-REVIEW.es.md).
+- `ReadOnlyHost` envuelve a cualquier host y solo deja pasar comandos de una **lista blanca**; las escrituras exigen opt-ins explícitos y con alcance (CT en curso, host, NVIDIA). Detalle de seguridad: [SECURITY-REVIEW](SECURITY-REVIEW.es.md).
 - `MockHost` sirve un sistema de archivos virtual en memoria y responde a los comandos según un `Scenario`; lo arma el builder `World` (`share/mock/scenario.rs`). No hay datos versionados en disco.
 
 ### 8.3 Builder `World` y casos
@@ -462,7 +463,7 @@ Un caso declara solo lo que cambia (distro, encendido/apagado, storage con o sin
 - Unitarios: parser `.conf`, protocolo `@@`, parsers de cada gestor, config, notificaciones (curl simulado), horario del timer.
 - Integración: `check` y `update` completos contra `MockHost`; se comprueba la secuencia exacta de comandos, lo que también prueba que el modo solo lectura nunca emite `apt-get update`/`apk update`/etc. (`check_path_is_read_only`).
 - TUI: capturas de `TestBackend` contra `tests/snapshots/`.
-- `mise run test` corre los tests en los perfiles dev y `mock`; `mise run check` además comprueba que el binario de producción rechaza `--mock`. Ver [DEVELOPMENT.md](../DEVELOPMENT.es.md).
+- `mise run test` corre los tests en los perfiles dev y `mock`; `mise run check` además comprueba que el binario de producción rechaza `--mock`. Ver [DEVELOPMENT](../DEVELOPMENT.es.md).
 
 ## 9. Página Storage (`share/storage.rs`, `tui/storage.rs`)
 

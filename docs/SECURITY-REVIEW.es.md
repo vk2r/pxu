@@ -1,8 +1,8 @@
+# Security Review
+
 [English](SECURITY-REVIEW.md) | Español
 
-# SECURITY-REVIEW — `pxu`
-
-Estado de seguridad del código actual: superficie, modelo de amenazas y hallazgos con su estado. Cada estado está comprobado contra el código (archivo:línea o nombre del test). Las referencias de arquitectura están en [ARCHITECTURE.es.md](ARCHITECTURE.es.md) y las de interfaz en [DESIGN.es.md](DESIGN.es.md).
+Estado de seguridad del código actual: superficie, modelo de amenazas y hallazgos con su estado. Cada estado está comprobado contra el código (archivo:línea o nombre del test). Las referencias de arquitectura están en [ARCHITECTURE](ARCHITECTURE.es.md) y las de interfaz en [DESIGN](DESIGN.es.md).
 
 Revisión: confirmada el 2026-11-09 (`f726c66`, commit inicial). La fecha y el commit de la revisión original no quedaron registrados porque se aplanó el historial de git; los estados de abajo no se volvieron a comprobar contra este commit al reorganizar la documentación. Actualización 2026-11-12: los secretos de Apprise ahora se guardan cifrados (filas de abajo y [ARCHITECTURE §4.6](ARCHITECTURE.es.md)); no formaba parte de la revisión original y las referencias `archivo:línea` de los hallazgos pueden haberse movido.
 

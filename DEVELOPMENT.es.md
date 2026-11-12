@@ -1,8 +1,8 @@
+# Development
+
 [English](DEVELOPMENT.md) | Español
 
-# pxu: desarrollo
-
-Guía para quien contribuye: compilar, probar, ejecutar las demos y orientarse en el código. Para instalar y usar pxu, mira el [README](README.es.md). Cómo funciona, configuración, línea de comandos, timer y logs: [`docs/ARCHITECTURE.es.md`](docs/ARCHITECTURE.es.md).
+Guía para quien contribuye: compilar, probar, ejecutar las demos y orientarse en el código. Para instalar y usar pxu, mira el [README](README.es.md). Cómo funciona, configuración, línea de comandos, timer y logs: [ARCHITECTURE](docs/ARCHITECTURE.es.md).
 
 ## Compilar
 
@@ -26,7 +26,7 @@ mise run demo                             # TUI con 37 guests genéricos simulad
 mise run demo -- update-ok update --yes   # otro caso y comando
 ```
 
-Casos predefinidos y el builder de `World`: [`docs/ARCHITECTURE.es.md` §8.3](docs/ARCHITECTURE.es.md).
+Casos predefinidos y el builder de `World`: [ARCHITECTURE §8.3](docs/ARCHITECTURE.es.md).
 
 `mise run demo` compila antes `target/mock/pxu` (`cargo build --profile mock --features mock`). El binario de producción rechaza `--mock` (sale con código 2), y `--release --features mock` no compila.
 
@@ -109,9 +109,9 @@ Dependencias (`Cargo.toml`, todas sin características por defecto salvo `lexopt
 
 ## Documentos técnicos
 
-- [`docs/ARCHITECTURE.es.md`](docs/ARCHITECTURE.es.md): cómo funciona pxu. Actualización y backups (§3), notificaciones (§4), configuración con todas las claves y valores por defecto (§5), línea de comandos, códigos de salida y timer (§6), logs (§7), trait `Host` y pruebas (§8).
-- [`docs/DESIGN.es.md`](docs/DESIGN.es.md): diseño de la TUI, con todas las teclas.
-- [`docs/SECURITY-REVIEW.es.md`](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
+- [ARCHITECTURE](docs/ARCHITECTURE.es.md): cómo funciona pxu. Actualización y backups (§3), notificaciones (§4), configuración con todas las claves y valores por defecto (§5), línea de comandos, códigos de salida y timer (§6), logs (§7), trait `Host` y pruebas (§8).
+- [DESIGN](docs/DESIGN.es.md): diseño de la TUI, con todas las teclas.
+- [SECURITY-REVIEW](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
 
 ## Licencia
 

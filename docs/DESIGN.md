@@ -1,8 +1,8 @@
+# Design
+
 English | [Español](DESIGN.es.md)
 
-# DESIGN — `pxu` TUI
-
-Reference for the current terminal interface (`pxu` with no arguments). It describes what the code does; for the architecture (modules, state, check modes, update state machine, configuration, systemd) see [ARCHITECTURE.md](ARCHITECTURE.md). The screen blocks are literal copies of the snapshots in `tests/snapshots` (80×24); each view also has a 120×40 version. The data in those snapshots comes from the demo (`[MOCK]`), not from a real server.
+Reference for the current terminal interface (`pxu` with no arguments). It describes what the code does; for the architecture (modules, state, check modes, update state machine, configuration, systemd) see [ARCHITECTURE](ARCHITECTURE.md). The screen blocks are literal copies of the snapshots in `tests/snapshots` (80×24); each view also has a 120×40 version. The data in those snapshots comes from the demo (`[MOCK]`), not from a real server.
 
 Code: `src/tui/` — `app.rs` (state and keys), `views.rs` (drawing), `logs.rs` (logs view), `sched.rs` / `apprise.rs` (Config dialogs), `mod.rs` (loop, mouse, saving).
 

@@ -1,8 +1,8 @@
+# Development
+
 English | [Español](DEVELOPMENT.es.md)
 
-# pxu: development
-
-Guide for contributors: build, test, run the demos and find your way around the code. To install and use pxu, see the [README](README.md). How it works, configuration, command line, timer and logs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Guide for contributors: build, test, run the demos and find your way around the code. To install and use pxu, see the [README](README.md). How it works, configuration, command line, timer and logs: [ARCHITECTURE](docs/ARCHITECTURE.md).
 
 ## Build
 
@@ -26,7 +26,7 @@ mise run demo                             # TUI with 37 generic simulated guests
 mise run demo -- update-ok update --yes   # another case and command
 ```
 
-Predefined cases and the `World` builder: [`docs/ARCHITECTURE.md` §8.3](docs/ARCHITECTURE.md).
+Predefined cases and the `World` builder: [ARCHITECTURE §8.3](docs/ARCHITECTURE.md).
 
 `mise run demo` first builds `target/mock/pxu` (`cargo build --profile mock --features mock`). The production binary rejects `--mock` (exits with code 2), and `--release --features mock` doesn't compile.
 
@@ -109,9 +109,9 @@ Dependencies (`Cargo.toml`, all without default features except `lexopt` and `li
 
 ## Technical documents
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): how pxu works. Update and backups (§3), notifications (§4), configuration with all keys and defaults (§5), command line, exit codes and timer (§6), logs (§7), `Host` trait and tests (§8).
-- [`docs/DESIGN.md`](docs/DESIGN.md): TUI design, with all keys.
-- [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md): security review.
+- [ARCHITECTURE](docs/ARCHITECTURE.md): how pxu works. Update and backups (§3), notifications (§4), configuration with all keys and defaults (§5), command line, exit codes and timer (§6), logs (§7), `Host` trait and tests (§8).
+- [DESIGN](docs/DESIGN.md): TUI design, with all keys.
+- [SECURITY-REVIEW](docs/SECURITY-REVIEW.md): security review.
 
 ## License
 

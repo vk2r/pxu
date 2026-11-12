@@ -1,8 +1,8 @@
+# Security Review
+
 English | [Español](SECURITY-REVIEW.es.md)
 
-# SECURITY-REVIEW — `pxu`
-
-Security status of the current code: attack surface, threat model and findings with their status. Each status has been checked against the code (file:line or test name). Architecture references are in [ARCHITECTURE.md](ARCHITECTURE.md) and interface references in [DESIGN.md](DESIGN.md).
+Security status of the current code: attack surface, threat model and findings with their status. Each status has been checked against the code (file:line or test name). Architecture references are in [ARCHITECTURE](ARCHITECTURE.md) and interface references in [DESIGN](DESIGN.md).
 
 Revision: committed on 2026-11-09 (`f726c66`, initial commit). The date and commit of the original review were not recorded because the git history was flattened; the statuses below were not re-checked against this commit when the documentation was reorganized. Update 2026-11-12: the Apprise secrets are now stored encrypted (rows below and [ARCHITECTURE §4.6](ARCHITECTURE.md)); this was not part of the original review, and the `file:line` references of the findings may have drifted.
 
