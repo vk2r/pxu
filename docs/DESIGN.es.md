@@ -1,4 +1,4 @@
-# Design
+# Diseño
 
 [English](DESIGN.md) | Español
 

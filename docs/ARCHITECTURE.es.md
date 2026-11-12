@@ -1,4 +1,4 @@
-# Architecture
+# Arquitectura
 
 [English](ARCHITECTURE.md) | Español
 

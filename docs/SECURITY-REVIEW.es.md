@@ -1,4 +1,4 @@
-# Security Review
+# Revisión de seguridad
 
 [English](SECURITY-REVIEW.md) | Español
 
