@@ -70,7 +70,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | `v` | view the last check result (if there is one or one is in progress) |
 | `o` | choose visible columns |
 | `u` | update the visible CTs with updates (asks for confirmation); on the host row, updates the host |
-| `a` | auto-update of the CT / the host (asks for confirmation); on a CT with a GPU, NVIDIA driver window |
+| `a` | auto-update options of the CT / the host (asks for confirmation): the «Automatic updates» box and, on the host or on a CT with an NVIDIA GPU and a `.run` driver, «Include GPU driver update»; one window, also in the detail |
 | `b` | backup before the CT's update: on (follows `[backup] mode`) / `none` (asks for confirmation; not for the host) |
 | `d` | Storage page: space per storage, guest, snapshot and backup (read-only) |
 | `g` | Config view |
@@ -96,8 +96,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 |---|---|
 | Confirm update (`modal_key`) | `↑↓/jk` move · `Space` include/exclude · `Enter` start · `Esc`/`q` cancel |
 | Confirm host update | `↑↓/jk` scroll · `Enter` install · `Esc`/`q`/`n` cancel |
-| NVIDIA driver | `Space` check · `Enter` save · `Esc`/`q`/`n` close |
-| Auto-update (`a`) | `y`/`Enter` save · `Esc`/`n`/`q` cancel |
+| Auto-update (`a`) | `↑↓/jk` choose box · `Space` check · `Enter` save · `Esc`/`q` cancel |
 | Backup (`b`) | `y`/`Enter` save · `Esc`/`n`/`q` cancel |
 | Columns (`o`) | `Space` show/hide · `Enter` close |
 | Cancel run | `Enter` finish the CT in progress and stop · `Esc` continue |
@@ -206,33 +205,23 @@ pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00
 [r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
-**GPU / NVIDIA.** The `GPU` column (`NV ✓`, `AMD ✓`, `pass`, `—`) appears when there are GPUs. `a` on the host or on a CT with a GPU opens the NVIDIA driver window: check `[ ] Upgrade GPU driver` and `Enter` saves `host_nvidia_auto`; the timer installs the `.run` driver after updating the host, always without rebooting. If unchecked, nothing is saved.
+**GPU / NVIDIA.** The `GPU` column (`NV ✓`, `AMD ✓`, `pass`, `—`) appears when there are GPUs; `+drv` after an NVIDIA label (`NV ✓+drv`, `NVIDIA ✓+drv` when wide) means the scheduled updates include the driver (`host_nvidia_auto` / `[[ct]] nvidia_auto`); the column measures its content as any other. The guest detail has a `gpu driver:` line (the host detail, `driver update:` under NVIDIA). There is no separate key or window: the option lives in the `a` window, with two boxes at their saved values: `[ ] Automatic updates` and, only on the host or on a CT with an NVIDIA GPU and a driver installed with the `.run`, `[ ] Include GPU driver update` (with installed/latest version, what the run does and the CT restart). `↑↓/jk` move the focus, `Space` toggles the box, `Enter` saves only what changed, and the `Saves:` line says what will be written (or `nothing changed`, and Enter writes nothing). The driver depends on auto-update: with «Automatic updates» unchecked the driver box is dimmed and cannot be checked, and unchecking auto-update also unchecks the driver (turns that machine's driver off, as before). Checking the driver on a CT also turns `host_nvidia_auto` on (the CTs get the libraries of the host's version); unchecking it on a CT only turns off that CT; unchecking it on the host turns off `host_nvidia_auto` and the window warns that the CTs with `nvidia_auto` get nothing while it is off. If the machine does not apply there is no box and one line gives the reason (`no NVIDIA GPU` / `driver not installed with the .run`); if the NVIDIA index cannot be read the box is shown anyway (`unknown`). The timer installs the `.run` driver after updating the host, always without rebooting.
 
 ```
-pxu [MOCK]                                       server · 5/6 up · 1 upd   00:16
-[All 6]  Run 5   Stop 1   Upd 1  / search…
-─┌ NVIDIA driver ─────────────────────────────────────────────────────────────┐─
- │ NVIDIA driver of CT 134 ct-134                                             │O
->│                                                                            │
- │ [ ] Upgrade GPU driver                                                     │
- │                                                                            │
- │ Installed:  595.112.07                                                     │
- │ Latest:     595.120.01 (newer, same 595 branch)                            │
- │                                                                            │
- │ When checked, the scheduled run (after the host update):                   │
- │   • downloads the newest 595.x and verifies it (sha256 + --check)          │
- │   • test-builds it, stops the GPU CTs, installs it with DKMS               │
- │   • checks nvidia-smi; GPU CTs get the same version (libs only)            │
- │   • this CT restarts after getting the libs                                │
- │ Skipped if a host reboot is pending. pxu never reboots the host.           │
- │                                                                            │
- │ Nothing is saved unless checked                                            │
- │                                                                            │
-─│ [Space] check  [Enter] save  [Esc] close                                   │─
-C└────────────────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+Automatic update options of CT 134 ct-134
+
+today: yes by [[ct]] override
+
+> [x] Automatic updates
+  [x] Include GPU driver update (NVIDIA)
+      Installed: 595.112.07 · Latest: 595.120.01 (newer, same 595 branch)
+      the run installs the newest 595.x with DKMS after the host update; GPU CTs get its libs
+      this CT restarts after getting the libs
+      skipped if a host reboot is pending; pxu never reboots the host
+
+nothing changed: Enter writes nothing          (driver unchecked: "Saves: [[ct]] 134 nvidia_auto = false (host flag untouched)")
+
+[↑↓] move  [Space] check  [Enter] save  [Esc] cancel
 ```
 
 **Columns (`o`):**
@@ -282,7 +271,7 @@ px┌ help · any key closes ─────────────────
   │u            update the visible CTs with updates (asks first)             │s
   │             temporary backup, verify, auto-rollback on failure           │
   │a            toggle scheduled auto-update of the CT (asks first)          │s
-  │             host row: host_auto · host/GPU CT: NVIDIA driver window      │
+  │             host row: host_auto · host/GPU CT: also the GPU driver box   │
   │b            toggle the backup before updating the CT (asks first)        │
   │g / S        config view + timer state · S change schedule (asks first)   │
   │l            run logs (one file per update run)                           │

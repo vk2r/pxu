@@ -1,0 +1,24 @@
+pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00:16
+[All 6]  Run 5   Stop 1   Upd 1  / search…
+─┌ auto-update ───────────────────────────────────────────────────────────────┐─
+ │ Automatic update options of the Proxmox HOST                               │
+>│                                                                            │
+ │ today: yes by [update] host_auto                                           │
+ │ the scheduled run (timer) would update the HOST first, then the CTs only i…│
+ │ same safeguards as `u`: locks, dpkg --audit, space, simulation, /etc backu…│
+ │ the host is NEVER rebooted by pxu: a new kernel is reported as reboot requ…│
+ │                                                                            │
+ │  [x] Automatic updates                                                     │
+ │> [ ] Include GPU driver update (NVIDIA)                                    │
+ │      Installed: 595.112.07 · Latest: 595.120.01 (newer, same 595 branch)   │
+ │      the run installs the newest 595.x with DKMS after the host update; GP…│
+ │      skipped if a host reboot is pending; pxu never reboots the host       │
+ │                                                                            │
+ │ Saves: [update] host_nvidia_auto = false                                   │
+ │ ! 1 CT(s) with nvidia_auto get nothing while the host flag is off          │
+ │                                                                            │
+─│ [↑↓] move  [Space] check  [Enter] save  [Esc] cancel                       │─
+>└────────────────────────────────────────────────────────────────────────────┘…
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit

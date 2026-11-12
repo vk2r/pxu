@@ -144,9 +144,6 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     if app.backup_del.is_some() {
         draw_backup_del_modal(f, app, th, area);
     }
-    if app.nvidia_modal.is_some() {
-        draw_nvidia_modal(f, app, th, area);
-    }
     if app.sched.is_some() {
         draw_sched_modal(f, app, th, area);
     }
@@ -321,7 +318,7 @@ fn cell(g: &Guest, app: &App, title: &str, w: usize) -> String {
 fn row_line(g: &Guest, app: &App, cols: &[Col], th: &Theme, selected: bool, w: usize) -> Line<'static> {
     let mut spans = vec![Span::raw(if selected { "> " } else { "  " })];
     for (i, c) in cols.iter().enumerate() {
-        let text = trunc(&cell(g, app, c.title, c.w), c.w);
+        let text = trunc(&cell(g, app, c.title, if w >= 112 { 8 } else { 6 }), c.w);
         let pad = " ".repeat(c.w.saturating_sub(text.chars().count()));
         let right = matches!(c.title, "ID" | "CPU");
         let body = if right { format!("{pad}{text}") } else { format!("{text}{pad}") };
@@ -884,6 +881,8 @@ fn host_lines(h: &HostInfo, inv: &pxu::share::proxmox::guests::Inventory) -> Vec
     if h.has_nvidia() {
         let mut n: Vec<String> = Vec::new();
         n.push(format!("  driver {} · module for {}: {}", h.nvidia_driver.as_deref().unwrap_or("not loaded"), if h.newest_kernel.is_empty() { "newest kernel" } else { &h.newest_kernel }, if h.nvidia_missing_for.is_none() { "yes" } else { "MISSING" }));
+        let on = inv.guests.iter().any(|g| g.kind == GuestKind::Host && g.nvidia_auto);
+        n.push(format!("  driver update: {} (n)", if on { "in scheduled updates" } else { "not in updates" }));
         for d in h.dkms.iter().filter(|d| d.module.starts_with("nvidia")) {
             n.push(format!("  dkms {} {} · {} · {}", d.module, d.version, d.kernel, d.status));
         }
@@ -955,6 +954,9 @@ fn state_lines(g: &Guest, app: &App) -> Vec<(String, bool)> {
     }
     if let Some(t) = hostcheck::gpu_detail(g, app.inv.host.as_ref()) {
         l(format!("gpu: {t}"), false);
+    }
+    if g.kind == GuestKind::Lxc && g.gpu.nvidia {
+        l(format!("gpu driver: {} (a)", if g.nvidia_auto { "in scheduled updates" } else { "not in updates" }), false);
     }
     l(String::new(), false);
     match (&g.check, g.kind) {
@@ -1113,7 +1115,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
                 ("v", "show the last check result"),
                 ("o", "choose visible columns (Space toggles; saved in config.toml)"),
                 ("u", "update the visible CTs with updates (asks first): temporary backup, verify, auto-rollback on failure"),
-                ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU CT: NVIDIA driver window"),
+                ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)"),
                 ("b", "toggle the backup before updating the CT (asks first)"),
                 ("g / S", "config view + timer state · S change schedule (asks first)"),
                 ("l", "run logs (one file per update run)"),
@@ -1161,7 +1163,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
         View::Check => keys("Keys", vec![("↑↓ / j k", "select CT (packages shown below)"), ("u", "update the CTs with updates (asks first)"), ("c", "re-check (refreshes the indexes) · C / R read-only check"), ("Enter", "guest detail"), ("Esc", "cancel a running check, then back"), ("?", "this help · q quit")]),
         View::Detail(_) => keys("Keys", vec![
             ("u", "update this CT (asks first)"),
-            ("a", "toggle this CT's scheduled auto-update (asks first); host: host_auto · host/GPU CT: NVIDIA driver window"),
+            ("a", "toggle this CT's scheduled auto-update (asks first); host: host_auto · host/GPU CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)"),
             ("b", "toggle this CT's backup before updating (asks first)"),
             ("g / S", "config view · change the update schedule"),
             ("↑↓ / j k", "scroll"),
@@ -1494,17 +1496,38 @@ fn draw_col_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 
 fn draw_auto_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let Some(m) = &app.auto_modal else { return };
-    let r = centered(area, 90, (m.lines.len() as u16 + 6).min(area.height.saturating_sub(2)));
+    let info = m.lines();
+    let ct = m.vmid != 0;
+    let drv = m.driver.as_ref().map(|d| d.lines(ct)).unwrap_or_default();
+    let h = info.len() + drv.len() + 12;
+    let r = centered(area, 100, (h as u16).min(area.height.saturating_sub(2)));
     f.render_widget(Clear, r);
-    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" confirm ", th.bold())).border_style(th.accent());
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" auto-update ", th.bold())).border_style(th.accent());
     let inner = blk.inner(r);
     f.render_widget(blk, r);
     let w = inner.width as usize;
-    let what = if m.vmid == 0 { "scheduled update of the Proxmox HOST".to_string() } else { format!("auto-update for CT {} {}", m.vmid, m.name) };
-    let mut lines = vec![Line::styled(trunc(&format!(" {} {what}?", if m.value { "Enable" } else { "Disable" }), w), th.bold()), Line::default()];
-    lines.extend(m.lines.iter().map(|l| Line::raw(trunc(&format!(" {l}"), w))));
+    let what = if m.vmid == 0 { "the Proxmox HOST".to_string() } else { format!("CT {} {}", m.vmid, m.name) };
+    let mut lines = vec![Line::styled(trunc(&format!(" Automatic update options of {what}"), w), th.bold()), Line::default()];
+    lines.extend(info.iter().map(|l| Line::raw(trunc(&format!(" {l}"), w))));
     lines.push(Line::default());
-    lines.push(mbar(th, &[("y/Enter", "save"), ("Esc", "cancel")], 2, w));
+    let boxed = |on: bool| if on { "x" } else { " " };
+    let mark = |i: usize| if m.focus == i { ">" } else { " " };
+    lines.push(Line::styled(trunc(&format!("{} [{}] Automatic updates", mark(0), boxed(m.value)), w), if m.focus == 0 { th.sel() } else { th.bold() }));
+    match &m.driver {
+        Ok(d) => {
+            let style = if !m.value { th.muted() } else if m.focus == 1 { th.sel() } else { th.bold() };
+            lines.push(Line::styled(trunc(&format!("{} [{}] Include GPU driver update (NVIDIA){}", mark(1), boxed(d.checked), if m.value { "" } else { "  — needs automatic updates" }), w), style));
+            lines.extend(drv.iter().map(|l| Line::styled(trunc(&format!("      {l}"), w), th.muted())));
+        }
+        Err(why) => lines.push(Line::styled(trunc(&format!("  GPU driver update: not offered — {why}"), w), th.muted())),
+    }
+    lines.push(Line::default());
+    lines.push(Line::raw(trunc(&format!(" {}", m.saves()), w)));
+    if let Some(wr) = m.warning() {
+        lines.push(Line::styled(trunc(&format!(" {wr}"), w), th.warn()));
+    }
+    lines.push(Line::default());
+    lines.push(mbar(th, &[("↑↓", "move"), ("Space", "check"), ("Enter", "save"), ("Esc", "cancel")], 2, w));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1536,25 +1559,6 @@ fn draw_backup_del_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     lines.extend(m.lines.iter().map(|l| Line::styled(trunc(&format!(" {l}"), w), if l.starts_with("WARNING") { th.warn() } else { Style::default() })));
     lines.push(Line::default());
     lines.push(mbar(th, &[("y/Enter", "delete"), ("Esc/n", "cancel")], 2, w));
-    f.render_widget(Paragraph::new(lines), inner);
-}
-
-fn draw_nvidia_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
-    let Some(m) = &app.nvidia_modal else { return };
-    let body = m.lines();
-    let r = centered(area, 90, (body.len() as u16 + 8).min(area.height.saturating_sub(2)));
-    f.render_widget(Clear, r);
-    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" NVIDIA driver ", th.bold())).border_style(th.accent());
-    let inner = blk.inner(r);
-    f.render_widget(blk, r);
-    let w = inner.width as usize;
-    let what = if m.vmid == 0 { "the host".to_string() } else { format!("CT {} {}", m.vmid, m.name) };
-    let mut lines = vec![Line::styled(trunc(&format!(" NVIDIA driver of {what}"), w), th.bold()), Line::default()];
-    lines.push(Line::styled(trunc(&format!(" [{}] Upgrade GPU driver", if m.checked { "x" } else { " " }), w), th.bold()));
-    lines.push(Line::default());
-    lines.extend(body.iter().map(|l| Line::raw(trunc(&format!(" {l}"), w))));
-    lines.push(Line::default());
-    lines.push(mbar(th, &[("Space", "check"), ("Enter", "save"), ("Esc", "close")], 2, w));
     f.render_widget(Paragraph::new(lines), inner);
 }
 

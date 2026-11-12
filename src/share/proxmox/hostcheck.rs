@@ -498,7 +498,16 @@ fn dri_vendor(host: Option<&HostInfo>) -> Option<Vendor> {
 }
 
 /// Etiqueta de la columna GPU del guest, o `None` (`—`) si no usa GPU. NVIDIA gana sobre AMD en el mismo CT.
+/// Con el driver incluido en las actualizaciones programadas (`nvidia_auto`) la etiqueta NVIDIA lleva `+drv`.
 pub fn gpu_label(g: &Guest, host: Option<&HostInfo>) -> Option<GpuLabel> {
+    let mut l = gpu_label_base(g, host)?;
+    if g.nvidia_auto && l.text.starts_with("NV ") {
+        l.text.push_str("+drv");
+    }
+    Some(l)
+}
+
+fn gpu_label_base(g: &Guest, host: Option<&HostInfo>) -> Option<GpuLabel> {
     let l = |t: &str, warn| Some(GpuLabel { text: t.into(), warn });
     if g.kind == GuestKind::Host {
         return match host?.nvidia_ok()? {

@@ -229,16 +229,24 @@ fn fetch_versions(host: &dyn Host, timeout_s: u64) -> Result<Vec<String>, String
 /// ¿Se ofrece el opt-in del driver al activar el auto-update? Solo si la máquina usa la GPU (host: driver instalado por el `.run` y módulo cargado;
 /// CT: NVIDIA según su `.conf`). NO depende de que haya una versión más nueva: eso solo se informa (`Newest`). Cualquier otra cosa = `None`.
 pub fn offer(host: &dyn Host, inv: &Inventory, vmid: u32, timeout_s: u64) -> Option<Offer> {
+    offer_why(host, inv, vmid, timeout_s).ok()
+}
+
+/// Como `offer`, pero dice por qué no hay oferta (para la barra de estado de la TUI).
+pub fn offer_why(host: &dyn Host, inv: &Inventory, vmid: u32, timeout_s: u64) -> Result<Offer, &'static str> {
     let uses = if vmid == 0 { true /* el host usa la GPU si el módulo está cargado (abajo) */ } else { inv.guests.iter().find(|g| g.vmid == vmid).is_some_and(|g| g.kind == GuestKind::Lxc && g.gpu.nvidia) };
-    if !uses || !host.exists(Path::new(UNINSTALL)) {
-        return None;
+    if !uses {
+        return Err("no NVIDIA GPU");
     }
-    let (current, _) = host_driver(host)?;
+    if !host.exists(Path::new(UNINSTALL)) {
+        return Err("driver not installed with the .run");
+    }
+    let (current, _) = host_driver(host).ok_or("NVIDIA driver not loaded on the host")?;
     let newest = match fetch_versions(host, timeout_s.min(OFFER_TIMEOUT_S)) {
         Ok(v) => newest_in_branch(&v, &current).map_or(Newest::UpToDate, Newest::Newer),
         Err(_) => Newest::Unknown,
     };
-    Some(Offer { current, newest })
+    Ok(Offer { current, newest })
 }
 
 // ---------------------------------------------------------------- informe

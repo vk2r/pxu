@@ -83,16 +83,14 @@ pub enum Action {
     HostRepair,
     /// Terminar el CT en curso y parar.
     CancelUpdate,
-    /// `a`: el bucle lee la config (validada) y abre el modal de auto-update.
+    /// `a`: el bucle lee la config (validada) y abre la ventana de opciones de auto-update (auto-update + driver NVIDIA).
     AskAutoUpdate { vmid: u32 },
-    /// `y`/Enter en el modal de auto-update: el bucle escribe `[[ct]] auto_update` en config.toml y recarga.
-    SetAutoUpdate { vmid: u32, value: bool },
+    /// Enter en esa ventana: el bucle escribe solo lo que cambió (`auto`: `host_auto`/`[[ct]] auto_update`; `driver`: `nvidia_auto`) y recarga.
+    SetAutoUpdate { vmid: u32, auto: Option<bool>, driver: Option<bool> },
     /// `b`: el bucle lee la config (validada) y abre el modal del backup previo al update.
     AskBackup { vmid: u32 },
     /// `y`/Enter en el modal del backup: el bucle escribe `[[ct]] backup` en config.toml (`disabled` = `"none"`; si no, hereda el global) y recarga.
     SetBackup { vmid: u32, disabled: bool },
-    /// `y`/Enter en el modal del driver NVIDIA: el bucle guarda `nvidia_auto` (CT) y/o `host_nvidia_auto`.
-    SetNvidiaAuto { vmid: u32 },
     /// `g` / `r` en Config: el bucle lee el estado del timer y muestra la vista.
     OpenConfig,
     /// `S`: el bucle lee el timer y abre el diálogo del horario.
@@ -125,40 +123,32 @@ pub enum Action {
     SaveLogRetention(u32),
 }
 
-/// Segundo modal, solo al ACTIVAR el auto-update de una máquina con driver NVIDIA actualizable por pxu: casilla «Upgrade GPU driver».
-pub struct NvidiaModal {
-    pub vmid: u32,
-    pub name: String,
+/// Casilla «Include GPU driver update» de la ventana `a` (solo si la máquina usa la GPU NVIDIA con un driver `.run`).
+pub struct DriverBox {
     pub current: String,
     pub newest: Newest,
-    /// Casilla marcada (por defecto no).
+    /// Casilla marcada; arranca en el valor guardado (`nvidia_auto`).
     pub checked: bool,
+    /// Valor guardado al abrir.
+    pub initial: bool,
+    /// Host: cuántos CT tienen `nvidia_auto` (dejan de recibir el driver si el del host se apaga).
+    pub dependents: usize,
 }
 
-impl NvidiaModal {
-    pub fn lines(&self) -> Vec<String> {
+impl DriverBox {
+    /// Líneas informativas, compactas.
+    pub fn lines(&self, ct: bool) -> Vec<String> {
         let latest = match &self.newest {
             Newest::Newer(v) => format!("{v} (newer, same {} branch)", self.branch()),
             Newest::UpToDate => format!("{} (up to date)", self.current),
             Newest::Unknown => "unknown (could not reach nvidia.com)".into(),
         };
-        let mut l = vec![format!("Installed:  {}", self.current), format!("Latest:     {latest}"), String::new()];
-        l.push("When checked, the scheduled run (after the host update):".into());
-        l.push("  • downloads the newest ".to_string() + &self.branch() + ".x and verifies it (sha256 + --check)");
-        l.push("  • test-builds it, stops the GPU CTs, installs it with DKMS".into());
-        l.push("  • checks nvidia-smi; GPU CTs get the same version (libs only)".into());
-        if self.vmid != 0 {
-            l.push("  • this CT restarts after getting the libs".into());
+        let mut l = vec![format!("Installed: {} · Latest: {latest}", self.current)];
+        l.push(format!("the run installs the newest {}.x with DKMS after the host update; GPU CTs get its libs", self.branch()));
+        if ct {
+            l.push("this CT restarts after getting the libs".into());
         }
-        l.push("Skipped if a host reboot is pending. pxu never reboots the host.".into());
-        l.push(String::new());
-        l.push(if !self.checked {
-            "Nothing is saved unless checked".into()
-        } else if self.vmid == 0 {
-            "Saves: [update] host_nvidia_auto = true".into()
-        } else {
-            format!("Saves: [[ct]] {} nvidia_auto + [update] host_nvidia_auto", self.vmid)
-        });
+        l.push("skipped if a host reboot is pending; pxu never reboots the host".into());
         l
     }
 
@@ -168,41 +158,98 @@ impl NvidiaModal {
     }
 }
 
-/// Modal de confirmación del auto-update de un CT (`a`).
+/// Ventana de opciones del auto-update de una máquina (`a`): casilla «Automatic updates» y, si aplica, «Include GPU driver update».
 pub struct AutoModal {
     pub vmid: u32,
     pub name: String,
+    /// Casilla «Automatic updates»; arranca en el valor actual.
     pub value: bool,
-    pub lines: Vec<String>,
+    pub initial: bool,
+    /// Motivo actual del auto-update (`Config::auto_update_why`) y si falta config.toml.
+    pub why: String,
+    pub missing: bool,
+    /// Casilla del driver, o el motivo por el que no se ofrece.
+    pub driver: Result<DriverBox, String>,
+    /// 0 = auto-update; 1 = driver.
+    pub focus: usize,
 }
 
 impl AutoModal {
-    /// `now`/`why`: estado y motivo actuales; `missing`: aún no existe config.toml.
-    pub fn new(g: &Guest, why: &str, missing: bool) -> AutoModal {
-        let value = !g.auto_update;
-        let yn = |b: bool| if b { "yes" } else { "no" };
-        let mut lines = vec![format!("today: {} → {}", why, yn(value))];
-        if g.kind == GuestKind::Host {
+    /// `why`: motivo actual del auto-update; `missing`: aún no existe config.toml; `driver`: oferta del driver o el motivo de que no aplique.
+    pub fn new(g: &Guest, why: &str, missing: bool, driver: Result<DriverBox, &str>) -> AutoModal {
+        let value = g.auto_update;
+        AutoModal { vmid: if g.kind == GuestKind::Host { 0 } else { g.vmid }, name: g.name.clone(), value, initial: value, why: why.into(), missing, driver: driver.map_err(String::from), focus: 0 }
+    }
+
+    /// Texto informativo del auto-update (sin las casillas).
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = vec![format!("today: {}", self.why)];
+        let cfg = pxu::share::config::CONFIG_PATH;
+        if self.vmid == 0 {
             lines.push("the scheduled run (timer) would update the HOST first, then the CTs only if the host ended well".into());
             lines.push("same safeguards as `u`: locks, dpkg --audit, space, simulation, /etc backup, ZFS snapshot; needs a recent check".into());
             lines.push("the host is NEVER rebooted by pxu: a new kernel is reported as reboot required".into());
-            lines.push(format!("saved as [update] host_auto = {value} in {}", pxu::share::config::CONFIG_PATH));
-            if missing {
-                lines.push(format!("{} does not exist: it will be created with only that setting", pxu::share::config::CONFIG_PATH));
+            if self.missing {
+                lines.push(format!("{cfg} does not exist: it will be created with only the settings you change"));
                 lines.push("with a config pxu leaves read-only mode (updates become possible)".into());
             }
-            return AutoModal { vmid: 0, name: g.name.clone(), value, lines };
+            return lines;
         }
-        let tag_wins = !value && why.contains("by tag");
-        if tag_wins {
+        if !self.value && self.why.contains("by tag") {
             lines.push("the tag stays on the CT: the [[ct]] override (false) wins over it".into());
         }
-        lines.push(format!("saved as [[ct]] vmid = {}, auto_update = {value} in {}", g.vmid, pxu::share::config::CONFIG_PATH));
-        if missing {
-            lines.push(format!("{} does not exist: it will be created with only that block", pxu::share::config::CONFIG_PATH));
+        if self.missing {
+            lines.push(format!("{cfg} does not exist: it will be created with only the settings you change"));
             lines.push("with a config pxu leaves read-only mode (updates become possible)".into());
         }
-        AutoModal { vmid: g.vmid, name: g.name.clone(), value, lines }
+        lines
+    }
+
+    /// Qué cambió: `(auto, driver)`. Con el auto-update desmarcado el driver de esa máquina se apaga.
+    pub fn changes(&self) -> (Option<bool>, Option<bool>) {
+        let auto = (self.value != self.initial).then_some(self.value);
+        let driver = self.driver.as_ref().ok().and_then(|d| (d.checked != d.initial).then_some(d.checked));
+        (auto, driver)
+    }
+
+    /// Línea «Saves: …» con exactamente lo que se escribirá.
+    pub fn saves(&self) -> String {
+        let (auto, driver) = self.changes();
+        let mut parts = Vec::new();
+        if let Some(v) = auto {
+            parts.push(if self.vmid == 0 { format!("[update] host_auto = {v}") } else { format!("[[ct]] {} auto_update = {v}", self.vmid) });
+        }
+        if let Some(v) = driver {
+            parts.push(match (v, self.vmid) {
+                (true, 0) => "[update] host_nvidia_auto = true".into(),
+                (true, id) => format!("[[ct]] {id} nvidia_auto + [update] host_nvidia_auto"),
+                (false, 0) => "[update] host_nvidia_auto = false".into(),
+                (false, id) => format!("[[ct]] {id} nvidia_auto = false (host flag untouched)"),
+            });
+        }
+        if parts.is_empty() { "nothing changed: Enter writes nothing".into() } else { format!("Saves: {}", parts.join(" + ")) }
+    }
+
+    /// Aviso: apagar el driver del host deja sin él a los CT que lo tienen activo.
+    pub fn warning(&self) -> Option<String> {
+        let d = self.driver.as_ref().ok()?;
+        (self.vmid == 0 && !d.checked && d.dependents > 0).then(|| format!("! {} CT(s) with nvidia_auto get nothing while the host flag is off", d.dependents))
+    }
+
+    /// `Space` sobre la casilla enfocada. El driver depende del auto-update: no se marca con este apagado, y apagar este lo desmarca.
+    pub fn toggle(&mut self) {
+        if self.focus == 0 {
+            self.value = !self.value;
+            if !self.value {
+                if let Ok(d) = &mut self.driver {
+                    d.checked = false;
+                }
+            }
+        } else if self.value {
+            if let Ok(d) = &mut self.driver {
+                d.checked = !d.checked;
+            }
+        }
     }
 }
 
@@ -417,7 +464,6 @@ pub struct App {
     pub auto_modal: Option<AutoModal>,
     pub backup_modal: Option<BackupModal>,
     pub backup_del: Option<BackupDelModal>,
-    pub nvidia_modal: Option<NvidiaModal>,
     pub host_modal: Option<HostModal>,
     pub sched: Option<SchedModal>,
     pub apprise_modal: Option<AppriseModal>,
@@ -469,7 +515,6 @@ impl App {
             auto_modal: None,
             backup_modal: None,
             backup_del: None,
-            nvidia_modal: None,
             host_modal: None,
             sched: None,
             apprise_modal: None,
@@ -586,9 +631,6 @@ impl App {
         }
         if self.host_modal.is_some() {
             return self.host_modal_key(k);
-        }
-        if self.nvidia_modal.is_some() {
-            return self.nvidia_modal_key(k);
         }
         if self.auto_modal.is_some() {
             return self.auto_modal_key(k);
@@ -1011,41 +1053,29 @@ impl App {
     }
 
     fn auto_modal_key(&mut self, k: KeyEvent) -> Action {
-        let Some(m) = self.auto_modal.as_ref() else { return Action::None };
+        let Some(m) = self.auto_modal.as_mut() else { return Action::None };
         match k.code {
-            KeyCode::Char('y') | KeyCode::Enter => {
-                let a = Action::SetAutoUpdate { vmid: m.vmid, value: m.value };
-                self.auto_modal = None;
-                return a;
-            }
-            KeyCode::Esc | KeyCode::Char('n' | 'q') => {
-                self.auto_modal = None;
-                self.status = "auto-update unchanged".into();
-            }
-            _ => {}
-        }
-        Action::None
-    }
-
-    pub fn open_nvidia_modal(&mut self, m: NvidiaModal) {
-        self.nvidia_modal = Some(m);
-    }
-
-    fn nvidia_modal_key(&mut self, k: KeyEvent) -> Action {
-        let Some(m) = self.nvidia_modal.as_ref() else { return Action::None };
-        match k.code {
+            KeyCode::Down | KeyCode::Up | KeyCode::Char('j' | 'k') if m.driver.is_ok() => m.focus = 1 - m.focus,
             KeyCode::Char(' ') => {
-                if let Some(m) = self.nvidia_modal.as_mut() {
-                    m.checked = !m.checked;
+                if m.focus == 1 && !m.value {
+                    self.status = "the GPU driver update needs Automatic updates checked".into();
+                } else {
+                    m.toggle();
                 }
             }
             KeyCode::Enter => {
-                let a = if m.checked { Action::SetNvidiaAuto { vmid: m.vmid } } else { Action::None };
-                self.nvidia_modal = None;
-                return a;
+                let (auto, driver) = m.changes();
+                let vmid = m.vmid;
+                self.auto_modal = None;
+                if auto.is_none() && driver.is_none() {
+                    self.status = "auto-update options unchanged: nothing written".into();
+                    return Action::None;
+                }
+                return Action::SetAutoUpdate { vmid, auto, driver };
             }
-            KeyCode::Esc | KeyCode::Char('n' | 'q') => {
-                self.nvidia_modal = None;
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.auto_modal = None;
+                self.status = "auto-update options unchanged".into();
             }
             _ => {}
         }

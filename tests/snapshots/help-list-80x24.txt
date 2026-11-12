@@ -15,10 +15,10 @@ px┌ help · ↑↓ scroll · any other key closes ─────────�
   │ u          update the visible CTs with updates (asks first): temporary   │s
   │            backup, verify, auto-rollback on failure                      │
   │ a          toggle scheduled auto-update of the CT (asks first); host row:│
-  │            host_auto · host/GPU CT: NVIDIA driver window                 │
-▼ │ b          toggle the backup before updating the CT (asks first)         │
-──│ g / S      config view + timer state · S change schedule (asks first)    │──
-> │ l          run logs (one file per update run)                            │
+  │            host_auto · host/GPU CT: also the NVIDIA driver checkbox      │
+▼ │            (Space toggles, Enter saves)                                  │
+──│ b          toggle the backup before updating the CT (asks first)         │──
+> │ g / S      config view + timer state · S change schedule (asks first)    │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │ad
 [a└──────────────────────────────────────────────────────────────────────────┘

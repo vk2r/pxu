@@ -1,0 +1,40 @@
+pxu · Proxmox Updater [RO] [MOCK]              node server · 6 guests · 5 running · 1 with updates · host: 7 upd   00:16
+[All 6]   Running 5    Stopped 1    Updates 1   / search name, tag, id…                                       sort: vmid
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   ID  TYPE  NAME     STATE    OS                    CPU  RAM           DISK     GPU           UPD all/sec  BACKUP  AUTO
+>   0  HOST  server   run      proxmox ve 9.0.11       —  24.4/62.5 GB  —        NVIDIA ✓+drv  7/2          -       yes
+  131  LXC   ct-131   run      debian 12               —  0.2/0.5 GB    4.0 GB   AMD ✓         0            yes     —
+  134  LXC   openwe…  run      debian 12               —  0.2/0.5 GB    4.0 GB   NVIDIA ✓+drv  1/0          yes     yes
+  135  LXC   ct-135   stopped  debian 12               —  —/0.5 GB      4.0 GB   NVIDIA ?      0            yes     —
+  140  LXC   ct-140   run      debian 12               —  0.2/0.5 GB    4.0 GB   —             0            yes     —
+  150  LXC   ct-150   run      debian 12               —  0.2/0.5 GB    4.0 GB   —             0            yes     —
+  200  VM ┌ auto-update ─────────────────────────────────────────────────────────────────────────────────────┐      —
+          │ Automatic update options of the Proxmox HOST                                                     │
+          │                                                                                                  │
+          │ today: yes by [update] host_auto                                                                 │
+          │ the scheduled run (timer) would update the HOST first, then the CTs only if the host ended well  │
+          │ same safeguards as `u`: locks, dpkg --audit, space, simulation, /etc backup, ZFS snapshot; needs…│
+          │ the host is NEVER rebooted by pxu: a new kernel is reported as reboot required                   │
+          │                                                                                                  │
+          │  [x] Automatic updates                                                                           │
+          │> [ ] Include GPU driver update (NVIDIA)                                                          │
+          │      Installed: 595.112.07 · Latest: 595.120.01 (newer, same 595 branch)                         │
+          │      the run installs the newest 595.x with DKMS after the host update; GPU CTs get its libs     │
+          │      skipped if a host reboot is pending; pxu never reboots the host                             │
+          │                                                                                                  │
+          │ Saves: [update] host_nvidia_auto = false                                                         │
+          │ ! 1 CT(s) with nvidia_auto get nothing while the host flag is off                                │
+          │                                                                                                  │
+          │ [↑↓] move  [Space] check  [Enter] save  [Esc] cancel                                             │
+          └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: yes · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[↑↓/jk] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)  [r] reload  [a] auto  [b] backup
+[o] columns  [d] storage  [l] logs  [g] config  [S] schedule  [?] help  [q] quit

@@ -29,8 +29,8 @@ detail · host review · u installs host updates after a confirmation
 │                                                                     ││                                               │
 │NVIDIA                                                               ││                                               │
 │  driver 595.112.07 · module for 6.17.13-2-pve: yes                  ││                                               │
+│  driver update: not in updates (n)                                  ││                                               │
 │  dkms nvidia 595.112.07 · 6.17.13-2-pve · installed                 ││                                               │
-│  CT 134 openweb-ui · running · NVIDIA 595.112.07 (= host)           ││                                               │
 └─────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 server · u installs host updates after confirmation · a: scheduled run never touches it (host_auto off)

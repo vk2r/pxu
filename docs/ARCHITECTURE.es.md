@@ -179,7 +179,7 @@ Resultados por CT: `ok`, `warn`, `failed`, `skipped`, `cancelled`.
 
 ### 3.7 Driver NVIDIA (`update/nvidia.rs`)
 
-Solo con `[update] host_nvidia_auto = true` (host) y `[[ct]] nvidia_auto = true` (CT), o desde el diálogo de la TUI. Aplica a un driver instalado con el `.run` oficial (existe `/usr/bin/nvidia-uninstall`). Descarga de `download.nvidia.com` el `.run` y su `.sha256sum`, verifica y solo sube dentro de la misma rama mayor. Los CT reciben las librerías de la versión que tiene el host. Nunca reinicia el host.
+Solo con `[update] host_nvidia_auto = true` (host) y `[[ct]] nvidia_auto = true` (CT), o desde la casilla «Include GPU driver update» de la ventana de la TUI (`a`, junto a «Automatic updates»; solo guarda lo que cambió; marcarla en un CT activa también el flag del host, desmarcarla en un CT solo ese CT, desmarcar el auto-update la desmarca; la columna GPU muestra `+drv` si está activa). Aplica a un driver instalado con el `.run` oficial (existe `/usr/bin/nvidia-uninstall`). Descarga de `download.nvidia.com` el `.run` y su `.sha256sum`, verifica y solo sube dentro de la misma rama mayor. Los CT reciben las librerías de la versión que tiene el host. Nunca reinicia el host.
 
 ---
 

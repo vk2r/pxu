@@ -19,7 +19,7 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
   114  LXC│ u          update the visible CTs with updates (asks first): temporary backup, verify,           │
   115  LXC│            auto-rollback on failure                                                              │
   116  LXC│ a          toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU   │
-  117  LXC│            CT: NVIDIA driver window                                                              │
+  117  LXC│            CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)                      │
   118  LXC│ b          toggle the backup before updating the CT (asks first)                                 │
   119  LXC│ g / S      config view + timer state · S change schedule (asks first)                            │
   120  LXC│ l          run logs (one file per update run)                                                    │

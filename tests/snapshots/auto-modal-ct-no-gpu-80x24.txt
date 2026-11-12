@@ -1,0 +1,24 @@
+pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00:16
+[All 6]  Run 5   Stop 1   Upd 1  / search…
+────────────────────────────────────────────────────────────────────────────────
+   ID  NAME        STATE    GPU         CPU  RAM           UPD  BACKUP  AUTO
+    0  server      run      NV ✓+drv      —  24.4/62.5 GB  7/2  -       yes
+ ┌ auto-update ───────────────────────────────────────────────────────────────┐
+ │ Automatic update options of CT 140 ct-140                                  │
+ │                                                                            │
+>│ today: no (no override, no matching tag)                                   │
+ │                                                                            │
+ │> [ ] Automatic updates                                                     │
+ │  GPU driver update: not offered — no NVIDIA GPU                            │
+ │                                                                            │
+ │ nothing changed: Enter writes nothing                                      │
+ │                                                                            │
+ │ [↑↓] move  [Space] check  [Enter] save  [Esc] cancel                       │
+ │                                                                            │
+ └────────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+> 140 ct-140 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit

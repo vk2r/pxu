@@ -1,0 +1,24 @@
+pxu [MOCK]                                       server · 5/6 up · 1 upd   00:16
+[All 6]  Run 5   Stop 1   Upd 1  / search…
+────────────────────────────────────────────────────────────────────────────────
+ ┌ auto-update ───────────────────────────────────────────────────────────────┐
+ │ Automatic update options of CT 134 openweb-ui                              │
+>│                                                                            │
+ │ today: no (no override, no matching tag)                                   │
+ │                                                                            │
+ │> [ ] Automatic updates                                                     │
+ │  [ ] Include GPU driver update (NVIDIA)  — needs automatic updates         │
+ │      Installed: 595.112.07 · Latest: unknown (could not reach nvidia.com)  │
+ │      the run installs the newest 595.x with DKMS after the host update; GP…│
+ │      this CT restarts after getting the libs                               │
+ │      skipped if a host reboot is pending; pxu never reboots the host       │
+ │                                                                            │
+ │ nothing changed: Enter writes nothing                                      │
+ │                                                                            │
+ │ [↑↓] move  [Space] check  [Enter] save  [Esc] cancel                       │
+ │                                                                            │
+─└────────────────────────────────────────────────────────────────────────────┘─
+> 134 openweb-ui · debian 12 · 1 updates (0 security) · auto: no · [Enter] deta…
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
