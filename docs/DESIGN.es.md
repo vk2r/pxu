@@ -2,7 +2,7 @@
 
 [English](DESIGN.md) | Español
 
-Referencia de la interfaz de terminal actual (`pxu` sin argumentos). Describe lo que hace el código; para la arquitectura (módulos, estado, modos de chequeo, máquina de estados de la actualización, configuración, systemd) ver [ARCHITECTURE](ARCHITECTURE.es.md). Los bloques de pantalla son copias literales de los snapshots de `tests/snapshots` (80×24); cada vista tiene también su versión 120×40. Los datos de esos snapshots son de la demo (`[MOCK]`), no de un servidor real.
+Referencia de la interfaz de terminal actual (`pxu` sin argumentos). Describe lo que hace el código; para la arquitectura (módulos, estado, modos de chequeo, máquina de estados de la actualización, configuración, systemd) ver [ARCHITECTURE](ARCHITECTURE.es.md). Los bloques de pantalla son copias de los snapshots de `tests/snapshots` (80×24), sin la marca `[MOCK]` de la cabecera; cada vista tiene también su versión 120×40. Los datos de esos snapshots son de la demo, no de un servidor real.
 
 Código: `src/tui/` — `app.rs` (estado y teclas), `views.rs` (dibujo), `logs.rs` (vista de logs), `sched.rs` / `apprise.rs` (diálogos de Config), `mod.rs` (bucle, ratón, guardado).
 
@@ -123,7 +123,7 @@ Visor: `↑↓/jk` · `PgUp PgDn`/`Space` página · `g`/`G` principio/final · 
 Cada columna mide lo que mide su contenido (como mínimo su cabecera), con huecos de 2 espacios, alineadas a la izquierda; el ancho sobrante no se reparte. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` y `AUTO` miden max(cabecera, valor más largo entre los guests actuales); `CPU` es fija (6, o 5 en estrecho) porque su valor cambia cada segundo y la tabla no debe saltar. `NAME` va primero con el ancho del nombre más largo y solo se recorta con `…` si no cabe ni sin `TAGS`; `TAGS` se lleva lo que quede hasta su texto más largo y, si le quedan menos de 6 columnas, se oculta (cabecera incluida) en vez de recortar `NAME`. Si todo cabe el resto de la línea queda vacío. La barra de selección cubre toda la fila. Columnas: `ID NAME STATE OS CPU RAM UPD BACKUP AUTO`, más `TYPE`, `DISK`, `TAGS` (oculta por defecto) y `GPU` según el ancho y la elección de `o` (`ID`, `NAME` y `STATE` siempre; la selección se guarda en `config.toml`). `BACKUP` es `yes` si pxu hace backup antes de actualizar ese CT (modo auto/snap/vzdump) y `-` si no (modo `none`, VMs y host); el modo exacto está en el detalle y en `b`. El pie de lista (`views.rs`) y la línea bajo la tabla (`▼ 21 below …`, resumen del guest seleccionado) cambian con la selección.
 
 ```
-pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
+pxu [RO]                                      server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
    ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
@@ -152,7 +152,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 **La fila del host.** El Proxmox mismo aparece como fila `vmid 0` (`GuestKind::Host`) con su resumen de paquetes en el header (`host: 7 upd`). `u` sobre ella abre su propia confirmación (lista de paquetes agrupada por kernel/firmware/pve/security/other, aviso de reinicio, copia de `/etc` previa, sin rollback automático) y nunca entra en una corrida de CT. `a` sobre ella alterna `[update] host_auto`, el opt-in del timer. Antes de `c` el host aparece como "not reviewed yet: press c".
 
 ```
-pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00:16
+pxu [RO]                           server · 5/6 up · 1 upd · host: 7 upd   00:16
 [All 6]  Run 5   Stop 1   Upd 1  / search…
 ────────────────────────────────────────────────────────────────────────────────
    ID  NAME        STATE    GPU      CPU  RAM           UPD  BACKUP  AUTO
@@ -179,7 +179,7 @@ pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00
 ```
 
 ```
-pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00:16
+pxu                                server · 5/6 up · 1 upd · host: 7 upd   00:16
 [┌ confirm host update ───────────────────────────────────────────────────────┐
 ─│ Install 7 packages on the Proxmox host (2 security)?                       │─
  │                                                                            │
@@ -227,7 +227,7 @@ nothing changed: Enter writes nothing          (driver unchecked: "Saves: [[ct]]
 **Columnas (`o`):**
 
 ```
-pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
+pxu [RO]                                      server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
    ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
@@ -287,7 +287,7 @@ px┌ help · ↑↓ scroll · any other key closes ─────────�
 Dos paneles: configuración leída del `.conf` (izquierda) y estado/updates (derecha, desde 120 columnas). A 80 columnas queda el panel de configuración. Para una VM el detalle es solo informativo: pxu no actualiza VMs.
 
 ```
-pxu · guest 103 · ct-103 [RO] [MOCK]              LXC · server · running   00:16
+pxu · guest 103 · ct-103 [RO]                     LXC · server · running   00:16
 detail · config (left) · state & updates (right)
 ────────────────────────────────────────────────────────────────────────────────
 ┌ config · /etc/pve/nodes/server/lxc/103.conf ─────────────────────────────────┐
@@ -318,7 +318,7 @@ config is read from the .conf file (no processes); runtime metrics come from cg�
 Tabla `ID NAME PM INDEX UPD SEC REBOOT RESULT` y, debajo, el panel de paquetes del CT seleccionado. El pie muestra `a check is already running` mientras corre.
 
 ```
-pxu · check [RO] [MOCK]            read-only · finished 00:16 · took 0 s   00:16
+pxu · check [RO]                   read-only · finished 00:16 · took 0 s   00:16
 34 checked · 3 skipped · 13 with updates · 45 packages (14 security) · 1 stale …
      ID  NAME            PM      INDEX  UPD  SEC  REBOOT  RESULT
 >   100  ct-100          apt        5h    0    0  no      ok
@@ -351,7 +351,7 @@ Cola con una marca por CT (`✓ ● · ✗ »`), contadores en la cabecera y log
 Toda corrida no interactiva de `pxu update` que llega al pre-chequeo (la programada incluida) deja su `/var/log/pxu/run-….log`, aunque no haya nada que actualizar: toma el lock global como cualquier corrida, lista cada CT omitido y el host con su motivo (`no updates pending`, check viejo…) y su cabecera dice `result: ✅ nothing to do`. La página Logs lo muestra con ese resultado (no INCOMPLETE ni fallo), la retención lo poda igual y no envía aviso. Con `host_auto` activo y el host sin actualizaciones, el log y la terminal dicen `host: skipped — no updates pending`; con `host_auto` apagado no se menciona el host. El resumen no lleva tabla vacía, solo `Nothing to do: no CT or host had pending updates.`, y la terminal cuenta como omitidos los CT con auto-update sin pendientes (una línea, no una por CT). `--json` incluye `log_path`.
 
 ```
-pxu · update run [MOCK]                       started 00:16 · sequential   00:16
+pxu · update run                              started 00:16 · sequential   00:16
 ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ── queue ───────────────────────────────────────────────────────────────────────
 ✓ 401   ct-401           ok                0m00s  3 → 0 package(s) pending
@@ -380,7 +380,7 @@ step times update on log lines or state changes · log: /var/log/pxu/run-*.log
 Corrida terminada con fallos (el cortacircuito detuvo la cola tras 2 fallos seguidos):
 
 ```
-pxu · update run [MOCK]                            started  · sequential   00:16
+pxu · update run                                   started  · sequential   00:16
 ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
 ── queue ───────────────────────────────────────────────────────────────────────
 ✗ 421   ct-421           FAIL              0m00s  apt-get exited with 100; roll…
@@ -411,7 +411,7 @@ step times update on log lines or state changes · log: /var/log/pxu/run-*.log
 Lista los CT con updates incluidos por defecto (`Space` los excluye), muestra el plan por guest y el alcance del backup: backup y rollback cubren solo el rootfs; los bind mounts / `mp` con `backup=0` no se guardan ni se revierten ([ARCHITECTURE §3](ARCHITECTURE.es.md#3-actualización-pxu-update)).
 
 ```
-pxu [MOCK]                                       server · 2/3 up · 3 upd   00:16
+pxu                                              server · 2/3 up · 3 upd   00:16
 [All 3]  Run 2   Stop 1   Upd 3  / search…
 ────────────────────────────────────────────────────────────────────────────────
    ID  NAME    STATE    OS             CPU  RAM         UPD  BACKUP  AUTO
@@ -442,7 +442,7 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 Muestra el estado del timer `pxu-update` (unidades, activo, horario, próxima ejecución), la config (`/etc/pxu/config.toml`), CT con auto-update, `host_auto`, retención de logs y el estado de Apprise. `s` (o `S`) cambia el horario (escribe un drop-in de systemd), `n` edita Apprise (los secretos no se muestran y se guardan cifrados con systemd-creds; un secreto en claro de una config antigua sale como `plain text` con una nota para guardarlo en `n`), `d` los días de retención (0 = no borrar), `t` envía un aviso de prueba. El timer ejecuta `pxu check --notify` y luego `pxu update --yes`.
 
 ```
-pxu · config [MOCK]                                                        00:16
+pxu · config                                                               00:16
 config · automatic update schedule (systemd timer pxu-update) and notifications…
 ────────────────────────────────────────────────────────────────────────────────
 ┌ Schedule ────────────────────────────────────────────────────────────────────┐
@@ -471,7 +471,7 @@ the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th�
 Edición de Apprise:
 
 ```
-pxu · config [MOCK]                                                        00:16
+pxu · config                                                               00:16
 config · automatic update schedule (systemd timer pxu-update) and notifications…
 ────────────────────────────────────────────────────────────────────────────────
 ┌ Schedule ────────────────────────────────────────────────────────────────────┐
@@ -500,7 +500,7 @@ the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th�
 The confirmation (`Enter` in the window above) shows one block per state, one field per line with aligned labels and a blank line between sections; in `new` the fields that change are highlighted (bold). It always stays inside the content area of Config (it never covers the footer): when it is taller than the space, it drops first the blank lines (the top one, then the ones between blocks), then the «the rest of…» note, and finally cuts the end with «…». Notes that do not fit in one line continue with a hanging indent. At 80x24 the real case (urls → api_key, with tag) fits with no blank lines (drawing at 120x40):
 
 ```
-pxu · config [MOCK]                                                        00:16
+pxu · config                                                               00:16
 config · automatic update schedule (systemd timer pxu-update) and notifications…
 ────────────────────────────────────────────────────────────────────────────────
 ┌┌ Save the notifications? ───────────────────────────────────────────────────┐┐
@@ -531,7 +531,7 @@ the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th�
 `l` desde Lista o Config abre la lista de logs de corridas (más nuevo primero, una fila por archivo de `/var/log/pxu`: fecha, duración, resultado, tamaño); `Enter` abre el visor.
 
 ```
-pxu · log [RO] [MOCK]                                                      00:16
+pxu · log [RO]                                                             00:16
 run-20261104-0300.log · ❌  3 ok · 1 warn · 2 failed · 45m 11s
 ────────────────────────────────────────────────────────────────────────────────
 line 1
@@ -562,7 +562,7 @@ lines 1-17 of 100
 Se abre con `d` desde la lista (no hace falta la fila del host). Solo lectura: ejecuta únicamente lecturas de la allowlist y nunca entra a un CT.
 
 ```
-pxu · storage [RO] [MOCK]                                                  00:16
+pxu · storage [RO]                                                         00:16
 node server · 4 storages · 37 guests
 ── Storages ────────────────────────────────────────────────────────────────────
  local           dir     [██░░░░░░]  20.5G/100G  21%  2 bk · 2.4G · pxu target …
@@ -613,7 +613,7 @@ Un solo lugar: la **línea de estado** (entre las dos reglas del pie), que se bo
 `x` (también `q`, `Esc` o `Ctrl-C`) durante una corrida abre **Cancel run?**:
 
 ```
-pxu · update run [MOCK]                       started 00:16 · sequential   00:16
+pxu · update run                              started 00:16 · sequential   00:16
 ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ── queue ───────────────────────────────────────────────────────────────────────
 ✓ 401   ct-401           ok                0m00s  3 → 0 package(s) pending
