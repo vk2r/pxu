@@ -166,7 +166,7 @@ fn badges(app: &App) -> String {
     if app.read_only {
         s.push_str(" [RO]");
     }
-    if app.mock {
+    if app.mock && !app.hide_mock_badge {
         s.push_str(" [MOCK]");
     }
     s

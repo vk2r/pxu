@@ -18,7 +18,7 @@ shot() { # nombre: captura el panel con colores y lo pasa a PNG
 }
 run() { # inicia una sesión nueva con el caso mock dado
   $S kill-server 2>/dev/null || true
-  $S new-session -d -x 120 -y 40 "$BIN --mock $1"
+  $S new-session -d -x 120 -y 40 "PXU_MOCK_NO_BADGE=1 $BIN --mock $1"
   sleep 1.5
 }
 keys() { $S send-keys -t 0 "$@"; sleep 0.8; }

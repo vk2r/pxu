@@ -2626,3 +2626,11 @@ fn in_the_list_s_still_sorts_and_capital_s_opens_the_schedule() {
     assert_eq!(a.on_key(key(KeyCode::Char('s'))), Action::None);
     assert_ne!(a.sort, before);
 }
+
+#[test]
+fn mock_badge_hidden_only_with_the_screenshot_option() {
+    let mut a = app("demo");
+    assert!(render(&a, 120, 40, false).0.contains("[MOCK]"));
+    a.hide_mock_badge = true;
+    assert!(!render(&a, 120, 40, false).0.contains("[MOCK]"));
+}

@@ -446,6 +446,8 @@ pub struct App {
     /// Por qué la config no es utilizable (inválida, permisos…); se muestra en la lista. `None` si falta o es válida.
     pub ro_reason: Option<String>,
     pub mock: bool,
+    /// Solo capturas: oculta `[MOCK]` (PXU_MOCK_NO_BADGE=1, leída únicamente en modo mock).
+    pub hide_mock_badge: bool,
     pub status: String,
     pub clock: String,
     pub now_epoch: u64,
@@ -502,6 +504,7 @@ impl App {
             forced_ro: false,
             ro_reason: None,
             mock,
+            hide_mock_badge: mock && std::env::var_os("PXU_MOCK_NO_BADGE").is_some_and(|v| v == "1"),
             status: String::new(),
             clock: String::new(),
             now_epoch: 0,

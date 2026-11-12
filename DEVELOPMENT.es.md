@@ -38,6 +38,8 @@ mise run screenshots     # tmux (sin pantalla, 120×40) + freeze; compila antes 
 
 `screenshots/screenshots.sh` maneja la TUI con teclas y llama a `shot NN-nombre` por cada captura. Para agregar una, añade una línea `run <caso>; keys …; shot NN-nombre` y enlaza el PNG desde el README. Si ImageMagick (`magick`) está instalado, los PNG se reducen a una paleta de 96 colores (~3× más livianos). Usa solo datos del mock: sin IPs, nombres ni secretos reales.
 
+Las capturas se generan con `PXU_MOCK_NO_BADGE=1` (lo pone el script; solo vale con `--mock`), que oculta la etiqueta `[MOCK]` de la cabecera. Al ejecutar `pxu --mock` a mano sigue apareciendo.
+
 ## Dónde van los documentos
 
 - **`DEVELOPMENT.es.md`** (este archivo) y **`docs/`**: definiciones permanentes, en inglés y español (`.md` / `.es.md`, enlazados entre sí).
