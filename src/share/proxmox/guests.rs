@@ -86,7 +86,7 @@ pub(crate) fn parse_stat(s: &str) -> Option<(u64, u64)> {
 /// Versión corta de Proxmox VE: `9.0.11` (de `9.0.11~pve1` o `9.0.11+deb13`); `None` si no se puede leer.
 pub(crate) fn parse_pve_version(s: &str) -> Option<String> {
     let v = s.lines().next()?.trim();
-    let v = v.split(|c| matches!(c, '~' | '+' | '-')).next()?;
+    let v = v.split(['~', '+', '-']).next()?;
     (!v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.') && v.starts_with(|c: char| c.is_ascii_digit())).then(|| v.to_string())
 }
 

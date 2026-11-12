@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn auto_update_on_vmid_0_is_rejected() {
         let h = ReadOnlyHost::new(World::host_gpu().config_raw("[[ct]]\nvmid = 0\nauto_update = true\n").build());
-        let e = Config::load_checked(&h).err().expect("rejected");
+        let e = Config::load_checked(&h).expect_err("rejected");
         assert!(e.to_string().contains("vmid = 0") && e.to_string().contains("auto_update"), "{e}");
         // el motor tampoco lo respeta aunque la config se haya cargado sin validar
         let cfg = Config::load(&h).unwrap();

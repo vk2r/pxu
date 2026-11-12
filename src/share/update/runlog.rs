@@ -19,7 +19,7 @@ const HEAD_BYTES: usize = 4096;
 
 /// Segundos que hay que sumar a un epoch UTC para ver la hora local del servidor.
 pub fn local_offset(epoch: u64) -> i64 {
-    let t = epoch as libc::time_t;
+    let t = epoch as _;
     // SAFETY: `tm` es un struct plano que `localtime_r` rellena; `t` vive durante la llamada.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let ok = unsafe { !libc::localtime_r(&t, &mut tm).is_null() };

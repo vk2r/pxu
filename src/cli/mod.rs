@@ -14,7 +14,7 @@ use serde_json::json;
 use std::fmt::Write;
 use std::sync::atomic::AtomicBool;
 
-fn visible<'a>(inv: &'a Inventory, all_nodes: bool) -> Vec<&'a Guest> {
+fn visible(inv: &Inventory, all_nodes: bool) -> Vec<&Guest> {
     inv.guests.iter().filter(|g| all_nodes || g.state != RunState::Remote).collect()
 }
 
@@ -57,7 +57,7 @@ pub fn list_text(inv: &Inventory, all_nodes: bool) -> String {
     let mut out = String::new();
     let name_w = gs.iter().map(|g| g.name.chars().count()).max().unwrap_or(4).clamp(4, 24);
     let os_w = gs.iter().map(|g| g.os_label.chars().count()).max().unwrap_or(2).clamp(2, 20);
-    let _ = writeln!(out, "{:>5}  {:<4}  {:<name_w$}  {:<7}  {:<os_w$}  {:>11}  {:>9}  {:<16}  {:>11}  {}", "ID", "TYPE", "NAME", "STATE", "OS", "RAM", "DISK", "TAGS", "UPD all/sec", "AUTO");
+    let _ = writeln!(out, "{:>5}  {:<4}  {:<name_w$}  {:<7}  {:<os_w$}  {:>11}  {:>9}  {:<16}  {:>11}  AUTO", "ID", "TYPE", "NAME", "STATE", "OS", "RAM", "DISK", "TAGS", "UPD all/sec");
     for g in &gs {
         let state = if g.lock.is_some() { "locked" } else { match g.state { RunState::Running => "run", RunState::Stopped => "stopped", RunState::Remote => "remote" } };
         let _ = writeln!(

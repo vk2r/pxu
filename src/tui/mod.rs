@@ -31,7 +31,7 @@ fn epoch(h: &dyn Host) -> u64 {
 
 /// HH:MM:SS en hora local.
 pub fn hms(epoch: u64) -> String {
-    let t = epoch as libc::time_t;
+    let t = epoch as _;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&t, &mut tm) };
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
@@ -39,7 +39,7 @@ pub fn hms(epoch: u64) -> String {
 
 /// HH:MM en hora local (libc::localtime_r); con host mock, el reloj fijo del escenario.
 pub fn hhmm(epoch: u64) -> String {
-    let t = epoch as libc::time_t;
+    let t = epoch as _;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&t, &mut tm) };
     format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)

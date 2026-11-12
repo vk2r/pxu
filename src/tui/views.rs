@@ -24,7 +24,7 @@ pub struct Theme {
 
 impl Theme {
     pub fn from_env() -> Theme {
-        Theme { color: std::env::var_os("NO_COLOR").map_or(true, |v| v.is_empty()) }
+        Theme { color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) }
     }
     fn fg(&self, c: Color) -> Style {
         if self.color {
