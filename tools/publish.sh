@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Publish main to Forgejo; Forgejo's push mirror carries it to GitHub. Never forces.
 #   mise run publish            push main
-#   mise run publish -- v1.0.0  also create the annotated tag and push it together with main; on
-#                               GitHub the tag starts .github/workflows/release.yml (build, attest,
-#                               release)
+#   mise run publish -- v1.0.0  set the Cargo.toml version to 1.0.0 (and Cargo.lock) and commit it
+#                               if it differs, create the annotated tag and push it together with
+#                               main; on GitHub the tag starts .github/workflows/release.yml (build,
+#                               attest, release)
 # The repository URLs are not stored in .git: they are built from FORGEJO_URL and GITHUB_URL
 # (the account base, read from .env at the repository root, which git ignores) plus the name of
 # the repository folder. GitHub is only read, to refuse a tag that already exists there.
@@ -29,17 +30,28 @@ web="${web%/}/$project"
 tag=${1:-}
 
 [[ $(git rev-parse --abbrev-ref HEAD) == main ]] || die "not on main"
-[[ -z $(git status --porcelain) ]] || die "working tree is not clean"
+# With a tag, Cargo.toml and Cargo.lock may have changes: the version bump commits them.
+dirty=$(git status --porcelain)
+[[ -n $tag ]] && dirty=$(grep -vE '^ ?M  ?Cargo\.(toml|lock)$' <<<"$dirty" || true)
+[[ -z $dirty ]] || die "working tree is not clean"
 
 if [[ -n $tag ]]; then
-  [[ $tag == v* ]] || die "tag must start with v (release.yml listens to v*)"
-  version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
-  [[ $tag == "v$version" ]] || die "tag $tag does not match Cargo.toml version $version"
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "tag must look like v1.2.3 (release.yml listens to v*)"
   ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || die "tag $tag already exists locally"
   [[ -z $(git ls-remote --tags "$github" "refs/tags/$tag") ]] || die "tag $tag already exists on $github"
   [[ -z $(git ls-remote --tags "$forgejo" "refs/tags/$tag") ]] || die "tag $tag already exists on $forgejo"
 fi
 
+if [[ -n $tag ]]; then
+  version=${tag#v}
+  # Only the first version line: the one in [package].
+  sed -i '0,/^version = ".*"$/s//version = "'"$version"'"/' Cargo.toml
+  cargo update -w --offline -q
+  if [[ -n $(git status --porcelain Cargo.toml Cargo.lock) ]]; then
+    git commit -q -m "🔖 bump version to $version" -- Cargo.toml Cargo.lock
+    echo "publish: committed version $version"
+  fi
+fi
 sha=$(git rev-parse HEAD)
 refs=(main)
 if [[ -n $tag ]]; then

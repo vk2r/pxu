@@ -19,7 +19,7 @@ depends = ["release-build"]
 run = "tools/package.sh"
 
 [tasks.publish]
-description = "Sube main a Forgejo (el espejo lo lleva a GitHub); con -- v1.2.3 también crea y sube el tag, que lanza la release"
+description = "Sube main a Forgejo (el espejo lo lleva a GitHub); con -- v1.2.3 también pone esa versión en Cargo.toml, hace commit, crea y sube el tag, que lanza la release"
 usage = 'arg "[tag]" help="Tag de la versión, p. ej. v1.0.0"'
 run = 'tools/publish.sh ${usage_tag}'
 
