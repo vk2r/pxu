@@ -41,6 +41,9 @@ pub struct ExecOpts<'a> {
     /// Si pasa a `true` mientras corre, el host real manda SIGTERM al proceso (solo a él; sus hijos los limpia él mismo) y devuelve
     /// `Interrupted`. Solo para órdenes que se pueden abortar limpiamente (vzdump): nunca para apt/dpkg.
     pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// `true`: stderr va aparte (a `LineSink::err_line`) en vez de mezclarse con stdout. Para órdenes cuya stdout es un dato
+    /// (systemd-creds), donde un aviso en stderr lo corrompería.
+    pub split_stderr: bool,
 }
 
 /// Texto del error de `ExecOpts::cancel` (el motor lo reconoce por el tipo `Interrupted`).
@@ -53,6 +56,8 @@ pub struct ExitInfo {
 
 pub trait LineSink {
     fn line(&mut self, line: &str);
+    /// Línea de stderr cuando `ExecOpts::split_stderr`; por omisión se descarta.
+    fn err_line(&mut self, _line: &str) {}
 }
 
 impl LineSink for Vec<String> {

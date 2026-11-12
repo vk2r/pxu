@@ -551,7 +551,7 @@ impl World {
         for (id, lines) in &self.cts_cfg {
             s += &format!("\n[[ct]]\nvmid = {id}\n{}\n", lines.join("\n"));
         }
-        s + &format!("\n[apprise]\ntransport = \"auto\"\napi_url = \"{}\"\napi_key = \"pxu\"\nretry_delays_ms = []\n", self.apprise_url)
+        s + &format!("\n[apprise]\ntransport = \"auto\"\napi_url = \"{}\"\napi_key_enc = \"mockenc707875\"\nretry_delays_ms = []\n", self.apprise_url)
     }
 
     /// Materializa el host simulado (todo en memoria).

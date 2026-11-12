@@ -194,7 +194,7 @@ Only with `[update] host_nvidia_auto = true` (host) and `[[ct]] nvidia_auto = tr
 | `cli` | the `apprise` CLI with the URLs in the `APPRISE_URLS` variable |
 | `none` | no notifications |
 
-`pxu` never installs Python or pip. Secrets go **outside argv**: `curl` is given its configuration and the body through stdin (`curl --config -`). Timeout `timeout_s` (10 s) and retries with the waits from `retry_delays_ms` (default 5 s, 30 s, 2 min and 5 min, ~7.5 min), only for transient errors (curl failure, HTTP 408/424/429/5xx); any other 4xx (bad key, bad request) is not retried. `pxu check --notify` only uses the first two waits so it does not hold up the update that follows. Error messages are cleaned of keys and URLs.
+`pxu` never installs Python or pip. Secrets go **outside argv**: `curl` is given its configuration and the body through stdin (`curl --config -`). Timeout `timeout_s` (10 s) and retries with the waits from `retry_delays_ms` (default 5 s, 30 s, 2 min and 5 min, ~7.5 min), only for transient errors (curl failure, HTTP 408/424/429/5xx); any other 4xx (bad key, bad request) is not retried. `pxu check --notify` only uses the first two waits so it does not hold up the update that follows. Error messages are cleaned of keys and URLs. `api_key` and `urls` are stored encrypted and only decrypted right before sending (§4.6).
 
 ### 4.2 Events (`[apprise] on`)
 
@@ -219,13 +219,28 @@ Each update run (timer, `pxu update` or the TUI) ends with **a single notificati
 
 ### 4.5 Setup from the TUI
 
-In the Config view (`g`) the "Notifications (Apprise)" section shows the status of `[apprise]` with secrets hidden: `api_url` with only scheme and host, `api_key` as `•••` and each destination URL as `tgram://…`.
+In the Config view (`g`) the "Notifications (Apprise)" section shows the status of `[apprise]` with secrets hidden: `api_url` with only scheme and host, `api_key` as `•••` with `(set, encrypted)` or `(set, plain text)` (plus a note to save it in `n` to encrypt), and each destination URL as `tgram://…`; it also shows `tag` (or `—`).
 
-- `N` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots.
+- `n` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated), the `tag` (visible text, empty = the key is removed; letters, digits, `-_.,`; without a tag the Apprise API only notifies untagged targets) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots. On saving, the secret is written **encrypted** (§4.6).
 - With Enter it validates the entire resulting config with the same code as `pxu config check`; if it doesn't validate (or no usable transport remains) it writes nothing and says why. Then it asks for confirmation with "today → new" (secrets hidden): `y`/Enter saves, `b` goes back to editing, Esc cancels.
 - It saves only `[apprise]`: the rest of `config.toml` and its comments are preserved, the write is atomic (root, `0600`) and, if the file doesn't exist, it creates it. The key and the URLs are mutually exclusive: changing mode removes the other.
 - `t` sends a test notification, the same as `pxu notify-test` (shows "sending…", then OK or the error with code 5, without dumping secrets).
 - With `--read-only`, editing and testing are rejected: the test goes out over the network, so it counts as an action.
+
+### 4.6 Secrets: encryption with `systemd-creds`
+
+`systemd-creds` is read from **stdout only** (stderr is kept apart: it always warns that the host key is not on encrypted media, and that text must never end up inside the secret). `seal` checks that the output is base64 and decrypts it back: if the value does not match, it fails with «round-trip check failed» and nothing is written. `unseal` only drops the final newline.
+
+`[apprise] api_key` and `urls` are the only secrets pxu keeps. Saving them from the TUI (`g` → `n`) stores them **encrypted**:
+
+- **How:** `systemd-creds encrypt --name=pxu-apprise --with-key=auto - -` (the secret goes in through stdin). `auto` uses the TPM2 chip if the machine has a usable one and otherwise the host key `/var/lib/systemd/credential.secret` (systemd creates it, root-only). pxu has no cryptography of its own and no key inside the binary.
+- **In the file:** the result (base64, one line) is written as `api_key_enc` / `urls_enc` (the URLs are encrypted one per line) and the plain `api_key` / `urls` key is **deleted** in the same atomic write. Only the secret of the chosen mode is kept.
+- **When it is decrypted:** only right before a send (`notify::send_once`, the one entry point of every notice, test, queue flush and retry): `systemd-creds decrypt --name=pxu-apprise - -`, input and output through stdin/stdout. The decrypted value lives in a copy of the config that is dropped after the send; it never goes to argv, logs, the screen, the outbox queue or the `ps` list, and error messages are scrubbed of it.
+- **If it cannot be decrypted** (no `systemd-creds`, other machine, damaged value): nothing is sent, the error is `cannot decrypt apprise secret: …`, and the notice stays in the outbox queue like any failure (not retried in a loop: waiting does not fix it). `pxu notify-test` and the TUI show the error. pxu **never** falls back to plain text silently.
+- **Old configs:** a plain `api_key` / `urls` keeps working. `pxu config check` and the Config view say `stored in plain text — save it in Config → n to encrypt`; saving in `n` (even with the secret field empty) or `pxu config encrypt-secrets` encrypts what is stored. If a plain and an encrypted value coexist, the plain one wins and `config check` warns.
+- **Config view:** `api_key : ••• (set, encrypted)` or `(set, plain text)`; the "today → new" confirmation shows `•••` plus the same word.
+
+What this protects, honestly: **backups, copies of `config.toml` and other machines** (the ciphertext is bound to this host's key or TPM and to the name `pxu-apprise`, so it is useless anywhere else). What it does **not** protect: **root on the same host** can run `systemd-creds decrypt --name=pxu-apprise` (or read pxu's memory) and get the secret; no program can prevent that, because the key lives on the same machine. The file stays `0600` root. A backup that also copies `/var/lib/systemd/credential.secret` carries the key with it. The traffic to the Apprise API is as private as its URL: with `http://` the key travels unencrypted on the network.
 
 ---
 
@@ -270,8 +285,10 @@ min_free_gb = 5               # minimum spare GiB on the storage (or 10% of tota
 [apprise]
 transport = "auto"            # "auto" | "api" | "cli" | "none"
 api_url = ""
-api_key = ""
-urls = []                     # stateless / CLI mode
+api_key = ""                 # plain text (old configs); the TUI saves api_key_enc instead (§4.6)
+urls = []                     # stateless / CLI mode (plain text, same)
+api_key_enc = ""              # written by the TUI: api_key encrypted with systemd-creds
+urls_enc = ""
 tag = ""
 on = ["updates_found", "update_failed", "run_summary", "check_error"]
 timeout_s = 10
@@ -317,7 +334,8 @@ pxu notify-flush
 
 - `update` without arguments updates the CTs with `auto_update` that have a recent positive check. With `[update] host_auto`, it starts with the host. `--yes` / `-y` skips the confirmations (the timer uses it); `--no-notify` suppresses the notification.
 - `--json`: one document per execution with `"schema": 1`.
-- `pxu config check` validates TOML, values, unknown keys, mode `0600` and owner `root`; it doesn't print secrets.
+- `pxu config check` validates TOML, values, unknown keys, mode `0600` and owner `root`; it doesn't print secrets, and notes an `[apprise]` secret stored in plain text.
+- `pxu config encrypt-secrets` encrypts a plain-text `[apprise]` `api_key` / `urls` with `systemd-creds` (same result as saving in `n`; needs root; nothing to do → exit 0).
 - `--mock CASE` or `PXU_MOCK=CASE` only exists in builds with the `mock` feature (§8); the production binary rejects it with exit 2.
 
 **Exit codes**
@@ -394,7 +412,7 @@ One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the n
 - The TUI lists and opens them with the `l` key (up to `LIST_MAX = 1000` logs and `VIEW_MAX_LINES = 100 000` lines); see DESIGN §5.
 - Each run writes **one log**: `/var/log/pxu/run-YYYYMMDD-HHMM.log` (UTC in the name; `-SS` if one from that minute already exists; `0600`). It is created at the start and grows while it runs: one section per host, NVIDIA driver and CT, with the time of each line, and at the end the summary identical to the notification; it is also written if the run is stopped or cancelled (with the reason). `/var/log/pxu/<vmid>/…`, `host-….log` and `nvidia-….log` are no longer created. An abrupt cut (SIGKILL, host crash) leaves the log partial, which the Logs page lists as `⛔ INCOMPLETE`.
 - `[general] log_retention_days = 30` (default): when each run ends, pxu logs older than N days are deleted, including the old formats and empty `<vmid>` folders; `0` = never delete (max 3650). Only regular files with a pxu name inside `/var/log/pxu` are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
-- TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `L` in the Config view edits `log_retention_days`.
+- TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `d` in the Config view edits `log_retention_days`.
 - Results shown in the Logs page: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` if something failed, `⛔ STOPPED` if the run was stopped, and `⛔ INCOMPLETE` if it was cut off abruptly (for example, the server shut down mid-run) or is still in progress. The list says "no run logs yet" until there has been a run.
 
 ---

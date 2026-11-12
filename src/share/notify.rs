@@ -25,6 +25,12 @@ pub struct AppriseCfg {
     /// Modo stateless (o CLI): URLs de destino de Apprise. También `APPRISE_URLS` (espacios o comas).
     #[serde(default)]
     pub urls: Vec<String>,
+    /// `api_key` cifrada con `systemd-creds` (base64 en una línea). Se descifra solo al enviar (ARCHITECTURE §4).
+    #[serde(default)]
+    pub api_key_enc: String,
+    /// `urls` cifradas con `systemd-creds` (una por línea antes de cifrar), base64 en una línea.
+    #[serde(default)]
+    pub urls_enc: String,
     #[serde(default)]
     pub tag: String,
     #[serde(default = "d_on")]
@@ -54,7 +60,7 @@ fn d_retry() -> Vec<u64> {
 
 impl Default for AppriseCfg {
     fn default() -> Self {
-        AppriseCfg { transport: d_transport(), api_url: String::new(), api_key: String::new(), urls: vec![], tag: String::new(), on: d_on(), timeout_s: d_timeout(), retry_delays_ms: d_retry() }
+        AppriseCfg { transport: d_transport(), api_url: String::new(), api_key: String::new(), urls: vec![], api_key_enc: String::new(), urls_enc: String::new(), tag: String::new(), on: d_on(), timeout_s: d_timeout(), retry_delays_ms: d_retry() }
     }
 }
 
@@ -69,6 +75,91 @@ impl AppriseCfg {
     pub fn wants(&self, event: &str) -> bool {
         self.on.iter().any(|e| e == event)
     }
+    /// ¿Hay clave de la API (en claro o cifrada)?
+    pub fn has_key(&self) -> bool {
+        !self.api_key.is_empty() || !self.api_key_enc.is_empty()
+    }
+    /// ¿Hay URLs de destino (en claro o cifradas)?
+    pub fn has_urls(&self) -> bool {
+        !self.urls.is_empty() || !self.urls_enc.is_empty()
+    }
+    /// Secretos guardados en claro en el config (conviene guardarlos de nuevo en la TUI para cifrarlos).
+    pub fn has_plain_secret(&self) -> bool {
+        !self.api_key.is_empty() || !self.urls.is_empty()
+    }
+    /// Copia con los secretos cifrados ya descifrados (`systemd-creds decrypt`, entrada y salida por stdin/stdout).
+    /// Un valor en claro que ya esté en memoria (config en claro o `APPRISE_URLS`) tiene prioridad y no se descifra nada.
+    /// Falla con «cannot decrypt apprise secret: …» si no se puede; nunca cae a texto plano en silencio.
+    pub fn reveal(&self, host: &dyn Host) -> Result<AppriseCfg, String> {
+        let mut c = self.clone();
+        if c.api_key.is_empty() && !c.api_key_enc.is_empty() {
+            c.api_key = unseal(host, &c.api_key_enc)?;
+        }
+        if c.urls.is_empty() && !c.urls_enc.is_empty() {
+            c.urls = unseal(host, &c.urls_enc)?.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+        }
+        Ok(c)
+    }
+}
+
+/// Nombre de la credencial: el texto cifrado solo se descifra con este mismo nombre.
+pub const CREDS_NAME: &str = "pxu-apprise";
+/// Cifrado: TPM2 si hay; si no, la llave del host (`/var/lib/systemd/credential.secret`, la crea systemd).
+pub const CREDS_ENCRYPT: &[&str] = &["systemd-creds", "encrypt", "--name=pxu-apprise", "--with-key=auto", "-", "-"];
+pub const CREDS_DECRYPT: &[&str] = &["systemd-creds", "decrypt", "--name=pxu-apprise", "-", "-"];
+
+/// stdout (el dato) y stderr (avisos de systemd-creds) van por separado: un aviso nunca se mezcla con el resultado.
+#[derive(Default)]
+struct CredsOut {
+    out: Vec<String>,
+    err: Vec<String>,
+}
+impl LineSink for CredsOut {
+    fn line(&mut self, l: &str) {
+        self.out.push(l.to_string());
+    }
+    fn err_line(&mut self, l: &str) {
+        self.err.push(l.to_string());
+    }
+}
+
+fn creds(host: &dyn Host, argv: &[&str], stdin: &str, timeout_s: u64) -> Result<Vec<String>, String> {
+    let opts = ExecOpts { timeout_s: Some(timeout_s), stdin: Some(stdin.as_bytes().to_vec()), split_stderr: true, ..Default::default() };
+    let mut o = CredsOut::default();
+    match host.host_cmd(argv, &opts, &mut o) {
+        Ok(e) if e.code == 0 => Ok(o.out),
+        // solo en el error y solo de stderr: es el mensaje de systemd-creds, nunca el secreto
+        Ok(e) => Err(format!("systemd-creds exited with {}{}", e.code, o.err.first().map(|l| format!(": {}", l.chars().take(100).collect::<String>())).unwrap_or_default())),
+        Err(e) => Err(format!("systemd-creds: {e}")),
+    }
+}
+
+/// Cifra `plain` con `systemd-creds`; devuelve el texto base64 en una sola línea.
+/// Valida que sea base64 y lo descifra de vuelta: si no da el mismo valor, error y nada se guarda.
+pub fn seal(host: &dyn Host, plain: &str) -> Result<String, String> {
+    let lines = creds(host, CREDS_ENCRYPT, plain, 20).map_err(|e| format!("cannot encrypt the apprise secret: {e}"))?;
+    let enc: String = lines.iter().flat_map(|l| l.split_whitespace()).collect();
+    if enc.is_empty() {
+        return Err("cannot encrypt the apprise secret: systemd-creds returned nothing".into());
+    }
+    if !enc.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=')) {
+        return Err("cannot encrypt the apprise secret: systemd-creds output is not base64".into());
+    }
+    match unseal(host, &enc) {
+        Ok(back) if back == plain => Ok(enc),
+        _ => Err("cannot encrypt the apprise secret: round-trip check failed".into()),
+    }
+}
+
+/// Descifra el texto de `seal`. El resultado es un secreto: no se imprime ni se registra.
+/// Solo stdout; solo se pierde el salto de línea final, los espacios del secreto se conservan.
+pub fn unseal(host: &dyn Host, enc: &str) -> Result<String, String> {
+    let lines = creds(host, CREDS_DECRYPT, enc, 20).map_err(|e| format!("cannot decrypt apprise secret: {e}"))?;
+    let plain = lines.join("\n");
+    if plain.is_empty() {
+        return Err("cannot decrypt apprise secret: systemd-creds returned nothing".into());
+    }
+    Ok(plain)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,9 +205,9 @@ fn apprise_installed(host: &dyn Host) -> bool {
 pub fn resolve(host: &dyn Host, c: &AppriseCfg) -> Transport {
     match c.transport.as_str() {
         "api" if !c.api_url.is_empty() => Transport::Api,
-        "cli" if !c.urls.is_empty() => Transport::Cli,
+        "cli" if c.has_urls() => Transport::Cli,
         "auto" if !c.api_url.is_empty() => Transport::Api,
-        "auto" if !c.urls.is_empty() && apprise_installed(host) => Transport::Cli,
+        "auto" if c.has_urls() && apprise_installed(host) => Transport::Cli,
         _ => Transport::None,
     }
 }
@@ -178,6 +269,16 @@ impl LineSink for Out {
 /// Un intento de envío con el transporte resuelto. `Err` = motivo corto, sin secretos.
 pub fn send_once(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transport, String> {
     let t = resolve(host, c);
+    if t == Transport::None {
+        return Err("no Apprise transport configured (set [apprise] api_url, or urls with the apprise CLI installed)".into());
+    }
+    // Descifrado justo antes de enviar; el valor claro solo vive aquí y se pasa por stdin.
+    let rc = c.reveal(host)?;
+    let c = &rc;
+    send_revealed(host, c, m, t).map_err(|e| scrub(c, &e))
+}
+
+fn send_revealed(host: &dyn Host, c: &AppriseCfg, m: &Message, t: Transport) -> Result<Transport, String> {
     let (argv, stdin): (Vec<String>, String) = match t {
         Transport::None => return Err("no Apprise transport configured (set [apprise] api_url, or urls with the apprise CLI installed)".into()),
         Transport::Api => (vec!["curl".into(), "--config".into(), "-".into()], curl_config(c, m)),
@@ -198,6 +299,10 @@ pub fn send_once(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transpo
 
 /// ¿El error merece otro intento? Un 4xx de Apprise (salvo 408/424/429) es de configuración: reintentar no lo arregla.
 fn transient(err: &str) -> bool {
+    // un secreto que no se puede (des)cifrar es un problema de la máquina: esperar no lo arregla (el aviso queda en la cola)
+    if err.starts_with("cannot decrypt apprise secret") {
+        return false;
+    }
     let Some(i) = err.find("returned error: ") else { return true };
     let code: u32 = err[i + 16..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0);
     matches!(code, 408 | 424 | 429) || code >= 500 || code == 0
@@ -435,7 +540,7 @@ pub fn test_message(node: &str) -> Message {
 
 /// Quita de un texto (error de curl/apprise) la clave y las URLs de destino, por si el programa las repite.
 pub fn scrub(c: &AppriseCfg, s: &str) -> String {
-    c.urls.iter().chain(std::iter::once(&c.api_key)).filter(|x| !x.is_empty()).fold(s.to_string(), |a, x| a.replace(x.as_str(), "•••"))
+    c.urls.iter().chain(std::iter::once(&c.api_key)).chain(std::iter::once(&c.api_key_enc)).chain(std::iter::once(&c.urls_enc)).filter(|x| !x.is_empty()).fold(s.to_string(), |a, x| a.replace(x.as_str(), "•••"))
 }
 
 #[cfg(test)]
@@ -471,6 +576,13 @@ mod tests {
     }
 
     #[test]
+    fn curl_config_carries_the_tag() {
+        let c = curl_config(&AppriseCfg { tag: "system".into(), ..api("k") }, &msg());
+        assert!(c.contains(r#"\"tag\":\"system\""#), "{c}");
+        assert!(!curl_config(&api("k"), &msg()).contains("tag"));
+    }
+
+    #[test]
     fn curl_config_has_no_file_writing_options_and_resists_injection() {
         let mut c = api("k\"\noutput = \"/etc/cron.d/x");
         c.api_url = "http://a.example\nupload-file = \"/etc/shadow\"".into();
@@ -492,6 +604,91 @@ mod tests {
         c.transport = "none".into();
         assert_eq!(resolve(&h, &api("k")), Transport::Api);
         assert_eq!(resolve(&h, &c), Transport::None);
+    }
+
+    fn host_argv(h: &MockHost) -> Vec<Vec<String>> {
+        h.recorded().into_iter().filter_map(|r| if let crate::share::mock::Recorded::Host(a) = r { Some(a) } else { None }).collect()
+    }
+
+    #[test]
+    fn seal_ignores_the_stderr_warning_of_systemd_creds() {
+        let h = World::demo().build();
+        let enc = seal(&h, "SECRETKEY").unwrap();
+        assert!(enc.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)), "{enc}");
+        assert!(!enc.contains("Credential") && !enc.contains("encrypted") && !enc.contains("anyway"), "{enc}");
+        assert_eq!(unseal(&h, &enc).unwrap(), "SECRETKEY");
+    }
+
+    #[test]
+    fn unseal_keeps_inner_spaces_of_the_secret() {
+        let h = World::demo().build();
+        let enc = seal(&h, " a b  c ").unwrap();
+        assert_eq!(unseal(&h, &enc).unwrap(), " a b  c ");
+    }
+
+    #[test]
+    fn seal_fails_when_the_round_trip_does_not_match() {
+        let h = World::demo().build();
+        let e = seal(&h, "xMOCK_BAD_ROUNDTRIP").unwrap_err();
+        assert_eq!(e, "cannot encrypt the apprise secret: round-trip check failed");
+        assert!(!e.contains("MOCK_BAD"));
+    }
+
+    #[test]
+    fn encrypted_key_is_decrypted_only_to_send_and_never_reaches_argv() {
+        let h = World::demo().build();
+        let enc = seal(&h, "SECRETKEY").unwrap();
+        assert!(!enc.contains("SECRETKEY") && !enc.contains('\n') && !enc.is_empty());
+        let c = AppriseCfg { api_url: "http://apprise.example:8000".into(), api_key_enc: enc, retry_delays_ms: vec![], ..Default::default() };
+        assert!(c.api_key.is_empty() && c.has_key(), "nothing in clear in the loaded config");
+        assert_eq!(resolve(&h, &c), Transport::Api);
+        assert_eq!(send_once(&h, &c, &msg()), Ok(Transport::Api));
+        let cmds = host_argv(&h);
+        assert!(cmds.iter().any(|a| a == CREDS_DECRYPT), "{cmds:?}");
+        assert!(cmds.iter().any(|a| a == &["curl", "--config", "-"]), "{cmds:?}");
+        assert!(cmds.iter().flatten().all(|a| !a.contains("SECRETKEY")), "no secret in argv: {cmds:?}");
+        // la clave descifrada va en la URL de curl (stdin), como en modo claro
+        assert!(curl_config(&c.reveal(&h).unwrap(), &msg()).contains("/notify/SECRETKEY"));
+    }
+
+    #[test]
+    fn encrypted_urls_are_decrypted_for_the_stateless_api() {
+        let h = World::demo().build();
+        let c = AppriseCfg { api_url: "http://apprise.example:8000".into(), urls_enc: seal(&h, "tgram://TOK/1\nntfy://ntfy.sh/x").unwrap(), retry_delays_ms: vec![], ..Default::default() };
+        assert!(c.has_urls() && c.urls.is_empty());
+        let r = c.reveal(&h).unwrap();
+        assert_eq!(r.urls, ["tgram://TOK/1", "ntfy://ntfy.sh/x"]);
+        assert!(curl_config(&r, &msg()).contains("tgram://TOK/1,ntfy://ntfy.sh/x"));
+    }
+
+    #[test]
+    fn a_decrypt_failure_sends_nothing_and_never_falls_back_to_plain_text() {
+        let h = World::demo().build();
+        let c = AppriseCfg { api_url: "http://apprise.example:8000".into(), api_key_enc: "not-a-credential".into(), retry_delays_ms: vec![], ..Default::default() };
+        let e = send_once(&h, &c, &msg()).unwrap_err();
+        assert!(e.starts_with("cannot decrypt apprise secret: "), "{e}");
+        assert!(host_argv(&h).iter().all(|a| a[0] != "curl"), "curl never ran");
+        // no es transitorio (esperar no lo arregla) y el aviso queda en la cola de reintentos
+        assert!(!transient(&e));
+        assert_eq!(notify_with(&h, &c, &msg(), &[]), Outcome::Queued(e));
+        assert_eq!(outbox_len(&h), 1);
+    }
+
+    #[test]
+    fn a_plain_text_config_still_works_without_systemd_creds() {
+        let h = World::demo().build();
+        let c = AppriseCfg { api_url: "http://apprise.example:8000".into(), api_key: "PLAINKEY".into(), retry_delays_ms: vec![], ..Default::default() };
+        assert!(c.has_plain_secret());
+        assert_eq!(send_once(&h, &c, &msg()), Ok(Transport::Api));
+        assert!(host_argv(&h).iter().all(|a| a[0] != "systemd-creds"));
+    }
+
+    #[test]
+    fn scrub_also_hides_a_decrypted_value_echoed_by_curl() {
+        let h = World::demo().build();
+        let c = AppriseCfg { api_url: "http://a:1".into(), api_key_enc: seal(&h, "SECRETKEY").unwrap(), ..Default::default() };
+        let r = c.reveal(&h).unwrap();
+        assert!(!scrub(&r, "curl: (22) /notify/SECRETKEY").contains("SECRETKEY"));
     }
 
     #[test]

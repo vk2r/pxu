@@ -576,11 +576,51 @@ pub fn cmd_config_check(host: &dyn Host) -> i32 {
     if v.errors.is_empty() { 0 } else { EXIT_USAGE }
 }
 
+/// `pxu config encrypt-secrets`: cifra con systemd-creds la `api_key`/`urls` de `[apprise]` que estén en claro (lo mismo que guardar en la TUI).
+/// 0 hecho o nada que cifrar · 2 config inválida/sin permiso para escribir.
+pub fn cmd_config_encrypt_secrets(host: &dyn Host) -> i32 {
+    let cfg = match Config::load(host) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("pxu: {e}");
+            return EXIT_USAGE;
+        }
+    };
+    let a = &cfg.apprise;
+    if !a.has_plain_secret() {
+        println!("nothing to encrypt: no plain-text api_key or urls in {}", config::CONFIG_PATH);
+        return 0;
+    }
+    host.set_config_edit(true);
+    let edit = config::AppriseEdit { api_url: a.api_url.clone(), mode: if a.api_key.is_empty() { config::AppriseMode::Urls } else { config::AppriseMode::Key }, secret: String::new(), on: a.on.clone(), tag: a.tag.clone() };
+    match config::write_apprise(host, &edit) {
+        Ok(()) => {
+            println!("encrypted: the [apprise] secrets in {} are now stored with systemd-creds (no plain-text copy left)", config::CONFIG_PATH);
+            0
+        }
+        Err(e) => {
+            eprintln!("pxu: {e}");
+            EXIT_USAGE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pxu::share::host::ReadOnlyHost;
     use pxu::share::mock::scenario::World;
+
+    #[test]
+    fn encrypt_secrets_migrates_a_plain_config_and_is_a_no_op_afterwards() {
+        let raw = "[apprise]\napi_url = \"http://apprise.local:8000\"\napi_key = \"PLAINKEY\"\ntag = \"system\"\n";
+        let h = ReadOnlyHost::new(World::demo().config_raw(raw).build());
+        assert_eq!(cmd_config_encrypt_secrets(&h), 0);
+        let now = String::from_utf8(h.inner().read_file(std::path::Path::new(config::CONFIG_PATH)).unwrap()).unwrap();
+        assert!(now.contains("api_key_enc = \"mockenc") && !now.contains("PLAINKEY") && now.contains("tag = \"system\""), "{now}");
+        assert_eq!(cmd_config_encrypt_secrets(&h), 0, "nothing left to encrypt");
+        assert_eq!(Config::load(&h).unwrap().apprise.reveal(&h).unwrap().api_key, "PLAINKEY");
+    }
 
     #[test]
     fn update_exits_2_on_an_invalid_config_without_touching_anything() {

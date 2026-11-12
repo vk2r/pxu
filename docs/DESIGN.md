@@ -108,7 +108,7 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 
 ### 4.6 Config (`config_key`, `app.rs:682-696`)
 
-`S` schedule · `N` notifications (Apprise) · `L` log retention · `t` test notification · `l` logs · `r` re-read · `?` · `Esc`/`Backspace` back · `q` quit.
+`s` schedule · `n` notifications (Apprise) · `d` log retention (`S`/`N`/`L` also work, hidden) · `t` test notification · `l` logs · `r` re-read · `?` · `Esc`/`Backspace` back · `q` quit.
 
 ### 4.7 Logs (`logs.rs:80-140`)
 
@@ -440,7 +440,7 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 
 ### 5.6 Config, schedule and Apprise
 
-Shows the state of the `pxu-update` timer (units, active, schedule, next run), the config (`/etc/pxu/config.toml`), CTs with auto-update, `host_auto`, log retention and the Apprise state. `S` changes the schedule (writes a systemd drop-in), `N` edits Apprise (secrets are not shown), `L` the retention days (0 = never delete), `t` sends a test notification. The timer runs `pxu check --notify` and then `pxu update --yes`.
+Shows the state of the `pxu-update` timer (units, active, schedule, next run), the config (`/etc/pxu/config.toml`), CTs with auto-update, `host_auto`, log retention and the Apprise state. `s` (or `S`) changes the schedule (writes a systemd drop-in), `n` edits Apprise (secrets are not shown and are saved encrypted with systemd-creds; a plain-text secret from an old config is flagged `plain text` with a note to save it in `n`), `d` the retention days (0 = never delete), `t` sends a test notification. The timer runs `pxu check --notify` and then `pxu update --yes`.
 
 ```
 pxu · config [MOCK]                                                        00:16
@@ -461,11 +461,13 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 │ Notifications (Apprise)                                                      │
 │ status          : configured, sends via apprise-api (curl)                   │
 │ api_url         : http://apprise.local:8000                                  │
+│ api_key         : ••• (set, encrypted)                                       │
+│ tag             : system                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log retention  [t] test notice
+[s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log days  [l] logs  [?] help  [q] quit
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…
 ```
 
@@ -481,21 +483,48 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 ││ > API address              http://apprise.local:8000_                      ││
 ││   Sends with               (•) saved key in Apprise API  ( ) urls          ││
 ││   API key                  (stored — leave empty to keep)                  ││
+││   Tag                      system_                                         ││
 ││   Notify on                [x] updates_found                               ││
 ││                            [x] update_failed                               ││
 ││                            [x] run_summary                                 ││
 ││                            [x] check_error                                 ││
 ││                                                                            ││
-││ secrets are never shown; what you type appears as dots                     ││
+││ secrets are never shown (dots) and are saved encrypted (systemd-creds)     ││
+││ tag empty: only untagged targets of the key are notified                   ││
 ││                                                                            ││
 ││ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            ││
 │└────────────────────────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log retention  [t] test notice
+[s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log days  [l] logs  [?] help  [q] quit
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…
+```
+
+The confirmation (`Enter` in the window above) shows one block per state, one field per line with aligned labels and a blank line between sections; in `new` the fields that change are highlighted (bold). It always stays inside the content area of Config (it never covers the footer): when it is taller than the space, it drops first the blank lines (the top one, then the ones between blocks), then the «the rest of…» note, and finally cuts the end with «…». Notes that do not fit in one line continue with a hanging indent. At 80x24 the real case (urls → api_key, with tag) fits with no blank lines (drawing at 120x40):
+
+```
+┌ Save the notifications? ────────────────────────────────────────────────────┐
+│                                                                             │
+│ today                                                                       │
+│   api_url   http://192.168.1.28:8000                                        │
+│   urls      ••• (encrypted)                                                 │
+│   tag       system                                                          │
+│   on        update_failed, run_summary                                      │
+│                                                                             │
+│ new                                                                         │
+│   api_url   http://192.168.1.28:8000                                        │
+│   api_key   ••• (encrypted)                                                 │
+│   tag       system                                                          │
+│   on        update_failed, run_summary                                      │
+│                                                                             │
+│ · the stored urls are removed (the key and the urls exclude each other)     │
+│ · stored encrypted (systemd-creds); no plain-text copy stays in the file    │
+│ · the rest of /etc/pxu/config.toml is kept as it is                         │
+│                                                                             │
+│ [y/Enter] save  [b] back  [Esc] cancel                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.7 Logs

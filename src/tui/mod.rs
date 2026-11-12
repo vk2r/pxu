@@ -276,7 +276,7 @@ fn load_apprise(host: &dyn Host, app: &mut App) {
     app.apprise = Some(Config::load(host).map(|c| config::apprise_summary(host, &c.apprise)));
 }
 
-/// `N`: lee `[apprise]` (config válida) y abre el diálogo; con la config ausente parte de los valores por defecto.
+/// `n`: lee `[apprise]` (config válida) y abre el diálogo; con la config ausente parte de los valores por defecto.
 fn ask_apprise_modal(host: &dyn Host, app: &mut App) {
     match Config::load_checked(host) {
         Ok((c, _)) => app.open_apprise(AppriseModal::new(&c.apprise)),
@@ -337,6 +337,11 @@ fn notify_test(host: &dyn Host) -> Result<String, String> {
         Ok(t) => Ok(format!("test notice sent via {}: ok", t.label())),
         Err(e) => Err(format!("test notice failed (exit 5): {}", notify::scrub(&cfg.apprise, &e))),
     }
+}
+
+#[cfg(test)]
+pub(crate) fn notify_test_for_tests(host: &dyn Host) -> Result<String, String> {
+    notify_test(host)
 }
 
 /// Relee el estado del timer (lo muestra la vista Config).

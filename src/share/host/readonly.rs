@@ -62,6 +62,8 @@ impl<H: Host> ReadOnlyHost<H> {
 pub fn host_cmd_is_read_only(argv: &[&str]) -> bool {
     match argv {
         ["curl", "--config", "-"] => true,
+        // secretos de Apprise: cifrar/descifrar con systemd-creds (todo por stdin/stdout, nada en argv)
+        a if a == crate::share::notify::CREDS_ENCRYPT || a == crate::share::notify::CREDS_DECRYPT => true,
         // revisión del host (fase 1): solo lecturas y simulaciones; nunca instala (`-s`)
         a if a == hostcheck::APT_LIST || a == hostcheck::APT_SIM || a == hostcheck::LSPCI || a == hostcheck::DKMS => true,
         // versión instalada de Proxmox VE (solo lectura de la base de dpkg)

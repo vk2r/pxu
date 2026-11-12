@@ -194,7 +194,7 @@ Solo con `[update] host_nvidia_auto = true` (host) y `[[ct]] nvidia_auto = true`
 | `cli` | el CLI `apprise` con las URLs en la variable `APPRISE_URLS` |
 | `none` | sin avisos |
 
-`pxu` nunca instala Python ni pip. Los secretos van **fuera de argv**: a `curl` se le pasa su configuración y el cuerpo por stdin (`curl --config -`). Timeout `timeout_s` (10 s) y reintentos con las esperas de `retry_delays_ms` (por defecto 5 s, 30 s, 2 min y 5 min, ~7,5 min), solo ante errores transitorios (fallo de curl, HTTP 408/424/429/5xx); otro 4xx (clave o petición inválida) no se reintenta. `pxu check --notify` usa solo las dos primeras esperas para no demorar el update que sigue. Los mensajes de error se limpian de claves y URLs.
+`pxu` nunca instala Python ni pip. Los secretos van **fuera de argv**: a `curl` se le pasa su configuración y el cuerpo por stdin (`curl --config -`). Timeout `timeout_s` (10 s) y reintentos con las esperas de `retry_delays_ms` (por defecto 5 s, 30 s, 2 min y 5 min, ~7,5 min), solo ante errores transitorios (fallo de curl, HTTP 408/424/429/5xx); otro 4xx (clave o petición inválida) no se reintenta. `pxu check --notify` usa solo las dos primeras esperas para no demorar el update que sigue. Los mensajes de error se limpian de claves y URLs. `api_key` y `urls` se guardan cifradas y solo se descifran justo antes de enviar (§4.6).
 
 ### 4.2 Eventos (`[apprise] on`)
 
@@ -219,13 +219,28 @@ Cada corrida de update (timer, `pxu update` o la TUI) termina con **un solo avis
 
 ### 4.5 Configuración desde la TUI
 
-En la vista Config (`g`) la sección «Notifications (Apprise)» muestra el estado de `[apprise]` con los secretos tapados: la `api_url` solo con esquema y host, la `api_key` como `•••` y cada URL de destino como `tgram://…`.
+En la vista Config (`g`) la sección «Notifications (Apprise)» muestra el estado de `[apprise]` con los secretos tapados: la `api_url` solo con esquema y host, la `api_key` como `•••` con `(set, encrypted)` o `(set, plain text)` (y una nota para guardarla en `n` y cifrarla) y cada URL de destino como `tgram://…`; muestra también `tag` (o `—`).
 
-- `N` abre el diálogo: dirección de la API, modo (clave guardada en Apprise API **o** URLs directas, separadas por coma) y los eventos que avisan (`updates_found`, `update_failed`, `run_summary`, `check_error`). El secreto guardado no se muestra: con el campo vacío se conserva, y lo que escribes se pinta como puntos.
+- `n` abre el diálogo: dirección de la API, modo (clave guardada en Apprise API **o** URLs directas, separadas por coma), la etiqueta `tag` (texto visible, vacía = se borra la clave; letras, dígitos, `-_.,`; la Apprise API sin etiqueta solo avisa a los destinos sin etiqueta) y los eventos que avisan (`updates_found`, `update_failed`, `run_summary`, `check_error`). El secreto guardado no se muestra: con el campo vacío se conserva, y lo que escribes se pinta como puntos. Al guardar, el secreto se escribe **cifrado** (§4.6).
 - Con Enter valida la config resultante entera con el mismo código que `pxu config check`; si no valida (o no queda ningún transporte utilizable) no escribe nada y dice por qué. Luego pide confirmar con «hoy → nuevo» (secretos tapados): `y`/Enter guarda, `b` vuelve a editar, Esc cancela.
 - Guarda solo `[apprise]`: el resto de `config.toml` y sus comentarios se conservan, la escritura es atómica (root, `0600`) y, si el archivo no existe, lo crea. La clave y las URLs se excluyen entre sí: al cambiar de modo se quita la otra.
 - `t` envía un aviso de prueba, igual que `pxu notify-test` (muestra «enviando…», y luego OK o el error con código 5, sin volcar secretos).
 - Con `--read-only` la edición y la prueba se rechazan: la prueba sale por red, así que cuenta como acción.
+
+### 4.6 Secretos: cifrado con `systemd-creds`
+
+`systemd-creds` se lee **solo por stdout** (stderr va aparte: siempre avisa que la llave del host no está en un medio cifrado, y ese texto nunca debe quedar dentro del secreto). `seal` comprueba que la salida sea base64 y la descifra de vuelta: si el valor no coincide, falla con «round-trip check failed» y no se escribe nada. `unseal` solo quita el salto de línea final.
+
+`[apprise] api_key` y `urls` son los únicos secretos que guarda pxu. Al guardarlos desde la TUI (`g` → `n`) quedan **cifrados**:
+
+- **Cómo:** `systemd-creds encrypt --name=pxu-apprise --with-key=auto - -` (el secreto entra por stdin). `auto` usa el chip TPM2 si la máquina tiene uno utilizable y, si no, la llave del host `/var/lib/systemd/credential.secret` (la crea systemd, solo root). pxu no tiene criptografía propia ni una llave dentro del binario.
+- **En el archivo:** el resultado (base64, una línea) se escribe como `api_key_enc` / `urls_enc` (las URLs se cifran una por línea) y la clave en claro `api_key` / `urls` se **borra** en la misma escritura atómica. Solo se conserva el secreto del modo elegido.
+- **Cuándo se descifra:** solo justo antes de enviar (`notify::send_once`, la única entrada de todo aviso, prueba, vaciado de la cola y reintento): `systemd-creds decrypt --name=pxu-apprise - -`, entrada y salida por stdin/stdout. El valor descifrado vive en una copia de la config que se descarta tras el envío; nunca va a argv, logs, pantalla, la cola (outbox) ni a la lista de `ps`, y los mensajes de error se limpian de él.
+- **Si no se puede descifrar** (sin `systemd-creds`, otra máquina, valor dañado): no se envía nada, el error es `cannot decrypt apprise secret: …` y el aviso queda en la cola (outbox) como cualquier fallo (no se reintenta en bucle: esperar no lo arregla). `pxu notify-test` y la TUI muestran el error. pxu **nunca** cae a texto plano en silencio.
+- **Configs antiguas:** una `api_key` / `urls` en claro sigue funcionando. `pxu config check` y la vista Config avisan `stored in plain text — save it in Config → n to encrypt`; guardar en `n` (aunque el campo del secreto quede vacío) o `pxu config encrypt-secrets` cifra lo guardado. Si conviven un valor en claro y uno cifrado, gana el claro y `config check` avisa.
+- **Vista Config:** `api_key : ••• (set, encrypted)` o `(set, plain text)`; la confirmación «hoy → nuevo» muestra `•••` y la misma palabra.
+
+Qué protege, con honestidad: **respaldos, copias de `config.toml` y otras máquinas** (el texto cifrado está atado a la llave o al TPM de este host y al nombre `pxu-apprise`, así que no sirve en otro lado). Qué **no** protege: **root en el mismo host** puede ejecutar `systemd-creds decrypt --name=pxu-apprise` (o leer la memoria de pxu) y obtener el secreto; ningún programa lo puede impedir, porque la llave vive en la misma máquina. El archivo sigue en `0600` root. Un respaldo que también copie `/var/lib/systemd/credential.secret` se lleva la llave. El tráfico hacia la Apprise API es tan privado como su URL: con `http://` la clave viaja sin cifrar por la red.
 
 ---
 
@@ -270,8 +285,10 @@ min_free_gb = 5               # minimum spare GiB on the storage (or 10% of tota
 [apprise]
 transport = "auto"            # "auto" | "api" | "cli" | "none"
 api_url = ""
-api_key = ""
-urls = []                     # modo stateless / CLI
+api_key = ""                 # en claro (configs antiguas); la TUI guarda api_key_enc (§4.6)
+urls = []                     # modo stateless / CLI (en claro, igual)
+api_key_enc = ""              # la escribe la TUI: api_key cifrada con systemd-creds
+urls_enc = ""
 tag = ""
 on = ["updates_found", "update_failed", "run_summary", "check_error"]
 timeout_s = 10
@@ -317,7 +334,8 @@ pxu notify-flush
 
 - `update` sin argumentos actualiza los CT con `auto_update` que tengan un chequeo positivo reciente. Con `[update] host_auto`, empieza por el host. `--yes` / `-y` omite las confirmaciones (el timer lo usa); `--no-notify` suprime el aviso.
 - `--json`: un documento por ejecución con `"schema": 1`.
-- `pxu config check` valida TOML, valores, claves desconocidas, modo `0600` y dueño `root`; no imprime secretos.
+- `pxu config check` valida TOML, valores, claves desconocidas, modo `0600` y dueño `root`; no imprime secretos y avisa de un secreto de `[apprise]` guardado en claro.
+- `pxu config encrypt-secrets` cifra con `systemd-creds` la `api_key` / `urls` de `[apprise]` que estén en claro (mismo resultado que guardar en `n`; requiere root; sin nada que cifrar → exit 0).
 - `--mock CASE` o `PXU_MOCK=CASE` solo existe en builds con la feature `mock` (§8); el binario de producción lo rechaza con exit 2.
 
 **Códigos de salida**
@@ -394,7 +412,7 @@ Un log por corrida: `/var/log/pxu/run-AAAAMMDD-HHMM[SS][-N].log` (hora UTC en el
 - La TUI los lista y los abre con la tecla `l` (hasta `LIST_MAX = 1000` logs y `VIEW_MAX_LINES = 100 000` líneas); ver DESIGN §5.
 - Cada corrida escribe **un log**: `/var/log/pxu/run-AAAAMMDD-HHMM.log` (UTC en el nombre; `-SS` si ya existe uno de ese minuto; `0600`). Se crea al empezar y crece mientras corre: una sección por host, driver NVIDIA y CT, con la hora de cada línea, y al terminar el resumen igual que el aviso; también se escribe si la corrida se detiene o se cancela (con el motivo). Ya no se crean `/var/log/pxu/<vmid>/…`, `host-….log` ni `nvidia-….log`. Un corte brusco (SIGKILL, caída del host) deja el log parcial, que la página Logs lista como `⛔ INCOMPLETE`.
 - `[general] log_retention_days = 30` (por defecto): al acabar cada corrida se borran los logs de pxu con más de N días, incluidos los formatos viejos y las carpetas `<vmid>` vacías; `0` = no borrar nunca (máx. 3650). Solo se tocan archivos normales con nombre de pxu dentro de `/var/log/pxu` (no se siguen enlaces simbólicos). `logs_per_ct` ya no existe: se acepta y se ignora (aviso de config obsoleta).
-- TUI: `l` abre la página **Logs** (fecha, duración, resultado y tamaño, del más nuevo al más viejo; ↑↓/jk, clic para elegir, doble clic o Enter para abrir). En el visor: flechas, PgUp/PgDn y rueda para desplazar, `g`/`G` principio/final, `n`/`p` log siguiente/anterior, `q`/Esc vuelve a la lista con el mismo log elegido. `L` en la vista Config edita `log_retention_days`.
+- TUI: `l` abre la página **Logs** (fecha, duración, resultado y tamaño, del más nuevo al más viejo; ↑↓/jk, clic para elegir, doble clic o Enter para abrir). En el visor: flechas, PgUp/PgDn y rueda para desplazar, `g`/`G` principio/final, `n`/`p` log siguiente/anterior, `q`/Esc vuelve a la lista con el mismo log elegido. `d` en la vista Config edita `log_retention_days`.
 - Resultados que muestra la página Logs: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` si algo falló, `⛔ STOPPED` si la corrida se detuvo, y `⛔ INCOMPLETE` si se cortó de golpe (por ejemplo, el servidor se apagó a mitad) o sigue en marcha. La lista dice «no run logs yet» hasta que haya una corrida.
 
 ---

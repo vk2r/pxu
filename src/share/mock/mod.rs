@@ -424,6 +424,32 @@ impl Host for MockHost {
         if let Some(r) = self.nvidia_cmd(argv, s) {
             return r;
         }
+        // systemd-creds simulado: «cifra» con un prefijo reversible (solo para tests); descifrar falla si no es de este mock
+        if let ["systemd-creds", verb, "--name=pxu-apprise", ..] = argv {
+            let inp = o.stdin.as_deref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+            if *verb == "encrypt" {
+                // el systemd-creds real avisa SIEMPRE por stderr; con stderr mezclado corrompería el resultado
+                s.err_line("Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.");
+                s.line(&format!("mockenc{}", inp.bytes().map(|b| format!("{b:02x}")).collect::<String>()));
+                return Ok(ExitInfo { code: 0 });
+            }
+            let dec = inp.trim().strip_prefix("mockenc").filter(|h| h.len() % 2 == 0).and_then(|h| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect::<Option<Vec<u8>>>());
+            return match dec {
+                // marcador de test: simula un cifrado cuya ida y vuelta no devuelve el mismo valor
+                Some(b) if b.windows(18).any(|w| w == b"MOCK_BAD_ROUNDTRIP") => {
+                    s.line("garbage");
+                    Ok(ExitInfo { code: 0 })
+                }
+                Some(b) => {
+                    s.line(&String::from_utf8_lossy(&b));
+                    Ok(ExitInfo { code: 0 })
+                }
+                None => {
+                    s.line("Failed to decrypt: Bad message");
+                    Ok(ExitInfo { code: 1 })
+                }
+            };
+        }
         // curl simulado (Apprise): lee la config por stdin; falla si el destino es down.invalid.
         if argv.first() == Some(&"curl") {
             if o.stdin.as_deref().is_some_and(|d| String::from_utf8_lossy(d).contains("down.invalid")) {

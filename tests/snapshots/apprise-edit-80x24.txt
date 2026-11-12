@@ -2,23 +2,23 @@ pxu · config [MOCK]                                                        00:1
 config · automatic update schedule (systemd timer pxu-update) and notifications…
 ────────────────────────────────────────────────────────────────────────────────
 ┌ Schedule ────────────────────────────────────────────────────────────────────┐
-│ units installed : yes                                                        │
 │┌ Notifications (Apprise) ───────────────────────────────────────────────────┐│
 ││ > API address              http://apprise.local:8000_                      ││
 ││   Sends with               (•) saved key in Apprise API  ( ) urls          ││
 ││   API key                  (stored — leave empty to keep)                  ││
+││   Tag                      (none)                                          ││
 ││   Notify on                [x] updates_found                               ││
 ││                            [x] update_failed                               ││
 ││                            [x] run_summary                                 ││
 ││                            [x] check_error                                 ││
 ││                                                                            ││
-││ secrets are never shown; what you type appears as dots                     ││
+││ secrets are never shown (dots) and are saved encrypted (systemd-creds)     ││
+││ tag empty: only untagged targets of the key are notified                   ││
 ││                                                                            ││
-││ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            ││
-└└────────────────────────────────────────────────────────────────────────────┘┘
+└│ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            │┘
+─└────────────────────────────────────────────────────────────────────────────┘─
+[s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log retention  [t] test notice
-────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log days  [l] logs  [t] test  [r] re-read
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read
 [Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…

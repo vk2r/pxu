@@ -7,17 +7,23 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 │ schedule        : Mon..Fri *-*-* 03:00                                                                               │
 │ next run        : Tue 2026-11-10 04:35:12 -03                                                                        │
 │ times are the server's                                                                                               │
-│                                                                                                                      │
-│ config          : /etc/pxu/config.toml                                                                               │
-│ CTs with auto-update: 8                                                                                              │
-│ host_auto       : no — the scheduled run never touches the host                                                      │
-│ log retention   : 30 days (run logs in /var/log/pxu older than this are deleted after each run)                      │
-│                                                                                                                      │
-│ Notifications (Apprise)                                                                                              │
-│ status  ┌ Save the notifications? ─────────────────────────────────────────────────────────────────────────┐         │
-│ api_url │ today: api_url http://apprise.local:8000 · api_key ••• · on all events                           │         │
-│ api_key │ new  : api_url http://apprise.local:8000 · api_key ••• · on all events                           │         │
-│ events  │ the rest of /etc/pxu/config.toml is kept as it is                                                │         │
+│         ┌ Save the notifications? ─────────────────────────────────────────────────────────────────────────┐         │
+│ config  │                                                                                                  │         │
+│ CTs with│ today                                                                                            │         │
+│ host_aut│   api_url   http://192.168.1.28:8000                                                             │         │
+│ log rete│   urls      ••• (encrypted)                                                                      │         │
+│         │   tag       system                                                                               │         │
+│ Notifica│   on        update_failed, run_summary                                                           │         │
+│ status  │                                                                                                  │         │
+│ api_url │ new                                                                                              │         │
+│ urls    │   api_url   http://192.168.1.28:8000                                                             │         │
+│ tag     │   api_key   ••• (encrypted)                                                                      │         │
+│ events  │   tag       system                                                                               │         │
+│         │   on        update_failed, run_summary                                                           │         │
+│         │                                                                                                  │         │
+│         │ · the stored urls are removed (the key and the urls exclude each other)                          │         │
+│         │ · stored encrypted (systemd-creds); no plain-text copy stays in the file                         │         │
+│         │ · the rest of /etc/pxu/config.toml is kept as it is                                              │         │
 │         │                                                                                                  │         │
 │         │ [y/Enter] save  [b] back  [Esc] cancel                                                           │         │
 │         └──────────────────────────────────────────────────────────────────────────────────────────────────┘         │
@@ -26,15 +32,9 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log retention  [t] test notice
+[s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[S] schedule  [N] notifications  [L] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; then the CTs with auto-update)

@@ -846,7 +846,7 @@ fn save_apprise(h: &ReadOnlyHost<MockHost>, a: &mut App) {
     super::save_apprise(h, a, &e);
 }
 
-/// Pasa al campo `n` (0 = api_url, 1 = modo, 2 = secreto, 3.. = eventos).
+/// Pasa al campo `n` (0 = api_url, 1 = modo, 2 = secreto, 3 = tag, 4.. = eventos).
 fn to_field(a: &mut App, n: usize) {
     while a.apprise_modal.as_ref().unwrap().field != n {
         a.on_key(key(KeyCode::Tab));
@@ -866,7 +866,7 @@ fn config_view_masks_apprise_secrets() {
         }
     }
     let (out, _) = render(&a, 120, 40, true);
-    assert!(out.contains("http://apprise.local:8000") && out.contains("api_key         : ••• (set)") && out.contains("tgram://…, ntfy://…") && out.contains("updates_found"), "{out}");
+    assert!(out.contains("http://apprise.local:8000") && out.contains("api_key         : ••• (set, plain text)") && out.contains("stored in plain text — save it in Config → n to encrypt") && out.contains("tgram://…, ntfy://…") && out.contains("updates_found"), "{out}");
     // sin [apprise]
     let h = ReadOnlyHost::new(World::demo().config_raw(KEEP).build());
     let mut a = timer_app(&h);
@@ -895,21 +895,21 @@ fn saving_an_api_key_keeps_the_rest_of_the_file_and_masks_the_confirmation() {
     assert!(!out.contains(SECRET_KEY) && out.contains("••••"), "typed secret shown as dots:\n{out}");
     check_apprise(&h, &mut a);
     let m = a.apprise_modal.as_ref().unwrap();
-    let t = m.lines.join("|");
-    assert!(t.contains("today: api_url http://old.example:8000 · urls ntfy://…") && t.contains("new  : api_url http://apprise.local:8000 · api_key •••") && t.contains("urls are removed") && !t.contains(SECRET_KEY), "{t}");
+    let t = m.lines.join("|").replace('\u{1}', " ");
+    assert!(t.contains("today|  api_url ") && t.contains("http://old.example:8000") && t.contains("urls      ntfy://…") && t.contains("|new|") && t.contains("api_key   ••• (encrypted)") && t.contains("urls are removed") && !t.contains(SECRET_KEY), "{t}");
     let (out, _) = render(&a, 120, 40, true);
     assert!(out.contains("Save the notifications?") && !out.contains(SECRET_KEY), "{out}");
     assert!(!cfg_text(&h).contains(SECRET_KEY), "nothing written before confirming");
     save_apprise(&h, &mut a);
     let now = cfg_text(&h);
-    assert!(now.starts_with(KEEP) && now.contains(&format!("api_key = \"{SECRET_KEY}\"")) && now.contains("api_url = \"http://apprise.local:8000\"") && !now.contains("urls =") && now.contains("# keep this comment"), "{now}");
+    assert!(now.starts_with(KEEP) && now.contains("api_key_enc = \"mockenc") && !now.contains(SECRET_KEY) && !now.contains("api_key = ") && now.contains("api_url = \"http://apprise.local:8000\"") && !now.contains("urls") && now.contains("# keep this comment"), "{now}");
     assert!(a.apprise_modal.is_none() && a.status.contains("saved"), "{}", a.status);
     assert!(!a.status.contains(SECRET_KEY));
     let (_, w) = pxu::share::config::Config::load_checked(&h).unwrap();
     assert!(w.iter().all(|w| !w.contains("[apprise]")), "{w:?}");
     // la vista Config se recargó, enmascarada
     let v = a.apprise.as_ref().unwrap().as_ref().unwrap().join("|");
-    assert!(v.contains("api_key         : ••• (set)") && !v.contains(SECRET_KEY), "{v}");
+    assert!(v.contains("api_key         : ••• (set, encrypted)") && !v.contains(SECRET_KEY) && !v.contains("plain text"), "{v}");
 }
 
 #[test]
@@ -922,13 +922,14 @@ fn saving_urls_writes_an_array() {
     to_field(&mut a, 2);
     typed(&mut a, &format!("{SECRET_URL}, ntfy://ntfy.sh/mi-tema"));
     check_apprise(&h, &mut a);
-    let t = a.apprise_modal.as_ref().unwrap().lines.join("|");
-    assert!(t.contains("urls tgram://… ntfy://…") && t.contains("api_key is removed") && !t.contains("AAH-TOKEN") && !t.contains("mi-tema"), "{t}");
+    let t = a.apprise_modal.as_ref().unwrap().lines.join("|").replace('\u{1}', " ");
+    assert!(t.contains("urls      ••• (encrypted)") && t.contains("api_key is removed") && !t.contains("AAH-TOKEN") && !t.contains("mi-tema"), "{t}");
     save_apprise(&h, &mut a);
     let now = cfg_text(&h);
-    assert!(now.starts_with(KEEP) && now.contains(SECRET_URL) && now.contains("ntfy://ntfy.sh/mi-tema") && !now.contains("api_key"), "{now}");
+    assert!(now.starts_with(KEEP) && now.contains("urls_enc = \"mockenc") && !now.contains(SECRET_URL) && !now.contains("mi-tema") && !now.contains("api_key"), "{now}");
     let (c, _) = pxu::share::config::Config::load_checked(&h).unwrap();
-    assert_eq!(c.apprise.urls.len(), 2);
+    assert!(c.apprise.urls.is_empty(), "no plain copy");
+    assert_eq!(c.apprise.reveal(&h).unwrap().urls.len(), 2);
 }
 
 #[test]
@@ -938,15 +939,16 @@ fn changing_only_the_events_keeps_the_stored_secret_when_the_field_is_left_empty
     open_apprise(&h, &mut a);
     let (out, _) = render(&a, 120, 40, true);
     assert!(out.contains("(stored — leave empty to keep)") && !out.contains(SECRET_KEY), "{out}");
-    to_field(&mut a, 3);
+    to_field(&mut a, 4);
     a.on_key(key(KeyCode::Char(' '))); // updates_found fuera
-    to_field(&mut a, 5);
+    to_field(&mut a, 6);
     a.on_key(key(KeyCode::Char(' '))); // run_summary fuera
     check_apprise(&h, &mut a);
-    assert!(a.apprise_modal.as_ref().unwrap().lines.join("|").contains("on update_failed,check_error"));
+    assert!(a.apprise_modal.as_ref().unwrap().lines.join("|").contains("on        update_failed, check_error"));
     save_apprise(&h, &mut a);
     let (c, _) = pxu::share::config::Config::load_checked(&h).unwrap();
-    assert_eq!(c.apprise.api_key, SECRET_KEY, "the secret was kept");
+    assert_eq!(c.apprise.reveal(&h).unwrap().api_key, SECRET_KEY, "the secret was kept (and is now stored encrypted)");
+    assert!(c.apprise.api_key.is_empty() && !cfg_text(&h).contains(SECRET_KEY));
     assert_eq!(c.apprise.on, ["update_failed", "check_error"]);
     assert!(cfg_text(&h).starts_with(KEEP));
 }
@@ -982,7 +984,7 @@ fn an_invalid_result_writes_nothing_and_says_why() {
     super::ask_apprise_modal(&bad, &mut a);
     assert!(a.apprise_modal.is_none() && a.status.contains("not changed") && a.status.contains("on_failure"), "{}", a.status);
     // y escribir directamente con una config inválida tampoco escribe
-    let e = pxu::share::config::AppriseEdit { api_url: "http://x:1".into(), mode: pxu::share::config::AppriseMode::Key, secret: "k".into(), on: vec![] };
+    let e = pxu::share::config::AppriseEdit { api_url: "http://x:1".into(), mode: pxu::share::config::AppriseMode::Key, secret: "k".into(), on: vec![], tag: String::new() };
     let _optin = pxu::share::host::ConfigEditOptIn::new(&bad);
     assert!(pxu::share::config::write_apprise(&bad, &e).unwrap_err().contains("nothing was written"));
     assert_eq!(cfg_text(&h), before);
@@ -1001,7 +1003,7 @@ fn apprise_can_be_set_up_without_a_config_file() {
     check_apprise(&h, &mut a);
     assert!(a.apprise_modal.as_ref().unwrap().lines.join("|").contains("will be created"));
     save_apprise(&h, &mut a);
-    assert!(cfg_text(&h).contains("[apprise]") && cfg_text(&h).contains("api_key = \"pxu\""));
+    assert!(cfg_text(&h).contains("[apprise]") && cfg_text(&h).contains("api_key_enc = \"mockenc") && !cfg_text(&h).contains("api_key = "));
     assert!(!a.read_only, "a config now exists: the TUI leaves read-only");
 }
 
@@ -1017,7 +1019,7 @@ fn read_only_refuses_editing_and_testing_apprise() {
     assert_eq!(a.on_key(key(KeyCode::Char('t'))), Action::None);
     assert!(a.status.contains("--read-only") && !a.testing, "{}", a.status);
     // sin el opt-in explícito el host tampoco escribe
-    let e = pxu::share::config::AppriseEdit { api_url: "http://other:1".into(), mode: pxu::share::config::AppriseMode::Key, secret: "k".into(), on: vec![] };
+    let e = pxu::share::config::AppriseEdit { api_url: "http://other:1".into(), mode: pxu::share::config::AppriseMode::Key, secret: "k".into(), on: vec![], tag: String::new() };
     assert!(pxu::share::config::write_apprise(&h, &e).unwrap_err().contains("read-only"));
     assert_eq!(cfg_text(&h), before);
     // dos pruebas a la vez: la segunda se rechaza
@@ -1047,7 +1049,7 @@ fn the_test_notice_reports_ok_or_the_error_without_secrets() {
 
 #[test]
 fn secrets_never_reach_debug_output_or_error_text() {
-    let e = pxu::share::config::AppriseEdit { api_url: "http://u:p@h:1/x".into(), mode: pxu::share::config::AppriseMode::Key, secret: SECRET_KEY.into(), on: vec![] };
+    let e = pxu::share::config::AppriseEdit { api_url: "http://u:p@h:1/x".into(), mode: pxu::share::config::AppriseMode::Key, secret: SECRET_KEY.into(), on: vec![], tag: String::new() };
     let d = format!("{e:?}");
     assert!(!d.contains(SECRET_KEY) && !d.contains("u:p") && d.contains("•••"), "{d}");
     let c = pxu::share::notify::AppriseCfg { api_key: SECRET_KEY.into(), urls: vec![SECRET_URL.into()], ..Default::default() };
@@ -1060,16 +1062,58 @@ fn secrets_never_reach_debug_output_or_error_text() {
 
 #[test]
 fn snapshots_of_the_config_view_and_the_apprise_dialog() {
-    let a = ReadOnlyHost::new(World::demo().auto_tags(&["auto"]).timer(true, true, "Mon..Fri *-*-* 03:00").config_raw(&apprise_cfg("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\n")).build());
+    let a = ReadOnlyHost::new(World::demo().auto_tags(&["auto"]).timer(true, true, "Mon..Fri *-*-* 03:00").config_raw(&apprise_cfg("api_url = \"http://apprise.local:8000\"\napi_key_enc = \"mockenc707875\"\n")).build());
     let mut app = timer_app(&a);
     super::open_config(&a, &mut app);
     snap("config-view", &app);
+    // config antigua con la clave en claro: Config lo dice
+    let p = ReadOnlyHost::new(World::demo().auto_tags(&["auto"]).timer(true, true, "Mon..Fri *-*-* 03:00").config_raw(&apprise_cfg("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\n")).build());
+    let mut plain = timer_app(&p);
+    super::open_config(&p, &mut plain);
+    snap("config-view-plain", &plain);
     open_apprise(&a, &mut app);
     snap("apprise-edit", &app);
-    to_field(&mut app, 2);
-    typed(&mut app, "newsecret");
-    check_apprise(&a, &mut app);
-    snap("apprise-confirm", &app);
+    // caso real: de urls (cifradas) a la clave guardada, con tag y eventos
+    let r = ReadOnlyHost::new(World::demo().auto_tags(&["auto"]).timer(true, true, "Mon..Fri *-*-* 03:00").config_raw(&apprise_cfg("api_url = \"http://192.168.1.28:8000\"\nurls_enc = \"mockenc757273\"\ntag = \"system\"\non = [\"update_failed\", \"run_summary\"]\n")).build());
+    let mut real = timer_app(&r);
+    super::open_config(&r, &mut real);
+    open_apprise(&r, &mut real);
+    to_field(&mut real, 1);
+    real.on_key(key(KeyCode::Char(' ')));
+    to_field(&mut real, 2);
+    typed(&mut real, "newsecret");
+    check_apprise(&r, &mut real);
+    snap("apprise-confirm", &real);
+}
+
+/// Columna donde empieza la etiqueta de cada campo de la confirmación (todas iguales, con o sin resaltado) y que no se salga del área.
+#[test]
+fn the_apprise_confirmation_aligns_labels_wraps_notes_and_fits_80x24() {
+    let r = ReadOnlyHost::new(World::demo().auto_tags(&["auto"]).timer(true, true, "Mon..Fri *-*-* 03:00").config_raw(&apprise_cfg("api_url = \"http://192.168.1.28:8000\"\nurls_enc = \"mockenc757273\"\ntag = \"system\"\non = [\"update_failed\", \"run_summary\"]\n")).build());
+    let mut a = timer_app(&r);
+    super::open_config(&r, &mut a);
+    open_apprise(&r, &mut a);
+    to_field(&mut a, 1);
+    a.on_key(key(KeyCode::Char(' ')));
+    to_field(&mut a, 2);
+    typed(&mut a, "newsecret");
+    check_apprise(&r, &mut a);
+    for (w, h) in [(80, 24), (120, 40)] {
+        let (out, _) = render(&a, w, h, true);
+        let lines: Vec<&str> = out.lines().collect();
+        let field_cols: Vec<usize> = lines
+            .iter()
+            .filter_map(|l| ["api_url ", "api_key ", "urls ", "tag ", "on "].iter().filter_map(|k| l.find(&format!("  {k}")).map(|i| l[..i].chars().count())).next())
+            .collect();
+        assert!(field_cols.len() >= 8 && field_cols.iter().all(|c| *c == field_cols[0]), "{w}x{h}: {field_cols:?}\n{out}");
+        assert!(out.contains("[y/Enter] save") && out.contains("the stored urls are removed"), "{w}x{h}\n{out}");
+        if h == 24 {
+            // el pie y la barra de teclas de Config siguen visibles y el marco de la vista no queda tapado
+            assert!(out.contains("[s] schedule") && out.contains("[Esc] back"), "{out}");
+            let last = lines.len();
+            assert!(lines[last - 4].starts_with('─') || lines[last - 4].starts_with('└'), "{out}");
+        }
+    }
 }
 
 fn conf_lines(a: &App, vmid: u32, text: &str) -> Vec<String> {
@@ -2449,4 +2493,136 @@ fn the_gpu_column_and_the_detail_show_when_the_driver_is_included() {
     a.on_key(key(KeyCode::Enter));
     let (det, _) = render(&a, 120, 40, false);
     assert!(det.contains("gpu driver: not in updates"), "{det}");
+}
+
+fn typed_tag(a: &mut App, s: &str) {
+    to_field(a, 3);
+    typed(a, s);
+}
+
+#[test]
+fn the_tag_opens_with_the_stored_value_and_shows_in_config() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\ntag = \"system\"\n");
+    let mut a = timer_app(&h);
+    open_apprise(&h, &mut a);
+    assert_eq!(a.apprise_modal.as_ref().unwrap().tag, "system");
+    let (out, _) = render(&a, 120, 40, true);
+    assert!(out.contains("Tag") && out.contains("system") && out.contains("only untagged targets"), "{out}");
+    let (c, _) = pxu::share::config::Config::load_checked(&h).unwrap();
+    let v = pxu::share::config::apprise_summary(&h, &c.apprise).join("|");
+    assert!(v.contains("tag             : system"), "{v}");
+    let h2 = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\n");
+    let (c2, _) = pxu::share::config::Config::load_checked(&h2).unwrap();
+    assert!(pxu::share::config::apprise_summary(&h2, &c2.apprise).join("|").contains("tag             : —"));
+}
+
+#[test]
+fn saving_a_new_tag_writes_it_and_emptying_removes_the_key() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\n");
+    let mut a = timer_app(&h);
+    open_apprise(&h, &mut a);
+    typed_tag(&mut a, "system,ops");
+    check_apprise(&h, &mut a);
+    assert!(a.apprise_modal.as_ref().unwrap().lines.join("|").contains("tag       system,ops"));
+    save_apprise(&h, &mut a);
+    let t = cfg_text(&h);
+    assert!(t.contains("tag = \"system,ops\"") && t.starts_with(KEEP), "{t}");
+    open_apprise(&h, &mut a);
+    to_field(&mut a, 3);
+    for _ in 0..12 {
+        a.on_key(key(KeyCode::Backspace));
+    }
+    check_apprise(&h, &mut a);
+    save_apprise(&h, &mut a);
+    let t = cfg_text(&h);
+    assert!(!t.contains("\ntag =") && t.contains("api_key_enc = "), "{t}");
+}
+
+#[test]
+fn invalid_tag_characters_are_not_typed_and_not_written() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key = \"pxu\"\n");
+    let mut a = timer_app(&h);
+    open_apprise(&h, &mut a);
+    typed_tag(&mut a, "a b\"c");
+    assert_eq!(a.apprise_modal.as_ref().unwrap().tag, "abc");
+    let e = pxu::share::config::AppriseEdit { api_url: "http://x:1".into(), mode: pxu::share::config::AppriseMode::Key, secret: "k".into(), on: vec![], tag: "a b".into() };
+    assert!(pxu::share::config::set_apprise("", &e, Some("x")).unwrap_err().contains("not allowed"));
+    let e = pxu::share::config::AppriseEdit { tag: "a\"b".into(), ..e };
+    assert!(pxu::share::config::set_apprise("", &e, Some("x")).is_err());
+}
+
+#[test]
+fn the_tag_applies_in_urls_mode_too() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\nurls = [\"ntfy://ntfy.sh/x\"]\n");
+    let mut a = timer_app(&h);
+    open_apprise(&h, &mut a);
+    typed_tag(&mut a, "system");
+    check_apprise(&h, &mut a);
+    save_apprise(&h, &mut a);
+    assert!(cfg_text(&h).contains("tag = \"system\"") && cfg_text(&h).contains("urls_enc ="));
+}
+
+#[test]
+fn config_check_notes_plain_text_secrets_and_not_encrypted_ones() {
+    let plain = apprise_host(&format!("api_url = \"http://apprise.local:8000\"\napi_key = \"{SECRET_KEY}\"\n"));
+    let v = pxu::share::config::validate(&plain);
+    assert!(v.notes.iter().any(|n| n.contains("plain text") && n.contains("encrypt")), "{:?}", v.notes);
+    assert!(v.notes.iter().chain(&v.warnings).all(|n| !n.contains(SECRET_KEY)));
+    let enc = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key_enc = \"mockenc707875\"\n");
+    let v = pxu::share::config::validate(&enc);
+    assert!(v.errors.is_empty() && v.typos.is_empty(), "{v:?}");
+    assert!(v.notes.iter().all(|n| !n.contains("plain text")), "{:?}", v.notes);
+}
+
+#[test]
+fn saving_encrypts_and_the_secret_never_appears_in_a_host_command() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\n");
+    let mut a = timer_app(&h);
+    open_apprise(&h, &mut a);
+    to_field(&mut a, 2);
+    typed(&mut a, SECRET_KEY);
+    check_apprise(&h, &mut a);
+    assert!(a.apprise_modal.as_ref().unwrap().lines.join("|").contains("stored encrypted"));
+    save_apprise(&h, &mut a);
+    let now = cfg_text(&h);
+    assert!(now.contains("api_key_enc = \"mockenc") && !now.contains(SECRET_KEY) && !now.contains("api_key = "), "{now}");
+    // la prueba de envío descifra y manda; la clave solo viaja por stdin
+    assert!(super::notify_test_for_tests(&h).is_ok());
+    let cmds: Vec<String> = h.inner().recorded().iter().map(|r| format!("{r:?}")).collect();
+    assert!(cmds.iter().any(|c| c.contains("decrypt")) && cmds.iter().all(|c| !c.contains(SECRET_KEY)), "{cmds:?}");
+}
+
+#[test]
+fn a_failed_decrypt_shows_a_clear_error_in_the_test_notice_and_sends_nothing() {
+    let h = apprise_host("api_url = \"http://apprise.local:8000\"\napi_key_enc = \"garbage\"\n");
+    let e = super::notify_test_for_tests(&h).unwrap_err();
+    assert!(e.contains("cannot decrypt apprise secret"), "{e}");
+    assert!(h.inner().recorded().iter().all(|r| !format!("{r:?}").contains("curl")));
+}
+
+#[test]
+fn config_keys_work_without_shift_and_uppercase_stay_as_aliases() {
+    for (lower, upper) in [('s', 'S'), ('n', 'N')] {
+        for c in [lower, upper] {
+            let mut a = app("demo");
+            a.view = View::Config;
+            let want = if lower == 's' { Action::AskSchedule } else { Action::AskApprise };
+            assert_eq!(a.on_key(key(KeyCode::Char(c))), want, "{c}");
+        }
+    }
+    for c in ['d', 'L'] {
+        let mut a = app("demo");
+        a.view = View::Config;
+        assert_eq!(a.on_key(key(KeyCode::Char(c))), Action::None);
+        assert!(a.log_modal.is_some() || !a.status.is_empty(), "{c}");
+    }
+}
+
+#[test]
+fn in_the_list_s_still_sorts_and_capital_s_opens_the_schedule() {
+    let mut a = app("demo");
+    assert_eq!(a.on_key(key(KeyCode::Char('S'))), Action::AskSchedule);
+    let before = a.sort;
+    assert_eq!(a.on_key(key(KeyCode::Char('s'))), Action::None);
+    assert_ne!(a.sort, before);
 }

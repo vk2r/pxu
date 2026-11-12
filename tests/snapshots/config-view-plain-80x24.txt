@@ -1,0 +1,24 @@
+pxu · config [MOCK]                                                        00:16
+config · automatic update schedule (systemd timer pxu-update) and notifications…
+────────────────────────────────────────────────────────────────────────────────
+┌ Schedule ────────────────────────────────────────────────────────────────────┐
+│ units installed : yes                                                        │
+│ enabled         : yes (state: active)                                        │
+│ schedule        : Mon..Fri *-*-* 03:00                                       │
+│ next run        : Tue 2026-11-10 04:35:12 -03                                │
+│ times are the server's                                                       │
+│                                                                              │
+│ config          : /etc/pxu/config.toml                                       │
+│ CTs with auto-update: 8                                                      │
+│ host_auto       : no — the scheduled run never touches the host              │
+│ log retention   : 30 days (run logs in /var/log/pxu older than this are dele…│
+│                                                                              │
+│ Notifications (Apprise)                                                      │
+│ status          : configured, sends via apprise-api (curl)                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+[s] schedule  [n] notifications  [d] log days  [t] test notice
+────────────────────────────────────────────────────────────────────────────────
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read
+[Esc] back  [?] help  [q] quit
+the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…

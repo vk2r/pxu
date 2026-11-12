@@ -85,13 +85,13 @@ Con `--timer` en la instalación, pxu comprueba y actualiza cada día a las **04
 
 Para cambiar la hora o desactivarla, pulsa `S` en la lista o en Config (`g`).
 
-Cada corrida deja un log en `/var/log/pxu/`; ábrelo con `l`. Los logs se borran pasados 30 días (cámbialo con `L` en Config; `0` los conserva siempre).
+Cada corrida deja un log en `/var/log/pxu/`; ábrelo con `l`. Los logs se borran pasados 30 días (cámbialo con `d` en Config; `0` los conserva siempre).
 
 ## Configurar los avisos
 
 Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor.
 
-1. En Config (`g`), pulsa `N`.
+1. En Config (`g`), pulsa `n`.
 2. Escribe la dirección de tu Apprise API y la clave, y confirma.
 3. Pulsa `t` para enviar un aviso de prueba.
 

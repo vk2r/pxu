@@ -1,7 +1,7 @@
-//! Diálogo de `[apprise]` (`N` en Config): estado + reducer, sin IO (como `SchedModal`).
+//! Diálogo de `[apprise]` (`n` en Config): estado + reducer, sin IO (como `SchedModal`).
 //! El secreto guardado nunca se muestra: el campo está vacío ("conservar") y lo escrito se pinta como puntos.
 use crossterm::event::{KeyCode, KeyEvent};
-use pxu::share::config::{AppriseEdit, AppriseMode, APPRISE_EVENTS};
+use pxu::share::config::{tag_char_ok, AppriseEdit, AppriseMode, APPRISE_EVENTS};
 use pxu::share::notify::AppriseCfg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,6 +9,7 @@ pub enum Field {
     Url,
     Mode,
     Secret,
+    Tag,
     Event(usize),
 }
 
@@ -31,6 +32,7 @@ pub struct AppriseModal {
     pub api_url: String,
     pub mode: AppriseMode,
     pub secret: String,
+    pub tag: String,
     pub on: [bool; 4],
     pub field: usize,
     pub stage: Stage,
@@ -47,12 +49,12 @@ impl AppriseModal {
         for (i, e) in APPRISE_EVENTS.iter().enumerate() {
             on[i] = c.on.iter().any(|x| x == e);
         }
-        let mode = if c.api_key.is_empty() && !c.urls.is_empty() { AppriseMode::Urls } else { AppriseMode::Key };
-        AppriseModal { api_url: c.api_url.clone(), mode, secret: String::new(), on, field: 0, stage: Stage::Edit, error: None, lines: Vec::new(), has_key: !c.api_key.is_empty(), has_urls: !c.urls.is_empty(), submitted: None }
+        let mode = if !c.has_key() && c.has_urls() { AppriseMode::Urls } else { AppriseMode::Key };
+        AppriseModal { api_url: c.api_url.clone(), mode, secret: String::new(), tag: c.tag.clone(), on, field: 0, stage: Stage::Edit, error: None, lines: Vec::new(), has_key: c.has_key(), has_urls: c.has_urls(), submitted: None }
     }
 
     pub fn fields(&self) -> Vec<Field> {
-        let mut v = vec![Field::Url, Field::Mode, Field::Secret];
+        let mut v = vec![Field::Url, Field::Mode, Field::Secret, Field::Tag];
         v.extend((0..APPRISE_EVENTS.len()).map(Field::Event));
         v
     }
@@ -67,7 +69,7 @@ impl AppriseModal {
 
     fn edit(&self) -> AppriseEdit {
         let on = APPRISE_EVENTS.iter().enumerate().filter(|(i, _)| self.on[*i]).map(|(_, e)| e.to_string()).collect();
-        AppriseEdit { api_url: self.api_url.trim().to_string(), mode: self.mode, secret: self.secret.clone(), on }
+        AppriseEdit { api_url: self.api_url.trim().to_string(), mode: self.mode, secret: self.secret.clone(), on, tag: self.tag.trim().to_string() }
     }
 
     /// Respuesta de `plan_apprise`: pasa a la confirmación (secretos enmascarados) o muestra por qué no.
@@ -114,11 +116,13 @@ impl AppriseModal {
             KeyCode::Backspace => match cur {
                 Field::Url => drop(self.api_url.pop()),
                 Field::Secret => drop(self.secret.pop()),
+                Field::Tag => drop(self.tag.pop()),
                 _ => {}
             },
             KeyCode::Char(c) if !c.is_control() => match cur {
                 Field::Url if c != ' ' && self.api_url.len() < 200 => self.api_url.push(c),
                 // URLs: separadas por coma; los espacios se ignoran al teclear (se pegan bien)
+                Field::Tag if tag_char_ok(c) && self.tag.len() < 200 => self.tag.push(c),
                 Field::Secret if c != ' ' && self.secret.len() < 1000 => self.secret.push(c),
                 _ => {}
             },

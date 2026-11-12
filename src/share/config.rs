@@ -337,7 +337,7 @@ const KEYS: &[(&str, &[&str])] = &[
     ("update", &["auto_update_tags", "stopped", "require_fresh_check_minutes", "min_free_mb", "reboot", "apt_mode", "on_failure", "max_consecutive_failures", "timeout_min", "host_auto", "host_nvidia_auto"]),
     ("backup", &["mode", "storage", "keep", "space_ratio", "min_free_gb"]),
     ("ui", &["columns"]),
-    ("apprise", &["transport", "api_url", "api_key", "urls", "tag", "on", "timeout_s", "retry_delays_ms"]),
+    ("apprise", &["transport", "api_url", "api_key", "urls", "api_key_enc", "urls_enc", "tag", "on", "timeout_s", "retry_delays_ms"]),
 ];
 const CT_KEYS: &[&str] = &["vmid", "auto_update", "nvidia_auto", "refresh", "backup", "keep"];
 /// Claves retiradas: se avisa en claro en vez de ignorarlas en silencio.
@@ -488,7 +488,13 @@ fn validate_text_into(host: &dyn Host, text: &str, v: &mut Validation) {
     }
     v.notes.push(format!("backups are temporary: keep = {} per CT (default 0), mode = {}", cfg.backup.keep(), cfg.backup.mode));
     let t = crate::share::notify::resolve(host, &cfg.apprise);
-    v.notes.push(format!("apprise transport: {}{}", t.label(), if cfg.apprise.api_key.is_empty() { "" } else { " (api_key set)" }));
+    v.notes.push(format!("apprise transport: {}{}", t.label(), if cfg.apprise.has_key() { " (api_key set)" } else { "" }));
+    if cfg.apprise.has_plain_secret() {
+        v.notes.push("apprise secrets are stored in plain text — save them in Config → n to encrypt them (or run `pxu config encrypt-secrets`)".into());
+    }
+    if (!cfg.apprise.api_key.is_empty() && !cfg.apprise.api_key_enc.is_empty()) || (!cfg.apprise.urls.is_empty() && !cfg.apprise.urls_enc.is_empty()) {
+        v.warnings.push("[apprise] has both a plain and an encrypted value (api_key/api_key_enc or urls/urls_enc): the plain one is used; save in Config → n to clean up".into());
+    }
     if t == crate::share::notify::Transport::None {
         v.warnings.push("no Apprise transport usable: notifications are disabled (set [apprise] api_url, or urls with the apprise CLI installed)".into());
     }
@@ -699,11 +705,18 @@ pub struct AppriseEdit {
     /// api_key, o URLs separadas por coma/espacio. Nunca se imprime (ver `Debug`).
     pub secret: String,
     pub on: Vec<String>,
+    /// Etiqueta(s) de Apprise API (`tag`), separadas por coma; vacía = sin etiqueta (se borra la clave).
+    pub tag: String,
+}
+
+/// Caracteres admitidos en `tag` (varias etiquetas separadas por coma).
+pub fn tag_char_ok(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "-_.,".contains(c)
 }
 
 impl std::fmt::Debug for AppriseEdit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppriseEdit").field("api_url", &mask_api_url(&self.api_url)).field("mode", &self.mode).field("secret", &"•••").field("on", &self.on).finish()
+        f.debug_struct("AppriseEdit").field("api_url", &mask_api_url(&self.api_url)).field("mode", &self.mode).field("secret", &"•••").field("on", &self.on).field("tag", &self.tag).finish()
     }
 }
 
@@ -728,21 +741,49 @@ pub fn mask_api_url(u: &str) -> String {
     }
 }
 
-/// Una línea con el estado de `[apprise]`, sin secretos (para el «hoy → nuevo»).
-pub fn apprise_line(c: &crate::share::notify::AppriseCfg) -> String {
-    let mut p = vec![format!("api_url {}", if c.api_url.is_empty() { "—".to_string() } else { mask_api_url(&c.api_url) })];
-    if !c.api_key.is_empty() {
-        p.push("api_key •••".into());
+/// «encrypted» o «plain text», según dónde esté guardado el secreto (`enc` = solo existe la versión cifrada).
+fn secret_state(enc: bool) -> &'static str {
+    if enc {
+        "encrypted"
+    } else {
+        "plain text"
+    }
+}
+
+/// Campos (nombre, valor) del estado de `[apprise]`, sin secretos (para el «hoy → nuevo»).
+fn apprise_fields(c: &crate::share::notify::AppriseCfg) -> Vec<(&'static str, String)> {
+    let mut p = vec![("api_url", if c.api_url.is_empty() { "—".to_string() } else { mask_api_url(&c.api_url) })];
+    if c.has_key() {
+        p.push(("api_key", format!("••• ({})", secret_state(c.api_key.is_empty()))));
     }
     if !c.urls.is_empty() {
-        p.push(format!("urls {}", c.urls.iter().map(|u| mask_target(u)).collect::<Vec<_>>().join(" ")));
+        p.push(("urls", format!("{} (plain text)", c.urls.iter().map(|u| mask_target(u)).collect::<Vec<_>>().join(" "))));
+    } else if !c.urls_enc.is_empty() {
+        p.push(("urls", "••• (encrypted)".into()));
     }
-    if c.api_key.is_empty() && c.urls.is_empty() {
-        p.push("no key or urls".into());
+    if !c.has_key() && !c.has_urls() {
+        p.push(("secret", "no key or urls".into()));
+    }
+    if !c.tag.is_empty() {
+        p.push(("tag", c.tag.clone()));
     }
     let all = APPRISE_EVENTS.iter().all(|e| c.on.iter().any(|x| x == e));
-    p.push(format!("on {}", if all { "all events".to_string() } else if c.on.is_empty() { "none".to_string() } else { c.on.join(",") }));
-    p.join(" · ")
+    p.push(("on", if all { "all events".to_string() } else if c.on.is_empty() { "none".to_string() } else { c.on.join(", ") }));
+    p
+}
+
+/// Marca (`\u{1}`) al inicio de una línea del plan: la vista la quita y resalta la línea (campo que cambia).
+pub const CHANGED_MARK: char = '\u{1}';
+
+/// Bloque «today» / «new»: título y un campo por línea con las etiquetas alineadas; en `new` se marcan los que cambian respecto a `old`.
+fn apprise_block(title: &str, c: &crate::share::notify::AppriseCfg, old: Option<&crate::share::notify::AppriseCfg>) -> Vec<String> {
+    let before = old.map(apprise_fields);
+    let mut v = vec![title.to_string()];
+    for (k, val) in apprise_fields(c) {
+        let changed = before.as_ref().is_some_and(|b| !b.iter().any(|(bk, bv)| *bk == k && *bv == val));
+        v.push(format!("{} {k:<10}{val}", if changed { CHANGED_MARK.to_string() } else { " ".into() }));
+    }
+    v
 }
 
 /// Líneas de la sección «Notifications» de la vista Config (secretos enmascarados).
@@ -750,15 +791,21 @@ pub fn apprise_summary(host: &dyn Host, c: &crate::share::notify::AppriseCfg) ->
     let t = crate::share::notify::resolve(host, c);
     let mut v = vec![if t == crate::share::notify::Transport::None { "status          : not configured".to_string() } else { format!("status          : configured, sends via {}", t.label()) }];
     v.push(format!("api_url         : {}", if c.api_url.is_empty() { "—".to_string() } else { mask_api_url(&c.api_url) }));
-    if !c.api_key.is_empty() {
-        v.push("api_key         : ••• (set)".into());
+    if c.has_key() {
+        v.push(format!("api_key         : ••• (set, {})", secret_state(c.api_key.is_empty())));
     }
     if !c.urls.is_empty() {
-        v.push(format!("urls            : {} ({})", c.urls.iter().map(|u| mask_target(u)).collect::<Vec<_>>().join(", "), c.urls.len()));
+        v.push(format!("urls            : {} ({}, set, plain text)", c.urls.iter().map(|u| mask_target(u)).collect::<Vec<_>>().join(", "), c.urls.len()));
+    } else if !c.urls_enc.is_empty() {
+        v.push("urls            : ••• (set, encrypted)".into());
     }
-    if c.api_key.is_empty() && c.urls.is_empty() {
+    if !c.has_key() && !c.has_urls() {
         v.push("api_key / urls   : —".into());
     }
+    if c.has_plain_secret() {
+        v.push("note            : stored in plain text — save it in Config → n to encrypt".into());
+    }
+    v.push(format!("tag             : {}", if c.tag.is_empty() { "—" } else { &c.tag }));
     v.push(format!("events          : {}", if c.on.is_empty() { "none".to_string() } else { c.on.join(", ") }));
     v
 }
@@ -767,9 +814,10 @@ fn split_urls(s: &str) -> Vec<String> {
     s.split([',', ' ', '\n']).map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect()
 }
 
-/// Aplica `edit` sobre `[apprise]` conservando el resto del texto, comentarios y orden. Un secreto vacío conserva el guardado;
-/// el del otro modo se elimina (`api_key` y `urls` se excluyen).
-pub fn set_apprise(text: &str, edit: &AppriseEdit) -> Result<String, String> {
+/// Aplica `edit` sobre `[apprise]` conservando el resto del texto, comentarios y orden. `sealed` es el secreto del modo elegido
+/// ya cifrado (`notify::seal`): se escribe como `api_key_enc`/`urls_enc` y se borra el valor en claro. Sin `sealed` se conserva
+/// lo guardado (cifrado o, en configs antiguas, en claro). El secreto del otro modo se elimina (`api_key` y `urls` se excluyen).
+pub fn set_apprise(text: &str, edit: &AppriseEdit, sealed: Option<&str>) -> Result<String, String> {
     use toml_edit::{value, Array, DocumentMut, Item, Table};
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("TOML syntax: {e}"))?;
     let t = doc.entry("apprise").or_insert_with(|| Item::Table(Table::new())).as_table_mut().ok_or("`apprise` is not a table ([apprise])")?;
@@ -780,29 +828,41 @@ pub fn set_apprise(text: &str, edit: &AppriseEdit) -> Result<String, String> {
     } else if cur(t, "api_url").as_deref() != Some(api) {
         t["api_url"] = value(api);
     }
+    let stored = |t: &Table, plain: &str, enc: &str| t.get(enc).and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()) || t.get(plain).is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()) || v.as_array().is_some_and(|a| !a.is_empty()));
     match edit.mode {
         AppriseMode::Key => {
-            let key = Some(edit.secret.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| cur(t, "api_key")).filter(|s| !s.is_empty());
-            let key = key.ok_or("api_key is empty and there is none stored: type the key")?;
-            if cur(t, "api_key").as_deref() != Some(&key) {
-                t["api_key"] = value(key);
+            match sealed {
+                Some(enc) => {
+                    t["api_key_enc"] = value(enc);
+                    t.remove("api_key");
+                }
+                None if !stored(t, "api_key", "api_key_enc") => return Err("api_key is empty and there is none stored: type the key".into()),
+                None => {}
             }
             t.remove("urls");
+            t.remove("urls_enc");
         }
         AppriseMode::Urls => {
-            let typed = split_urls(&edit.secret);
-            let urls = if typed.is_empty() { t.get("urls").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() } else { typed };
-            if urls.is_empty() {
-                return Err("no urls: type at least one (the stored ones are kept only when there are some)".into());
+            match sealed {
+                Some(enc) => {
+                    t["urls_enc"] = value(enc);
+                    t.remove("urls");
+                }
+                None if !stored(t, "urls", "urls_enc") => return Err("no urls: type at least one (the stored ones are kept only when there are some)".into()),
+                None => {}
             }
-            if let Some(bad) = urls.iter().find(|u| !u.contains("://")) {
-                return Err(format!("`{}` is not an Apprise URL (expected scheme://…)", mask_target(bad)));
-            }
-            let mut a = Array::new();
-            urls.iter().for_each(|u| a.push(u.as_str()));
-            t["urls"] = value(a);
             t.remove("api_key");
+            t.remove("api_key_enc");
         }
+    }
+    let tag = edit.tag.trim();
+    if let Some(c) = tag.chars().find(|c| !tag_char_ok(*c)) {
+        return Err(format!("tag: `{c}` is not allowed (letters, digits, - _ . and , only)"));
+    }
+    if tag.is_empty() {
+        t.remove("tag");
+    } else if cur(t, "tag").as_deref() != Some(tag) {
+        t["tag"] = value(tag);
     }
     let mut on = Array::new();
     APPRISE_EVENTS.iter().filter(|e| edit.on.iter().any(|x| x == *e)).for_each(|e| on.push(*e));
@@ -821,7 +881,20 @@ pub struct ApprisePlan {
 pub fn plan_apprise(host: &dyn Host, edit: &AppriseEdit) -> Result<ApprisePlan, String> {
     let old_text = read_config_text(host)?;
     let old: Config = toml::from_str(&old_text).map_err(|e| format!("{CONFIG_PATH}: {e}"))?;
-    let text = set_apprise(&old_text, edit)?;
+    // Lo que se cifra: lo tecleado o, con el campo vacío, el valor que estuviera en claro (migración). Un valor ya cifrado se conserva tal cual.
+    let plain: Option<String> = match edit.mode {
+        AppriseMode::Key => Some(edit.secret.trim().to_string()).filter(|k| !k.is_empty()).or_else(|| Some(old.apprise.api_key.clone()).filter(|k| !k.is_empty())),
+        AppriseMode::Urls => {
+            let typed = split_urls(&edit.secret);
+            let urls = if typed.is_empty() { old.apprise.urls.clone() } else { typed };
+            if let Some(bad) = urls.iter().find(|u| !u.contains("://")) {
+                return Err(format!("`{}` is not an Apprise URL (expected scheme://…)", mask_target(bad)));
+            }
+            Some(urls.join("\n")).filter(|u| !u.is_empty())
+        }
+    };
+    let sealed = plain.map(|p| crate::share::notify::seal(host, &p)).transpose().map_err(|e| format!("{e}: nothing was written"))?;
+    let text = set_apprise(&old_text, edit, sealed.as_deref())?;
     let v = validate_text(host, &text);
     if let Some(e) = v.errors.iter().chain(v.typos.iter()).next() {
         return Err(format!("the resulting config would be invalid ({e}): nothing was written"));
@@ -830,17 +903,21 @@ pub fn plan_apprise(host: &dyn Host, edit: &AppriseEdit) -> Result<ApprisePlan, 
     if crate::share::notify::resolve(host, &new.apprise) == crate::share::notify::Transport::None {
         return Err("no usable Apprise transport with these values (api_url is needed for an api_key; urls without api_url need the apprise CLI installed): nothing was written".into());
     }
-    let mut lines = vec![format!("today: {}", apprise_line(&old.apprise)), format!("new  : {}", apprise_line(&new.apprise))];
-    if !old.apprise.urls.is_empty() && new.apprise.urls.is_empty() {
-        lines.push("the stored urls are removed (the key and the urls exclude each other)".into());
+    let mut lines = apprise_block("today", &old.apprise, None);
+    lines.push(String::new());
+    lines.extend(apprise_block("new", &new.apprise, Some(&old.apprise)));
+    lines.push(String::new());
+    if old.apprise.has_urls() && !new.apprise.has_urls() {
+        lines.push("· the stored urls are removed (the key and the urls exclude each other)".into());
     }
-    if !old.apprise.api_key.is_empty() && new.apprise.api_key.is_empty() {
-        lines.push("the stored api_key is removed (the key and the urls exclude each other)".into());
+    if old.apprise.has_key() && !new.apprise.has_key() {
+        lines.push("· the stored api_key is removed (the key and the urls exclude each other)".into());
     }
+    lines.push("· stored encrypted (systemd-creds); no plain-text copy stays in the file".into());
     if old_text.is_empty() {
-        lines.push(format!("{CONFIG_PATH} does not exist: it will be created (root, 0600)"));
+        lines.push(format!("· {CONFIG_PATH} does not exist: it will be created (root, 0600)"));
     }
-    lines.push(format!("the rest of {CONFIG_PATH} is kept as it is"));
+    lines.push(format!("· the rest of {CONFIG_PATH} is kept as it is"));
     Ok(ApprisePlan { text, lines })
 }
 

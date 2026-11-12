@@ -1158,7 +1158,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
             ]),
             ("Detail", vec![("thin-pool blocks", "suggests `pct fstrim <id>` when they exceed the real use by > 15 points (pxu never runs it)")]),
         ],
-        View::Config => keys("Keys", vec![("S", "change the update schedule (asks first; server time)"), ("L", "change log_retention_days (0 = never delete)"), ("l", "run logs"), ("N", "edit [apprise] (api_url, key or urls, events; secrets masked; asks first)"), ("t", "send a test notice (like `pxu notify-test`)"), ("r", "re-read the timer state"), ("Esc", "back to the list"), ("?", "this help · q quit")]),
+        View::Config => keys("Keys", vec![("s", "change the update schedule (asks first; server time)"), ("d", "change log_retention_days (0 = never delete)"), ("l", "run logs"), ("n", "edit [apprise] (api_url, key or urls, tag, events; secrets masked; asks first)"), ("t", "send a test notice (like `pxu notify-test`)"), ("r", "re-read the timer state"), ("Esc", "back to the list"), ("?", "this help · q quit")]),
         View::Update => keys("Keys", vec![("x / Esc", "cancel: finish the CT in progress, then stop"), ("↑↓ PgUp PgDn", "scroll the log · f / End follow · Home oldest"), ("Esc", "back to the list (when the run is over)"), ("?", "this help")]),
         View::Check => keys("Keys", vec![("↑↓ / j k", "select CT (packages shown below)"), ("u", "update the CTs with updates (asks first)"), ("c", "re-check (refreshes the indexes) · C / R read-only check"), ("Enter", "guest detail"), ("Esc", "cancel a running check, then back"), ("?", "this help · q quit")]),
         View::Detail(_) => keys("Keys", vec![
@@ -1381,7 +1381,7 @@ fn draw_check(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width.saturating_sub(2));
     let h = h.min(area.height);
-    Rect { x: (area.width - w) / 2, y: (area.height - h) / 2, width: w, height: h }
+    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
 }
 
 fn draw_host_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
@@ -1564,7 +1564,7 @@ fn draw_backup_del_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 
 fn draw_config(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let w = area.width;
-    let keys = keybar_wrap(th, &[("S", "schedule"), ("N", "notifications"), ("L", "log days"), ("l", "logs"), ("t", "test"), ("r", "re-read"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2);
+    let keys = config_keys(th, w);
     let parts = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(keys.len() as u16 + 1)]).split(area);
     f.render_widget(Paragraph::new(two_sided(vec![Span::styled("pxu · config".to_string(), th.bold()), Span::styled(badges(app), th.warn())], app.clock.clone(), w)), parts[0]);
     f.render_widget(Paragraph::new(trunc("config · automatic update schedule (systemd timer pxu-update) and notifications (Apprise)", w as usize)).style(th.muted()), parts[1]);
@@ -1603,7 +1603,7 @@ fn draw_config(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let inner = blk.inner(parts[3]);
     f.render_widget(blk, parts[3]);
     f.render_widget(Paragraph::new(rows.iter().map(|r| Line::raw(trunc(&format!(" {r}"), inner.width as usize))).collect::<Vec<_>>()), inner);
-    let hint = if !app.status.is_empty() { app.status.clone() } else { "[S] schedule  [N] notifications  [L] log retention  [t] test notice".into() };
+    let hint = if !app.status.is_empty() { app.status.clone() } else { "[s] schedule  [n] notifications  [d] log days  [t] test notice".into() };
     f.render_widget(Paragraph::new(trunc(&hint, w as usize)).style(th.accent()), parts[5]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[4]);
     f.render_widget(Paragraph::new("─".repeat(w as usize)).style(th.muted()), parts[6]);
@@ -2068,7 +2068,7 @@ fn storage_detail_lines(g: &pxu::share::storage::GuestUse, d: &pxu::share::stora
     (v, cur)
 }
 
-/// `L` en Config: días de retención (0 = no borrar nunca).
+/// `d` en Config: días de retención (0 = no borrar nunca).
 fn draw_log_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let Some(t) = &app.log_modal else { return };
     let w = 64.min(area.width.saturating_sub(4));
@@ -2091,7 +2091,98 @@ fn draw_log_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_sched_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+/// Área de contenido de Config (marco entre la cabecera y el pie): las confirmaciones se dibujan dentro y no tapan el pie.
+fn config_body(th: &Theme, area: Rect) -> Rect {
+    let keys = config_keys(th, area.width);
+    Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(keys.len() as u16 + 1)]).split(area)[3]
+}
+
+fn config_keys(th: &Theme, w: u16) -> Vec<Line<'static>> {
+    keybar_wrap(th, &[("s", "schedule"), ("n", "notifications"), ("d", "log days"), ("l", "logs"), ("t", "test"), ("r", "re-read"), ("Esc", "back"), ("?", "help"), ("q", "quit")], 2, w as usize, 2)
+}
+
+/// Parte `text` en filas de `width` columnas; las continuaciones llevan `indent` espacios (sangría colgante).
+fn wrap_hanging(text: &str, width: usize, indent: usize) -> Vec<String> {
+    if text.chars().count() <= width {
+        return vec![text.to_string()];
+    }
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split(' ').filter(|w| !w.is_empty()) {
+        if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
+            rows.push(std::mem::replace(&mut cur, " ".repeat(indent)));
+        }
+        if cur.is_empty() {
+            cur = format!("{}{word}", " ".repeat(text.chars().take_while(|c| *c == ' ').count()));
+        } else {
+            if !cur.trim().is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+    }
+    rows.push(cur);
+    rows
+}
+
+/// Líneas de una confirmación (`today`/`new`, campos, notas): margen de 1 columna, la marca de cambio se cambia por un
+/// espacio (las etiquetas siguen en la misma columna) y se ven en negrita; las notas largas se parten con sangría colgante.
+fn confirm_lines(th: &Theme, raw: &[String], width: usize) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for l in raw {
+        let changed = l.starts_with(pxu::share::config::CHANGED_MARK);
+        let l = l.replacen(pxu::share::config::CHANGED_MARK, " ", 1);
+        if l.is_empty() {
+            out.push(Line::default());
+            continue;
+        }
+        let lead = l.chars().take_while(|c| *c == ' ').count();
+        let indent = 1 + lead + if l.trim_start().starts_with('·') { 2 } else { 0 };
+        for row in wrap_hanging(&format!(" {l}"), width, indent) {
+            out.push(if changed {
+                Line::styled(row, th.bold())
+            } else if l == "today" || l == "new" {
+                Line::styled(row, th.muted())
+            } else {
+                Line::raw(row)
+            });
+        }
+    }
+    out
+}
+
+/// Ajusta `lines` (la última es la barra de teclas) a `budget` filas: quita primero las líneas en blanco (la de arriba,
+/// luego las que separan bloques), después la nota «the rest of…» y, si aún no cabe, recorta el final con «…».
+fn fit_rows(mut lines: Vec<Line<'static>>, budget: usize) -> Vec<Line<'static>> {
+    let blank = |l: &Line| l.to_string().trim().is_empty();
+    while lines.len() > budget {
+        let Some(i) = lines[..lines.len() - 1].iter().position(blank) else { break };
+        lines.remove(i);
+    }
+    if lines.len() > budget {
+        if let Some(i) = lines.iter().position(|l| l.to_string().trim_start().starts_with("· the rest of")) {
+            lines.remove(i);
+        }
+    }
+    if lines.len() > budget && budget >= 2 {
+        let bar = lines.pop().unwrap();
+        lines.truncate(budget - 1);
+        if let Some(last) = lines.last_mut() {
+            *last = Line::raw(" …");
+        }
+        lines.push(bar);
+    }
+    lines
+}
+
+/// Área de una confirmación: dentro del contenido de Config (no tapa cabecera ni pie); en otras vistas, toda la pantalla.
+fn confirm_area(app: &App, th: &Theme, area: Rect) -> Rect {
+    if app.view == View::Config { config_body(th, area) } else { area }
+}
+
+fn draw_sched_modal(f: &mut Frame, app: &App, th: &Theme, full: Rect) {
+    let area = if app.sched.as_ref().is_some_and(|m| m.stage == super::sched::Stage::Confirm) { confirm_area(app, th, full) } else { full };
+    let iw = centered(area, 100, 3).width.saturating_sub(2).max(1) as usize;
     use super::sched::{Field, Stage};
     let Some(m) = &app.sched else { return };
     let mut lines: Vec<Line> = Vec::new();
@@ -2102,7 +2193,8 @@ fn draw_sched_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         (" Schedule the automatic update ", &[("Tab", "field"), ("←/→/Space", "change"), ("Enter", "validate"), ("Esc", "cancel")])
     };
     if confirm {
-        lines.extend(m.lines.iter().map(|l| Line::raw(format!(" {l}"))));
+        lines.push(Line::default());
+        lines.extend(confirm_lines(th, &m.lines, iw));
     } else {
         lines.push(Line::raw(format!(" today: {}   (all times are the server's)", m.today())));
         lines.push(Line::default());
@@ -2130,9 +2222,11 @@ fn draw_sched_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     lines.extend(m.warnings.iter().map(|wn| Line::styled(format!(" ! {wn}"), th.warn())));
     lines.push(Line::default());
     lines.push(mbar(th, bottom, 4, 96));
-    let iw = centered(area, 100, 3).width.saturating_sub(2).max(1) as usize;
+    if confirm {
+        lines = fit_rows(lines, area.height.saturating_sub(2) as usize);
+    }
     let rows: usize = lines.iter().map(|l| l.to_string().chars().count().div_ceil(iw).max(1)).sum();
-    let r = centered(area, 100, (rows as u16 + 2).min(area.height.saturating_sub(2)));
+    let r = centered(area, 100, (rows as u16 + 2).min(if confirm { area.height } else { area.height.saturating_sub(2) }));
     f.render_widget(Clear, r);
     let blk = Block::default().borders(Borders::ALL).title(Span::styled(title, th.bold())).border_style(th.accent());
     let inner = blk.inner(r);
@@ -2140,7 +2234,9 @@ fn draw_sched_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), inner);
 }
 
-fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, full: Rect) {
+    let area = if app.apprise_modal.as_ref().is_some_and(|m| m.stage == super::apprise::Stage::Confirm) { confirm_area(app, th, full) } else { full };
+    let iw = centered(area, 100, 3).width.saturating_sub(2).max(1) as usize;
     use super::apprise::{Field, Stage};
     use pxu::share::config::{AppriseMode, APPRISE_EVENTS};
     let Some(m) = &app.apprise_modal else { return };
@@ -2152,7 +2248,8 @@ fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
         (" Notifications (Apprise) ", &[("Tab", "field"), ("←/→/Space", "change"), ("Enter", "validate"), ("Esc", "cancel")])
     };
     if confirm {
-        lines.extend(m.lines.iter().map(|l| Line::raw(format!(" {l}"))));
+        lines.push(Line::default());
+        lines.extend(confirm_lines(th, &m.lines, iw));
     } else {
         let cur = m.fields().get(m.field).copied();
         let dots = |n: usize| "•".repeat(n.min(40));
@@ -2167,13 +2264,15 @@ fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
                     let v = if m.secret.is_empty() && m.stored() { "(stored — leave empty to keep)".to_string() } else { format!("{}{c}", dots(m.secret.chars().count())) };
                     (n.to_string(), v)
                 }
+                Field::Tag => ("Tag".to_string(), if m.tag.is_empty() && Some(fl) != cur { "(none)".to_string() } else { format!("{}{c}", m.tag) }),
                 Field::Event(i) => (if i == 0 { "Notify on".to_string() } else { String::new() }, format!("[{}] {}", if m.on[i] { "x" } else { " " }, APPRISE_EVENTS[i])),
             };
             let t = format!(" {mark} {name:<24} {val}");
             lines.push(if Some(fl) == cur { Line::styled(t, th.sel()) } else { Line::raw(t) });
         }
         lines.push(Line::default());
-        lines.push(Line::styled(" secrets are never shown; what you type appears as dots", th.muted()));
+        lines.push(Line::styled(" secrets are never shown (dots) and are saved encrypted (systemd-creds)", th.muted()));
+        lines.push(Line::styled(" tag empty: only untagged targets of the key are notified", th.muted()));
         if let Some(e) = &m.error {
             lines.push(Line::default());
             lines.push(Line::styled(format!(" ! {e}"), th.warn()));
@@ -2181,9 +2280,11 @@ fn draw_apprise_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     }
     lines.push(Line::default());
     lines.push(mbar(th, bottom, 4, 96));
-    let iw = centered(area, 100, 3).width.saturating_sub(2).max(1) as usize;
+    if confirm {
+        lines = fit_rows(lines, area.height.saturating_sub(2) as usize);
+    }
     let rows: usize = lines.iter().map(|l| l.to_string().chars().count().div_ceil(iw).max(1)).sum();
-    let r = centered(area, 100, (rows as u16 + 2).min(area.height.saturating_sub(2)));
+    let r = centered(area, 100, (rows as u16 + 2).min(if confirm { area.height } else { area.height.saturating_sub(2) }));
     f.render_widget(Clear, r);
     let blk = Block::default().borders(Borders::ALL).title(Span::styled(title, th.bold())).border_style(th.accent());
     let inner = blk.inner(r);
@@ -2330,4 +2431,16 @@ fn draw_update(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 #[cfg(test)]
 pub fn wrap_for_test(s: &str, w: usize) -> Vec<String> {
     wrap_line(s, w)
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::wrap_hanging;
+
+    #[test]
+    fn long_notes_continue_under_the_bullet_text_and_short_lines_keep_their_spacing() {
+        let rows = wrap_hanging(" · aaaa bbbb cccc dddd", 14, 4);
+        assert_eq!(rows, vec![" · aaaa bbbb", "    cccc dddd"]);
+        assert_eq!(wrap_hanging("   api_url   x", 40, 3), vec!["   api_url   x"]);
+    }
 }

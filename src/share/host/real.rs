@@ -28,7 +28,7 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
     let (prog, args) = argv.split_first().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?;
     let (rd, wr) = std::io::pipe()?;
     let mut cmd = Command::new(prog);
-    cmd.args(args).stdout(wr.try_clone()?).stderr(wr).stdin(if opts.stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+    cmd.args(args).stdout(wr.try_clone()?).stderr(if opts.split_stderr { Stdio::piped() } else { Stdio::from(wr.try_clone()?) }).stdin(if opts.stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     for (k, v) in &opts.env {
         cmd.env(k, v);
     }
@@ -54,6 +54,19 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
     }
     let mut child = cmd.spawn()?;
     drop(cmd); // cierra la copia del extremo de escritura del padre
+    drop(wr);
+    let err_thread = child.stderr.take().map(|e| {
+        std::thread::spawn(move || {
+            // acotado: solo se guardan las primeras líneas, el resto se lee y se descarta para no bloquear al hijo
+            let mut v = Vec::new();
+            for l in BufReader::new(e).lines().map_while(Result::ok) {
+                if v.len() < 20 {
+                    v.push(l);
+                }
+            }
+            v
+        })
+    });
     if let (Some(data), Some(mut si)) = (opts.stdin.clone(), child.stdin.take()) {
         std::thread::spawn(move || {
             let _ = si.write_all(&data);
@@ -122,6 +135,11 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
         st
     })?;
     let _ = done_tx.send(());
+    if let Some(t) = err_thread {
+        for l in t.join().unwrap_or_default() {
+            sink.err_line(&l);
+        }
+    }
     if interrupted.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(io::Error::new(io::ErrorKind::Interrupted, CANCELLED_MSG));
     }
@@ -338,6 +356,28 @@ impl Host for RealHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct Split(Vec<String>, Vec<String>);
+    impl LineSink for Split {
+        fn line(&mut self, l: &str) {
+            self.0.push(l.into());
+        }
+        fn err_line(&mut self, l: &str) {
+            self.1.push(l.into());
+        }
+    }
+
+    #[test]
+    fn split_stderr_keeps_warnings_out_of_stdout_and_mixed_is_default() {
+        let argv = ["sh", "-c", "echo warn >&2; echo data"];
+        let mut s = Split::default();
+        run(&argv, &ExecOpts { split_stderr: true, ..Default::default() }, &mut s).unwrap();
+        assert_eq!((s.0, s.1), (vec!["data".to_string()], vec!["warn".to_string()]));
+        let mut m = Split::default();
+        run(&argv, &ExecOpts::default(), &mut m).unwrap();
+        assert_eq!((m.0.len(), m.1.len()), (2, 0));
+    }
 
     #[test]
     fn write_atomic_refuses_unsafe_state_dirs_and_symlinked_tmp() {

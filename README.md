@@ -85,13 +85,13 @@ With `--timer` at install time, pxu checks and updates every day at **04:30** (s
 
 To change the time or turn it off, press `S` in the list or in Config (`g`).
 
-Each run writes one log in `/var/log/pxu/`; open it with `l`. Logs are deleted after 30 days (change with `L` in Config; `0` keeps them forever).
+Each run writes one log in `/var/log/pxu/`; open it with `l`. Logs are deleted after 30 days (change with `d` in Config; `0` keeps them forever).
 
 ## Set up notifications
 
 Each run ends with **a single notification**: a table with the server first and then each container.
 
-1. In Config (`g`), press `N`.
+1. In Config (`g`), press `n`.
 2. Type the address of your Apprise API and the key, then confirm.
 3. Press `t` to send a test notification.
 

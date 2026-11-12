@@ -99,7 +99,7 @@ pub enum Action {
     CheckSchedule { expr: String },
     /// `y`/Enter en la confirmación: instala/escribe/activa y recarga el estado.
     SaveSchedule(SchedulePlan),
-    /// `N` en Config: el bucle lee `[apprise]` y abre el diálogo.
+    /// `n` en Config: el bucle lee `[apprise]` y abre el diálogo.
     AskApprise,
     /// Enter en el diálogo: validar la config resultante entera (sin escribir) antes de confirmar.
     CheckApprise(AppriseEdit),
@@ -481,7 +481,7 @@ pub struct App {
     pub storage: super::storage::StorageState,
     /// `log_retention_days` leído para la vista Config.
     pub log_days: Option<u32>,
-    /// Diálogo de retención (`L` en Config): los dígitos escritos.
+    /// Diálogo de retención (`d` en Config): los dígitos escritos.
     pub log_modal: Option<String>,
 }
 
@@ -808,7 +808,7 @@ impl App {
         }
     }
 
-    /// `L` en Config: pide el número de días (editar config.toml: no en `--read-only`).
+    /// `d` en Config (alias `L`): pide el número de días (editar config.toml: no en `--read-only`).
     fn ask_log_retention(&mut self) -> Action {
         if self.forced_ro {
             self.status = "read-only mode (--read-only): the log retention cannot be changed".into();
@@ -889,17 +889,17 @@ impl App {
             KeyCode::Esc | KeyCode::Backspace => self.view = View::List,
             KeyCode::Char('?') => self.help = true,
             KeyCode::Char('r') => return Action::OpenConfig,
-            KeyCode::Char('S') => return self.ask_schedule(),
-            KeyCode::Char('N') => return self.ask_apprise(),
+            KeyCode::Char('s' | 'S') => return self.ask_schedule(),
+            KeyCode::Char('n' | 'N') => return self.ask_apprise(),
             KeyCode::Char('t') => return self.ask_test(),
-            KeyCode::Char('L') => return self.ask_log_retention(),
+            KeyCode::Char('d' | 'L') => return self.ask_log_retention(),
             KeyCode::Char('l') => return Action::OpenLogs,
             _ => {}
         }
         Action::None
     }
 
-    /// `N`: el bucle abre el diálogo de `[apprise]` (edita config.toml: no en `--read-only`).
+    /// `n` (alias `N`): el bucle abre el diálogo de `[apprise]` (edita config.toml: no en `--read-only`).
     fn ask_apprise(&mut self) -> Action {
         if self.forced_ro {
             self.status = "read-only mode (--read-only): notifications cannot be changed".into();
