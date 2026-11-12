@@ -25,9 +25,10 @@ run = 'tools/publish.sh ${usage_tag}'
 
 [tasks.test]
 description = "Corre los tests en el perfil dev y en el perfil mock"
+env = { TZ = "America/Santiago" }
 run = [
-  "cargo test --locked",
-  "cargo test --locked --profile mock --features mock",
+    "cargo test --locked",
+    "cargo test --locked --profile mock --features mock",
 ]
 
 [tasks.mock]
@@ -47,9 +48,9 @@ run = "cargo clippy --locked --all-targets"
 [tasks.check]
 description = "Tests y comprobación de que el binario de producción rechaza --mock"
 run = [
-  "mise run test",
-  "cargo build --locked --release",
-  "code=0; target/release/pxu --mock demo list 2>/dev/null || code=$?; test $code -eq 2 && echo \"release rechaza --mock (exit 2)\"",
+    "mise run test",
+    "cargo build --locked --release",
+    "code=0; target/release/pxu --mock demo list 2>/dev/null || code=$?; test $code -eq 2 && echo \"release rechaza --mock (exit 2)\"",
 ]
 
 [tasks.screenshots]

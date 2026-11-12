@@ -34,11 +34,18 @@ Casos predefinidos y el builder de `World`: [`docs/ARCHITECTURE.es.md` §8.3](do
 
 Las releases las compila y las firma GitHub; el binario nunca se commitea en el repositorio.
 
-1. Sube `version` en `Cargo.toml`, ejecuta `cargo build` (actualiza `Cargo.lock`) y `mise run check`, y haz commit.
-2. En `main`, con el árbol limpio: `mise run publish -- v1.2.3`. `tools/publish.sh` comprueba que el tag empiece por `v`, sea igual a la versión de `Cargo.toml` y no exista todavía, empuja `main` al remoto `forgejo`, crea el tag anotado y lo empuja ahí también. Nunca fuerza. El espejo (push mirror) de Forgejo lleva ambos a GitHub; el script solo lee el remoto `github`, para rechazar un tag que ya exista ahí y para esperar (hasta `PUBLISH_MIRROR_TIMEOUT`, 120 s) a que el espejo entregue cada push.
+Necesita un `.env` en la raíz del repo (git lo ignora) con la base de la cuenta de cada servidor; el script lo lee y se detiene si falta el archivo o alguna de las variables:
+
+```sh
+FORGEJO_URL=<URL base de la cuenta en Forgejo>
+GITHUB_URL=<URL base de la cuenta en GitHub>
+```
+
+1. Sube `version` en `Cargo.toml`, ejecuta `cargo build` (actualiza `Cargo.lock`) y `mise run check`, y haz commit. No lo empujes: `publish` lo empuja junto con el tag.
+2. En `main`, con el árbol limpio: `mise run publish -- v1.2.3`. `tools/publish.sh` comprueba que el tag empiece por `v`, sea igual a la versión de `Cargo.toml` y no exista todavía, crea el tag anotado y empuja `main` y el tag a Forgejo en un solo push, para que la sincronización del espejo lleve ambos a GitHub. Nunca fuerza y no espera: muestra los links a la build en GitHub Actions y a la release. GitHub solo se lee, para rechazar un tag que ya exista ahí.
 3. El tag en GitHub lanza `.github/workflows/release.yml`: comprueba tag y versión, corre `mise run check` y `mise run lint`, compila el binario, lo empaqueta, lo atesta (build provenance) y publica la release con `pxu`, `pxu-<versión>-x86_64-linux.tar.gz`, `SHA256SUMS` y `provenance.sigstore.json`.
 
-El binario es estático (`x86_64-unknown-linux-musl`). Uno glibc compilado en ubuntu-24.04 enlaza con glibc 2.39 y no correría en Proxmox 8 (Debian 12, glibc 2.36); el estático corre en 8 y 9. `mise run package` genera el mismo tarball en local para revisarlo. Nada se empuja directo a GitHub: lo que se cambie ahí se pisa en la siguiente sincronización del espejo. `publish` espera que los remotos se llamen `github` (`git@github.com:vk2r/pxu.git`) y `forgejo`; se pueden cambiar con `PUBLISH_GITHUB_REMOTE` / `PUBLISH_FORGEJO_REMOTE`.
+El binario es estático (`x86_64-unknown-linux-musl`). Uno glibc compilado en ubuntu-24.04 enlaza con glibc 2.39 y no correría en Proxmox 8 (Debian 12, glibc 2.36); el estático corre en 8 y 9. `mise run package` genera el mismo tarball en local para revisarlo. Nada se empuja directo a GitHub: lo que se cambie ahí se pisa en la siguiente sincronización del espejo. `publish` no usa remotos de git: arma las URLs con `FORGEJO_URL` y `GITHUB_URL` más el nombre de la carpeta del repo (`pxu`).
 
 ## Screenshots
 

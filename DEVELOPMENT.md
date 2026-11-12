@@ -34,11 +34,18 @@ Predefined cases and the `World` builder: [`docs/ARCHITECTURE.md` §8.3](docs/AR
 
 Releases are built and signed by GitHub; the binary is never committed to the repository.
 
-1. Bump `version` in `Cargo.toml`, run `cargo build` (updates `Cargo.lock`) and `mise run check`, and commit.
-2. On `main`, with a clean tree: `mise run publish -- v1.2.3`. `tools/publish.sh` checks that the tag starts with `v`, equals the `Cargo.toml` version and doesn't exist yet, pushes `main` to the `forgejo` remote, creates the annotated tag and pushes it there too. It never forces. Forgejo's push mirror carries both to GitHub; the script only reads the `github` remote, to refuse a tag that already exists there and to wait (up to `PUBLISH_MIRROR_TIMEOUT`, 120 s) until the mirror has delivered each push.
+Requires a `.env` at the repository root (ignored by git) with the account base of each host; the script reads it and stops if it or either variable is missing:
+
+```sh
+FORGEJO_URL=<forgejo account base URL>
+GITHUB_URL=<github account base URL>
+```
+
+1. Bump `version` in `Cargo.toml`, run `cargo build` (updates `Cargo.lock`) and `mise run check`, and commit. Don't push it: `publish` pushes it with the tag.
+2. On `main`, with a clean tree: `mise run publish -- v1.2.3`. `tools/publish.sh` checks that the tag starts with `v`, equals the `Cargo.toml` version and doesn't exist yet, creates the annotated tag and pushes `main` and the tag to Forgejo in a single push, so the mirror sync it triggers carries both to GitHub. It never forces and doesn't wait: it prints the links to the build in GitHub Actions and to the release. GitHub is only read, to refuse a tag that already exists there.
 3. The tag on GitHub starts `.github/workflows/release.yml`: it checks tag and version, runs `mise run check` and `mise run lint`, builds the binary, packages it, attests it (build provenance) and publishes the release with `pxu`, `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json`.
 
-The binary is static (`x86_64-unknown-linux-musl`). A glibc build on ubuntu-24.04 links against glibc 2.39 and would not run on Proxmox 8 (Debian 12, glibc 2.36); the static one runs on 8 and 9. `mise run package` builds the same tarball locally to inspect it. Nothing is pushed straight to GitHub: anything changed there is overwritten by the next mirror sync. `publish` expects the remotes to be called `github` (`git@github.com:vk2r/pxu.git`) and `forgejo`; override with `PUBLISH_GITHUB_REMOTE` / `PUBLISH_FORGEJO_REMOTE`.
+The binary is static (`x86_64-unknown-linux-musl`). A glibc build on ubuntu-24.04 links against glibc 2.39 and would not run on Proxmox 8 (Debian 12, glibc 2.36); the static one runs on 8 and 9. `mise run package` builds the same tarball locally to inspect it. Nothing is pushed straight to GitHub: anything changed there is overwritten by the next mirror sync. `publish` doesn't use git remotes: it builds the URLs from `FORGEJO_URL` and `GITHUB_URL` plus the name of the repository folder (`pxu`).
 
 ## Screenshots
 
