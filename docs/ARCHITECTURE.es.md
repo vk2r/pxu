@@ -6,7 +6,7 @@ pxu es un actualizador liviano de contenedores LXC para Proxmox VE, pensado como
 
 Referencia técnica de cómo funciona `pxu` hoy. La TUI está descrita en [DESIGN.md](DESIGN.es.md); el análisis de seguridad, en [SECURITY-REVIEW.md](SECURITY-REVIEW.es.md). Instalación y uso: [README.md](../README.es.md); compilar y probar: [DEVELOPMENT.md](../DEVELOPMENT.es.md).
 
-Limitación conocida: la lógica se prueba contra un servidor simulado (`MockHost`, §8). El comportamiento con todos los tipos de storage y versiones de Proxmox no se ha comprobado en un servidor real.
+Dónde se probó: las pruebas automáticas corren contra un servidor simulado (`MockHost`, §8), y pxu corre a diario en un servidor real con Proxmox VE 9.2 y storages `dir`, `lvmthin` y `pbs`. Otros tipos de storage (ZFS, Ceph, NFS…) y otras versiones de Proxmox todavía no se han probado en un servidor real.
 
 Estado: v0.1, en desarrollo. Probado en PVE 9.2 (actualización y vuelta atrás reales en un CT Debian 13). Las notificaciones Apprise y la vuelta atrás de un CT que estaba apagado solo están probadas con datos simulados.
 
