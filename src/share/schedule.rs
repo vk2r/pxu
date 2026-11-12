@@ -6,6 +6,11 @@ pub const UNIT_DIR: &str = "/etc/systemd/system";
 pub const TIMER_NAME: &str = "pxu-update.timer";
 pub const SERVICE_UNIT: &str = include_str!("../../dist/systemd/pxu-update.service");
 pub const TIMER_UNIT: &str = include_str!("../../dist/systemd/pxu-update.timer");
+pub const FAILED_SERVICE_UNIT: &str = include_str!("../../dist/systemd/pxu-update-failed.service");
+pub const NOTIFY_FAILED_UNIT: &str = include_str!("../../dist/systemd/pxu-update-notify-failed.service");
+/// Script del aviso de fallo: no es pxu; lo instalan `install.sh` y `apply_schedule`.
+pub const FAILURE_NOTICE_SCRIPT: &str = include_str!("../../dist/systemd/pxu-failure-notice");
+pub const FAILURE_NOTICE_PATH: &str = "/usr/local/bin/pxu-failure-notice";
 pub const FLUSH_TIMER_NAME: &str = "pxu-notify-flush.timer";
 pub const FLUSH_SERVICE_UNIT: &str = include_str!("../../dist/systemd/pxu-notify-flush.service");
 pub const FLUSH_TIMER_UNIT: &str = include_str!("../../dist/systemd/pxu-notify-flush.timer");
@@ -153,5 +158,102 @@ mod tests {
     #[test]
     fn embedded_units_match_install_sh_source() {
         assert!(TIMER_UNIT.contains("[Install]") && SERVICE_UNIT.contains("pxu update --yes"));
+    }
+
+    /// Valor de `key=` de la sección del servicio, en segundos (`20h`, `4h`, `30min`).
+    fn unit_secs(unit: &str, key: &str) -> u64 {
+        let v = unit.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).unwrap_or_else(|| panic!("{key} missing"));
+        let (n, mul) = if let Some(n) = v.strip_suffix("min") { (n, 60) } else if let Some(n) = v.strip_suffix('h') { (n, 3600) } else { panic!("unit {v}") };
+        n.parse::<u64>().unwrap() * mul
+    }
+
+    #[test]
+    fn service_timeout_is_a_finite_last_resort_above_the_internal_deadline_and_below_24h() {
+        let start = unit_secs(SERVICE_UNIT, "TimeoutStartSec");
+        assert!(start > crate::share::update::RUN_DEADLINE_S, "systemd must outlive pxu's own deadline");
+        assert!(start < 24 * 3600, "a stuck run must never block the next day's");
+        assert!(!SERVICE_UNIT.contains("infinity"));
+        // un stop deja terminar apt/dpkg del paso en curso (3 h por defecto) antes del SIGKILL final
+        assert!(unit_secs(SERVICE_UNIT, "TimeoutStopSec") >= 3 * 3600);
+        assert!(SERVICE_UNIT.contains("KillMode=mixed"));
+    }
+
+    #[test]
+    fn failure_notice_is_a_separate_unit_that_does_not_run_pxu() {
+        assert!(SERVICE_UNIT.contains("OnFailure=pxu-update-failed.service"));
+        assert!(FAILED_SERVICE_UNIT.contains("Type=oneshot") && FAILED_SERVICE_UNIT.contains("systemd-cat"));
+        assert!(!FAILED_SERVICE_UNIT.contains("/usr/local/bin/pxu"), "the notice must not depend on pxu");
+        let install = include_str!("../../install.sh");
+        assert!(install.contains("pxu-update-failed.service"), "install.sh installs it with the other units");
+    }
+
+    #[test]
+    fn check_plus_run_deadline_plus_margin_stay_under_the_service_timeout() {
+        use crate::share::update::{check::CHECK_DEADLINE_S, notify_worst_s, RUN_DEADLINE_S, RUN_MARGIN_S};
+        let start = unit_secs(SERVICE_UNIT, "TimeoutStartSec");
+        assert!(CHECK_DEADLINE_S + RUN_DEADLINE_S + RUN_MARGIN_S < start, "check + update + margin must fit the 20 h of the two ExecStart");
+        // con los máximos de la config: check entero (plazo) + las 16 h + todos los avisos (con reintentos) siguen por debajo de TimeoutStartSec
+        assert!(notify_worst_s() <= RUN_MARGIN_S, "the notices ({} s) must fit the margin ({RUN_MARGIN_S} s)", notify_worst_s());
+        assert!(CHECK_DEADLINE_S + RUN_DEADLINE_S + notify_worst_s() < start, "{} s vs {start} s", CHECK_DEADLINE_S + RUN_DEADLINE_S + notify_worst_s());
+        assert!(start < 24 * 3600);
+    }
+
+    #[test]
+    fn apprise_failure_notice_is_wired_without_pxu_and_without_secrets_in_argv() {
+        assert!(SERVICE_UNIT.contains("OnFailure=pxu-update-failed.service pxu-update-notify-failed.service"), "the journal entry stays and the Apprise notice is added");
+        let u = NOTIFY_FAILED_UNIT;
+        assert!(u.contains("LoadCredentialEncrypted=pxu-apprise:/etc/pxu/failure-notice.cred"), "{u}");
+        assert!(u.contains("ConditionPathExists=/etc/pxu/failure-notice.cred"), "without Apprise configured the unit is skipped");
+        assert!(u.contains("ExecStart=/usr/local/bin/pxu-failure-notice") && !u.contains("/usr/local/bin/pxu ") && !u.contains("pxu update"), "does not run pxu");
+        assert!(u.lines().filter(|l| l.starts_with("ExecStart")).all(|l| !l.contains("://") && !l.contains("apikey")), "no secrets in the unit");
+        assert_eq!(FAILURE_NOTICE_PATH, "/usr/local/bin/pxu-failure-notice");
+        assert!(FAILURE_NOTICE_SCRIPT.contains("--config -") && FAILURE_NOTICE_SCRIPT.contains("--config /dev/stdin"), "secrets go by stdin");
+        assert!(include_str!("../../install.sh").contains("pxu-update-notify-failed.service") && include_str!("../../install.sh").contains("pxu-failure-notice"));
+    }
+
+    /// Ejecuta el script real con `curl`/`apprise` falsos que anotan argv y stdin.
+    fn run_notice(cred: Option<&str>) -> (i32, String, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("pxu-notice-{}-{}", std::process::id(), cred.map_or(0, |c| c.len())));
+        let _ = std::fs::remove_dir_all(&d);
+        let (bin, creds) = (d.join("bin"), d.join("creds"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&creds).unwrap();
+        for t in ["curl", "apprise"] {
+            let p = bin.join(t);
+            std::fs::write(&p, format!("#!/bin/sh\necho \"{t} $*\" > \"{0}/argv\"\ncat > \"{0}/stdin\"\n", d.display())).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let script = d.join("pxu-failure-notice");
+        std::fs::write(&script, FAILURE_NOTICE_SCRIPT).unwrap();
+        if let Some(c) = cred {
+            std::fs::write(creds.join("pxu-apprise"), c).unwrap();
+        }
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg(&script).env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
+        if cred.is_some() {
+            cmd.env("CREDENTIALS_DIRECTORY", &creds);
+        } else {
+            cmd.env_remove("CREDENTIALS_DIRECTORY");
+        }
+        let code = cmd.status().unwrap().code().unwrap();
+        let read = |n: &str| std::fs::read_to_string(d.join(n)).unwrap_or_default();
+        let r = (code, read("argv"), read("stdin"));
+        let _ = std::fs::remove_dir_all(&d);
+        r
+    }
+
+    #[test]
+    fn failure_notice_script_sends_by_stdin_and_works_without_a_credential() {
+        let (code, argv, stdin) = run_notice(Some("# pxu-failure-notice transport=api\nurl = \"http://a/notify/SECRETKEY\""));
+        assert_eq!(code, 0);
+        assert_eq!(argv.trim(), "curl --config -");
+        assert!(stdin.contains("SECRETKEY") && !argv.contains("SECRETKEY"));
+        let (code, argv, stdin) = run_notice(Some("# pxu-failure-notice transport=cli\ntgram://SECRETTOK/1"));
+        assert_eq!(code, 0);
+        assert!(argv.starts_with("apprise --config /dev/stdin") && argv.contains("-n failure") && !argv.contains("SECRETTOK"), "{argv}");
+        assert!(stdin.contains("tgram://SECRETTOK/1"));
+        assert_eq!(run_notice(None).0, 0, "no credential: nothing to send, not a failure");
+        assert_ne!(run_notice(Some("garbage")).0, 0, "an unknown format is reported");
     }
 }

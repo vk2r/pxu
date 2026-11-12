@@ -587,6 +587,11 @@ fn now(host: &dyn Host) -> u64 {
     host.now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// Peor caso de `check_host`: `apt-get update` (3 × `timeout_s`), `apt list`, la simulación, `lspci`, `dkms` y un `nvidia-smi` por CT NVIDIA (más la cola de SIGTERM/SIGKILL de cada uno).
+pub fn worst_s(timeout_s: u64, guests: u64) -> u64 {
+    (3 + 4 + guests) * (timeout_s + 30)
+}
+
 /// ¿Hay módulo nvidia para `kernel`? Por `dkms status` (installed) o por el archivo del módulo.
 fn nvidia_module_for(host: &dyn Host, dkms: &[Dkms], kernel: &str) -> bool {
     if dkms.iter().any(|d| d.module.starts_with("nvidia") && d.kernel == kernel && d.status.starts_with("installed")) {

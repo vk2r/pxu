@@ -1,6 +1,7 @@
 [Unit]
 Description=pxu: LXC check and update
 After=pve-cluster.service
+OnFailure=pxu-update-failed.service pxu-update-notify-failed.service
 
 [Service]
 Type=oneshot
@@ -8,5 +9,8 @@ ExecStart=-/usr/local/bin/pxu check --notify
 ExecStart=/usr/local/bin/pxu update --yes
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=4h
+# Último recurso: pxu acota cada paso y la corrida entera (RUN_DEADLINE_S = 16 h, más el plazo de `pxu check`); debe ser < 24 h para no bloquear la corrida del día siguiente.
+TimeoutStartSec=20h
+# Un stop (SIGTERM) deja terminar el paso en curso (apt/dpkg) antes del SIGKILL final.
+TimeoutStopSec=4h
 KillMode=mixed

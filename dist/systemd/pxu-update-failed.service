@@ -1,0 +1,9 @@
+[Unit]
+Description=pxu: aviso de fallo de pxu-update.service (no depende de pxu)
+
+[Service]
+Type=oneshot
+# Corre sin ejecutar pxu (también si systemd lo mató por TimeoutStartSec o SIGKILL); no salta mientras pxu sigue colgado antes del límite: deja una entrada crítica en el journal (la alerta por Apprise va en pxu-update-notify-failed.service).
+ExecStart=/usr/bin/systemd-cat -t pxu -p crit /usr/bin/echo "pxu-update.service failed (exit code, timeout or kill): check journalctl -u pxu-update.service and /var/log/pxu; a CT may be half updated"
+Nice=10
+TimeoutStartSec=1min

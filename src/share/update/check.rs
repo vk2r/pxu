@@ -285,6 +285,15 @@ impl Report {
     }
 }
 
+/// Plazo total de `pxu check`: pasado, los CT que faltan quedan sin sondear (`Timeout`) y se omite el host. Con `update::RUN_DEADLINE_S` y
+/// `update::RUN_MARGIN_S` debe quedar por debajo de `TimeoutStartSec` de `pxu-update.service` (las dos `ExecStart` comparten ese tiempo).
+pub const CHECK_DEADLINE_S: u64 = 3600;
+
+/// Peor caso de la sonda de un CT: con refresco tiene `3 × timeout_s`, más la cola de SIGTERM/SIGKILL.
+fn probe_worst_s(o: &CheckOpts) -> u64 {
+    3 * o.timeout_s + 30
+}
+
 /// Recorre los CTs en orden, uno a uno. `progress` se llama tras cada CT; `cancel` se mira entre CTs
 /// ("terminar el CT en curso y parar", ARCHITECTURE §3.2): los restantes quedan `cancelled`.
 pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, o: &CheckOpts, only: &[u32], cancel: &AtomicBool, progress: &mut dyn FnMut(&CtResult)) -> Report {
@@ -292,12 +301,20 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, o: &CheckOpts, only: 
     let started_at = now(host);
     let mut results = Vec::new();
     for g in targets(inv, only) {
-        let r = if cancel.load(Ordering::SeqCst) { CtResult::bare(g, Status::Cancelled, "cancelled") } else { check_one(host, g, cfg, o) };
+        // una sonda solo empieza si su peor caso cabe en lo que queda del plazo
+        let over = now(host).saturating_sub(started_at) + probe_worst_s(o) > CHECK_DEADLINE_S;
+        let r = if cancel.load(Ordering::SeqCst) {
+            CtResult::bare(g, Status::Cancelled, "cancelled")
+        } else if over {
+            CtResult::bare(g, Status::Timeout, "not checked: check time limit")
+        } else {
+            check_one(host, g, cfg, o)
+        };
         progress(&r);
         results.push(r);
     }
     // El host se revisa después de los CT y de forma aislada: su fallo queda en `host.error`, no cambia los CT.
-    let host_info = if only.is_empty() && !cancel.load(Ordering::SeqCst) { hostcheck::check_host(host, inv, o) } else { None };
+    let host_info = if only.is_empty() && !cancel.load(Ordering::SeqCst) && now(host).saturating_sub(started_at) + hostcheck::worst_s(o.timeout_s, inv.guests.iter().filter(|g| g.gpu.nvidia).count() as u64) <= CHECK_DEADLINE_S { hostcheck::check_host(host, inv, o) } else { None };
     Report { started_at, finished_at: now(host), refresh: o.refresh, results, host: host_info }
 }
 
@@ -606,5 +623,41 @@ mod tests {
         let r = run(&h, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[103], &AtomicBool::new(false), &mut |_| {});
         assert_ne!(r.results[0].status, Status::Error, "read-only probe is accepted by the read-only host: {:?}", r.results[0].detail);
         assert!(!r.refresh);
+    }
+
+    #[test]
+    fn check_stops_probing_after_its_own_deadline() {
+        let h = ReadOnlyHost::new(World::demo().build());
+        let cfg = Config::load(&h).unwrap();
+        let inv = guests::load(&h);
+        let o = CheckOpts::from_config(&cfg, Some(false));
+        let first = targets(&inv, &[]).first().map(|g| g.vmid).expect("a CT");
+        let rep = run(&h, &inv, &cfg, &o, &[], &AtomicBool::new(false), &mut |r| {
+            if r.vmid == first {
+                h.inner().advance_clock(CHECK_DEADLINE_S + 1);
+            }
+        });
+        assert!(rep.results.len() > 1);
+        assert!(rep.results.iter().skip(1).all(|r| r.status == Status::Timeout && r.detail.contains("check time limit")), "{:?}", rep.results.iter().map(|r| (&r.vmid, &r.status)).collect::<Vec<_>>());
+        assert!(rep.host.is_none(), "the host check is skipped too");
+    }
+
+    #[test]
+    fn a_probe_that_does_not_fit_in_the_time_left_is_not_started() {
+        // queda menos que el peor caso de una sonda (con refresco, 3 × timeout_s): ni la sonda ni el chequeo del host empiezan
+        let h = ReadOnlyHost::new(World::demo().build());
+        let cfg = Config::load(&h).unwrap();
+        let inv = guests::load(&h);
+        let o = CheckOpts::from_config(&cfg, Some(true));
+        let first = targets(&inv, &[]).first().map(|g| g.vmid).expect("a CT");
+        let rep = run(&h, &inv, &cfg, &o, &[], &AtomicBool::new(false), &mut |r| {
+            if r.vmid == first {
+                h.inner().advance_clock(CHECK_DEADLINE_S - probe_worst_s(&o) + 1);
+            }
+        });
+        assert!(rep.results.iter().skip(1).all(|r| r.status == Status::Timeout), "{:?}", rep.results.iter().map(|r| (&r.vmid, &r.status)).collect::<Vec<_>>());
+        assert!(rep.host.is_none());
+        // con los máximos de la config un chequeo con refresco sigue cabiendo en su plazo
+        assert!(probe_worst_s(&CheckOpts { timeout_s: crate::share::config::MAX_CHECK_TIMEOUT_S, ..o.clone() }) < CHECK_DEADLINE_S);
     }
 }

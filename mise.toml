@@ -4,6 +4,7 @@
 [tools]
 rust = { version = "1.99.1", targets = "x86_64-unknown-linux-musl", components = "clippy" }
 "github:charmbracelet/freeze" = "0.2.2"
+"github:rustsec/rustsec" = { version = "0.23.0", version_prefix = "cargo-audit/v", bin = "cargo-audit" }
 
 [tasks.build]
 description = "Compila el binario de producción en target/release/pxu"
@@ -40,6 +41,10 @@ description = "Abre la TUI con un servidor simulado (mise run demo -- update-ok 
 depends = ["mock"]
 usage = 'arg "[args]..." var=#true default="demo" help="Caso simulado y comando"'
 run = 'target/mock/pxu --mock ${usage_args}'
+
+[tasks.audit]
+description = "Revisa las dependencias de Cargo.lock contra la base de avisos de RustSec"
+run = "cargo audit"
 
 [tasks.lint]
 description = "Avisos de clippy (todavía no son bloqueantes)"

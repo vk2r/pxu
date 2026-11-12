@@ -32,6 +32,9 @@ jobs:
           install: true
           cache: false
 
+      - name: Audit
+        run: mise run audit
+
       - name: Test
         run: mise run check
 

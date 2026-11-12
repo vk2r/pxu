@@ -42,6 +42,23 @@ pub struct AppriseCfg {
     pub retry_delays_ms: Vec<u64>,
 }
 
+/// Máximos que `config` aplica al cargar: acotan el peor caso de un aviso para que quepa en `update::RUN_MARGIN_S`.
+pub const MAX_TIMEOUT_S: u64 = 30;
+pub const MAX_RETRIES: usize = 6;
+pub const MAX_RETRY_TOTAL_MS: u64 = 600_000;
+/// Un intento de envío: `timeout_s` + 5 s de la orden + cola de SIGTERM/SIGKILL (30 s).
+pub const ATTEMPT_S: u64 = MAX_TIMEOUT_S + 5 + 30;
+/// Descifrar los secretos (como mucho `api_key_enc` y `urls_enc`): 20 s de `systemd-creds` + 30 s de cola cada uno.
+/// Se hace una sola vez por envío (con todos sus reintentos) y una sola vez por pasada de la cola.
+pub const REVEAL_S: u64 = 2 * (20 + 30);
+/// Avisos que se reenvían de la cola en una pasada (el resto espera a la siguiente).
+pub const MAX_FLUSH: usize = 10;
+
+/// Peor caso de un aviso con `retries` reintentos (con los máximos de arriba).
+pub const fn worst_send_s(retries: usize) -> u64 {
+    REVEAL_S + (1 + retries as u64) * ATTEMPT_S + MAX_RETRY_TOTAL_MS / 1000
+}
+
 /// Eventos que pueden avisar (`[apprise] on`).
 pub const EVENTS: &[&str] = &["updates_found", "update_failed", "run_summary", "check_error"];
 
@@ -107,6 +124,9 @@ pub const CREDS_NAME: &str = "pxu-apprise";
 /// Cifrado: TPM2 si hay; si no, la llave del host (`/var/lib/systemd/credential.secret`, la crea systemd).
 pub const CREDS_ENCRYPT: &[&str] = &["systemd-creds", "encrypt", "--name=pxu-apprise", "--with-key=auto", "-", "-"];
 pub const CREDS_DECRYPT: &[&str] = &["systemd-creds", "decrypt", "--name=pxu-apprise", "-", "-"];
+
+/// Credencial cifrada para el aviso de fallo del servicio (`pxu-update-notify-failed.service`): la lee systemd, no pxu.
+pub const FAILURE_CRED_PATH: &str = "/etc/pxu/failure-notice.cred";
 
 /// stdout (el dato) y stderr (avisos de systemd-creds) van por separado: un aviso nunca se mezcla con el resultado.
 #[derive(Default)]
@@ -259,6 +279,37 @@ pub fn curl_config(c: &AppriseCfg, m: &Message) -> String {
     )
 }
 
+/// Aviso que lanza `pxu-update-notify-failed.service` cuando el servicio falla (fijo: el script no conoce el contenido de la corrida).
+fn failure_message() -> Message {
+    Message {
+        title: "pxu update FAILED".into(),
+        body: "pxu-update.service failed or was killed: check journalctl -u pxu-update.service and /var/log/pxu; a CT may be half updated".into(),
+        level: Level::Failure,
+        event: "service_failed".into(),
+        created: 0,
+    }
+}
+
+/// Texto que se cifra para `pxu-failure-notice`: primera línea = transporte; el resto, la config lista para `curl --config -` o `apprise --config`.
+/// Sin salto de línea final (el ida y vuelta de `seal` no lo conserva). `c` lleva los secretos ya descifrados.
+pub fn failure_payload(c: &AppriseCfg, t: Transport) -> Option<String> {
+    match t {
+        Transport::Api => Some(format!("# pxu-failure-notice transport=api\n{}", curl_config(c, &failure_message()).trim_end())),
+        Transport::Cli => Some(format!("# pxu-failure-notice transport=cli\n{}", c.urls.join("\n"))),
+        Transport::None => None,
+    }
+}
+
+/// Cifra y guarda la credencial del aviso de fallo con las mismas URLs/clave que `c`. `Ok(false)` = sin transporte (no se escribe nada).
+pub fn write_failure_cred(host: &dyn Host, c: &AppriseCfg) -> Result<bool, String> {
+    let t = resolve(host, c);
+    let revealed = c.reveal(host)?;
+    let Some(plain) = failure_payload(&revealed, t) else { return Ok(false) };
+    let enc = seal(host, &plain)?;
+    host.write_failure_notice(enc.as_bytes()).map_err(|e| format!("{FAILURE_CRED_PATH}: {e}"))?;
+    Ok(true)
+}
+
 struct Out(Vec<String>);
 impl LineSink for Out {
     fn line(&mut self, l: &str) {
@@ -274,8 +325,12 @@ pub fn send_once(host: &dyn Host, c: &AppriseCfg, m: &Message) -> Result<Transpo
     }
     // Descifrado justo antes de enviar; el valor claro solo vive aquí y se pasa por stdin.
     let rc = c.reveal(host)?;
-    let c = &rc;
-    send_revealed(host, c, m, t).map_err(|e| scrub(c, &e))
+    attempt(host, &rc, m, t)
+}
+
+/// Un intento con la config ya descifrada (`reveal`), con el error sin secretos.
+fn attempt(host: &dyn Host, rc: &AppriseCfg, m: &Message, t: Transport) -> Result<Transport, String> {
+    send_revealed(host, rc, m, t).map_err(|e| scrub(rc, &e))
 }
 
 fn send_revealed(host: &dyn Host, c: &AppriseCfg, m: &Message, t: Transport) -> Result<Transport, String> {
@@ -310,7 +365,13 @@ fn transient(err: &str) -> bool {
 
 /// Envío con reintentos: `delays` (ms) entre intentos, solo si el fallo es transitorio.
 pub fn send_with(host: &dyn Host, c: &AppriseCfg, m: &Message, delays: &[u64]) -> Result<Transport, String> {
-    let mut last = send_once(host, c, m);
+    let t = resolve(host, c);
+    if t == Transport::None {
+        return send_once(host, c, m);
+    }
+    // Se descifra una sola vez: los reintentos reutilizan la config revelada.
+    let rc = c.reveal(host)?;
+    let mut last = attempt(host, &rc, m, t);
     for d in delays {
         match &last {
             Ok(_) => break,
@@ -319,7 +380,7 @@ pub fn send_with(host: &dyn Host, c: &AppriseCfg, m: &Message, delays: &[u64]) -
             _ => {}
         }
         std::thread::sleep(std::time::Duration::from_millis(*d));
-        last = send_once(host, c, m);
+        last = attempt(host, &rc, m, t);
     }
     last
 }
@@ -394,6 +455,9 @@ fn try_flush_outbox(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
     files.sort();
     let (mut sent, mut left) = (0, 0);
     let mut dead = false;
+    let mut tried = 0;
+    // Una sola descifrada por pasada; si falla, no se insiste con el resto.
+    let mut revealed: Option<AppriseCfg> = None;
     for f in files {
         let msg: Option<Message> = host.read_file(&f).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let Some(msg) = msg else {
@@ -401,7 +465,18 @@ fn try_flush_outbox(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
             continue;
         };
         // Si un envío falla, no se insiste con el resto en esta pasada (red caída).
-        if !dead && send_once(host, c, &msg).is_ok() {
+        if tried >= MAX_FLUSH {
+            left += 1; // el resto espera a la siguiente pasada: acota la duración
+        } else if !dead && {
+            tried += 1;
+            if revealed.is_none() {
+                revealed = c.reveal(host).ok();
+            }
+            match (&revealed, resolve(host, c)) {
+                (Some(rc), t) if t != Transport::None => attempt(host, rc, &msg, t).is_ok(),
+                _ => false,
+            }
+        } {
             let _ = host.remove_file(&f);
             sent += 1;
         } else {
@@ -632,6 +707,41 @@ mod tests {
         let e = seal(&h, "xMOCK_BAD_ROUNDTRIP").unwrap_err();
         assert_eq!(e, "cannot encrypt the apprise secret: round-trip check failed");
         assert!(!e.contains("MOCK_BAD"));
+    }
+
+    fn failure_cred(h: &MockHost) -> Option<String> {
+        h.read_file(Path::new(FAILURE_CRED_PATH)).ok().map(|b| String::from_utf8(b).unwrap())
+    }
+
+    #[test]
+    fn failure_credential_for_the_api_carries_the_curl_config_encrypted() {
+        let h = World::demo().build();
+        let c = api("SECRETKEY");
+        assert_eq!(write_failure_cred(&h, &c), Ok(true));
+        let enc = failure_cred(&h).expect("credential written");
+        assert!(!enc.contains("SECRETKEY") && !enc.contains("apprise.example"), "only the encrypted text is stored");
+        let plain = unseal(&h, &enc).unwrap();
+        assert!(plain.starts_with("# pxu-failure-notice transport=api\n"), "{plain}");
+        assert!(plain.contains("/notify/SECRETKEY") && plain.contains("pxu update FAILED") && !plain.ends_with('\n'), "{plain}");
+        // la clave solo viaja por stdin del cifrado, nunca por argv
+        assert!(host_argv(&h).iter().flatten().all(|a| !a.contains("SECRETKEY")), "{:?}", host_argv(&h));
+    }
+
+    #[test]
+    fn failure_credential_for_the_cli_carries_the_urls_and_follows_encrypted_config() {
+        let h = World::demo().build();
+        let urls = seal(&h, "tgram://TOK/1\nntfy://ntfy.sh/x").unwrap();
+        let c = AppriseCfg { transport: "cli".into(), urls_enc: urls, retry_delays_ms: vec![], ..Default::default() };
+        assert_eq!(write_failure_cred(&h, &c), Ok(true));
+        let plain = unseal(&h, &failure_cred(&h).unwrap()).unwrap();
+        assert_eq!(plain, "# pxu-failure-notice transport=cli\ntgram://TOK/1\nntfy://ntfy.sh/x");
+    }
+
+    #[test]
+    fn without_apprise_no_failure_credential_is_written() {
+        let h = World::demo().build();
+        assert_eq!(write_failure_cred(&h, &AppriseCfg::default()), Ok(false));
+        assert!(failure_cred(&h).is_none());
     }
 
     #[test]
@@ -896,6 +1006,20 @@ mod tests {
         assert_eq!(notify(&h, &c, &msg()), Outcome::Disabled);
         assert!(send(&h, &c, &msg()).is_err());
         assert!(t0.elapsed().as_secs() < 5);
+    }
+
+    #[test]
+    fn one_flush_pass_sends_at_most_max_flush_queued_notices() {
+        let (dir, count) = flaky_curl("flush-cap", 0, 0, "");
+        let h = PathHost(RealHost::new(), dir.clone());
+        let s = Split(&h, World::demo().build());
+        let c = api("k");
+        for i in 0..MAX_FLUSH + 5 {
+            s.1.write_file(&Path::new(OUTBOX_DIR).join(format!("{i:03}-000.json")), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        }
+        assert_eq!(flush_outbox(&s, &c), (MAX_FLUSH, 5), "the rest waits for the next pass");
+        assert_eq!(calls(&count) as usize, MAX_FLUSH);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

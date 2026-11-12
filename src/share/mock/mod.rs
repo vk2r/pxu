@@ -68,6 +68,8 @@ pub struct MockHost {
     files: BTreeMap<PathBuf, Vec<u8>>,
     scenario: Scenario,
     log: Mutex<Vec<Recorded>>,
+    /// Peor caso de cada orden ejecutada (`timeout_s` + cola de señales): permite sumar lo que una corrida podría tardar. Sin `timeout_s` cuenta `u64::MAX`.
+    budgets: Mutex<Vec<u64>>,
     /// Escrituras de pxu (estado, outbox): nunca tocan los archivos base. `None` = borrado.
     overlay: Mutex<BTreeMap<PathBuf, Option<Vec<u8>>>>,
     lock_dir: PathBuf,
@@ -94,6 +96,10 @@ impl Drop for MockLock {
 }
 
 impl MockHost {
+    /// Adelanta el reloj simulado `secs` segundos (una corrida larga en los tests).
+    pub fn advance_clock(&self, secs: u64) {
+        self.clock_offset.fetch_add(secs, std::sync::atomic::Ordering::SeqCst);
+    }
     /// Instalación en el host simulada. Todo se decide por `/exec/0/<nombre>.out` (+ `.exit`); sin archivo hay un valor por defecto sano:
     /// auditoría limpia, 50 GB libres, raíz ext4, `tar`/`chmod`/`zfs` bien, instalación bien (`install.exit` ≠ 0 = falla), `dpkg-query` derivado de `apt-list.out`.
     fn host_update_cmd(&self, argv: &[&str], s: &mut dyn LineSink) -> io::Result<ExitInfo> {
@@ -207,7 +213,7 @@ impl MockHost {
             ["modprobe", "-r", ..] => done(code("nvidia-unload")),
             ["modprobe", "nvidia"] => done(code("nvidia-modprobe")),
             ["systemctl", "stop" | "start", "nvidia-persistenced"] => done(0),
-            ["install", "-d", "-m", "0700", d] if *d == nv::WORK_DIR => done(0),
+            ["install", "-d", "-m", "0700", "-o", "root", "-g", "root", d] if *d == nv::WORK_DIR => done(0),
             ["df", "-Pk", d] if *d == nv::WORK_DIR => {
                 say(s, &file("nvidia-df.out").unwrap_or_else(|| "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/mapper/pve-root 98000000 20000000 50000000 29% /\n".into()));
                 done(0)
@@ -237,7 +243,7 @@ impl MockHost {
     pub fn new(files: BTreeMap<PathBuf, Vec<u8>>, scenario: Scenario) -> Self {
         let scenario_timer = scenario.timer.clone();
         let lock_dir = PathBuf::from("/run/lock");
-        MockHost { files, scenario, log: Mutex::new(Vec::new()), overlay: Mutex::new(BTreeMap::new()), lock_dir, upgraded: Mutex::new(HashSet::new()), host_installed: std::sync::atomic::AtomicBool::new(false), host_backed_up: std::sync::atomic::AtomicBool::new(false), clock_offset: std::sync::atomic::AtomicU64::new(0), locks: Arc::new(Mutex::new(HashSet::new())), timer: Mutex::new(scenario_timer), deleted: Mutex::new(HashSet::new()) }
+        MockHost { files, scenario, log: Mutex::new(Vec::new()), budgets: Mutex::new(Vec::new()), overlay: Mutex::new(BTreeMap::new()), lock_dir, upgraded: Mutex::new(HashSet::new()), host_installed: std::sync::atomic::AtomicBool::new(false), host_backed_up: std::sync::atomic::AtomicBool::new(false), clock_offset: std::sync::atomic::AtomicU64::new(0), locks: Arc::new(Mutex::new(HashSet::new())), timer: Mutex::new(scenario_timer), deleted: Mutex::new(HashSet::new()) }
     }
     /// Estado actual del timer simulado (para asserts).
     pub fn timer(&self) -> MockTimer {
@@ -249,6 +255,14 @@ impl MockHost {
     /// Comandos emitidos hasta ahora.
     pub fn recorded(&self) -> Vec<Recorded> {
         self.log.lock().unwrap().clone()
+    }
+    /// Suma del peor caso de las órdenes ejecutadas hasta ahora (`timeout_s` + 30 s de cola; con `no_kill_on_timeout`, su margen completo).
+    pub fn exec_budget_s(&self) -> u64 {
+        self.budgets.lock().unwrap().iter().fold(0, |a, b| a.saturating_add(*b))
+    }
+    fn budget(&self, o: &ExecOpts) {
+        let tail = if o.no_kill_on_timeout { crate::share::update::NO_KILL_TAIL_S } else { 30 };
+        self.budgets.lock().unwrap().push(o.timeout_s.map_or(u64::MAX, |t| t + tail));
     }
     /// Estado del CT como lo ve el inventario: `cgroup.events` (con el overlay de start/stop).
     fn ct_running(&self, vmid: u32) -> bool {
@@ -339,7 +353,8 @@ impl Host for MockHost {
             None => self.base_exists(p),
         }
     }
-    fn guest_exec(&self, vmid: u32, argv: &[&str], _o: &ExecOpts, sink: &mut dyn LineSink) -> io::Result<ExitInfo> {
+    fn guest_exec(&self, vmid: u32, argv: &[&str], o: &ExecOpts, sink: &mut dyn LineSink) -> io::Result<ExitInfo> {
+        self.budget(o);
         self.log.lock().unwrap().push(Recorded::Guest(vmid, argv.iter().map(|s| s.to_string()).collect()));
         let fail = |step: &str| self.scenario.fail.iter().find(|f| f.vmid == vmid && f.step == step);
         let done = self.upgraded.lock().unwrap().contains(&vmid);
@@ -400,8 +415,17 @@ impl Host for MockHost {
                 self.upgraded.lock().unwrap().insert(vmid);
                 Ok(ExitInfo { code: 0 })
             }
-            ["rm", "-f", p] if *p == crate::share::update::nvidia::CT_RUN_PATH => Ok(ExitInfo { code: 0 }),
-            ["sh", p, "--no-kernel-modules", ..] if *p == crate::share::update::nvidia::CT_RUN_PATH => {
+            a if a == crate::share::update::nvidia::CT_MKTEMP => {
+                // `/exec/<vmid>/nvidia-mktemp.out` permite simular un CT que devuelve una ruta hostil
+                emit(sink, &read("nvidia-mktemp.out").unwrap_or_else(|| format!("{}MOCK0001", crate::share::update::nvidia::CT_DIR_PREFIX)), false);
+                Ok(ExitInfo { code: 0 })
+            }
+            ["sha256sum", p] if p.ends_with("/nvidia.run") => {
+                emit(sink, &read("nvidia-ct-sha.out").unwrap_or_else(|| format!("{}  {p}", "a".repeat(64))), false);
+                Ok(ExitInfo { code: 0 })
+            }
+            ["rm", "-rf", "--", d] if crate::share::update::nvidia::ct_dir_ok(d) => Ok(ExitInfo { code: 0 }),
+            ["sh", p, "--no-kernel-modules", ..] if p.ends_with("/nvidia.run") => {
                 let rc = read("nvidia-libs.exit").and_then(|c| c.trim().parse().ok()).unwrap_or(0);
                 if rc == 0 && read("nvidia-libs.noeffect").is_none() {
                     // las librerías quedan en la versión del módulo del host
@@ -420,6 +444,7 @@ impl Host for MockHost {
         }
     }
     fn host_cmd(&self, argv: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<ExitInfo> {
+        self.budget(o);
         self.log.lock().unwrap().push(Recorded::Host(argv.iter().map(|s| s.to_string()).collect()));
         if let Some(r) = self.nvidia_cmd(argv, s) {
             return r;
@@ -601,6 +626,9 @@ impl Host for MockHost {
     fn write_config(&self, data: &[u8]) -> io::Result<()> {
         self.write_file(Path::new(crate::share::config::CONFIG_PATH), data)
     }
+    fn write_failure_notice(&self, data: &[u8]) -> io::Result<()> {
+        self.write_file(Path::new(crate::share::notify::FAILURE_CRED_PATH), data)
+    }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         let t = self.timer.lock().unwrap();
         let calendars = if t.installed && !t.calendar.is_empty() { vec![t.calendar.clone()] } else { vec![] };
@@ -684,6 +712,15 @@ impl Host for MockHost {
         if path == Path::new(crate::share::update::hostupdate::BACKUP_DIR) {
             // `/exec/0/backup-dir.meta`: «<modo octal> <uid> <dir|file|symlink>» (por defecto «0700 0 dir»)
             let t = self.exec_file(0, "backup-dir.meta").unwrap_or_else(|| "0700 0 dir".into());
+            let f: Vec<&str> = t.split_whitespace().collect();
+            if f.get(2) == Some(&"symlink") {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "is a symlink"));
+            }
+            return Ok(FileMeta { mode: u32::from_str_radix(f.first().unwrap_or(&"0700"), 8).unwrap_or(0o700), uid: f.get(1).and_then(|u| u.parse().ok()).unwrap_or(0), is_dir: f.get(2) != Some(&"file") });
+        }
+        if path == Path::new(crate::share::update::nvidia::WORK_DIR) {
+            // `/exec/0/nvidia-workdir.meta`: «<modo octal> <uid> <dir|file|symlink>» (por defecto «0700 0 dir»)
+            let t = self.exec_file(0, "nvidia-workdir.meta").unwrap_or_else(|| "0700 0 dir".into());
             let f: Vec<&str> = t.split_whitespace().collect();
             if f.get(2) == Some(&"symlink") {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "is a symlink"));

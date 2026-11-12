@@ -77,16 +77,27 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
     let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if let Some(t) = opts.timeout_s {
         let flag = timed_out.clone();
-        let kill = !opts.no_kill_on_timeout;
+        let no_kill = opts.no_kill_on_timeout;
+        let grace = opts.no_kill_grace_s.unwrap_or(super::NO_KILL_GRACE_S);
         std::thread::spawn(move || {
-            if done_rx.recv_timeout(std::time::Duration::from_secs(t)) == Err(mpsc::RecvTimeoutError::Timeout) {
-                flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                if kill {
-                    // SAFETY: el pid (y su grupo, que creó `process_group(0)`) sigue siendo del hijo mientras `wait` no haya vuelto.
-                    unsafe {
-                        libc::kill(-pid, libc::SIGKILL);
-                        libc::kill(pid, libc::SIGKILL);
-                    }
+            let waits = |s: u64| done_rx.recv_timeout(std::time::Duration::from_secs(s)) == Err(mpsc::RecvTimeoutError::Timeout);
+            if !waits(t) {
+                return;
+            }
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Primero SIGTERM (vzdump/pct limpian lo suyo); SIGKILL solo si no acaba. Con `no_kill_on_timeout` (apt/dpkg) antes se espera
+            // un margen finito: es el último recurso para que ninguna corrida quede esperando para siempre.
+            let (before_term, before_kill) = if no_kill { (grace, grace.min(300)) } else { (0, 30) };
+            if before_term > 0 && !waits(before_term) {
+                return;
+            }
+            // SAFETY: el pid (y su grupo, que creó `process_group(0)`) sigue siendo del hijo mientras `wait` no haya vuelto.
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            if waits(before_kill) {
+                // SAFETY: igual que arriba.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                    libc::kill(pid, libc::SIGKILL);
                 }
             }
         });
@@ -216,6 +227,11 @@ pub(super) fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     let dir = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no parent directory"))?;
     create_private_dirs(dir)?;
     check_private_dir(dir)?;
+    write_atomic_mode(path, data, 0o600)
+}
+
+/// tmp + rename con `O_EXCL|O_NOFOLLOW` y el modo dado (el directorio ya está validado por quien llama o es del sistema).
+fn write_atomic_mode(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     // un `.tmp` viejo (corrida interrumpida) se quita sin seguir symlinks; luego O_EXCL|O_NOFOLLOW: nunca se escribe en algo ajeno
     match std::fs::remove_file(&tmp) {
@@ -223,7 +239,7 @@ pub(super) fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(&tmp)?;
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(mode).custom_flags(libc::O_NOFOLLOW).open(&tmp)?;
     f.write_all(data)?;
     f.sync_all()?;
     std::fs::rename(&tmp, path)
@@ -259,6 +275,13 @@ impl Host for RealHost {
         }
         write_atomic(Path::new(crate::share::config::CONFIG_PATH), data)
     }
+    fn write_failure_notice(&self, data: &[u8]) -> io::Result<()> {
+        // SAFETY: geteuid no tiene precondiciones.
+        if unsafe { libc::geteuid() } != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "writing the failure-notice credential requires root"));
+        }
+        write_atomic(Path::new(crate::share::notify::FAILURE_CRED_PATH), data)
+    }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         use crate::share::schedule::*;
         let out = systemctl(&["show", TIMER_NAME, "-p", "LoadState,ActiveState,UnitFileState,NextElapseUSecRealtime,TimersCalendar"])?;
@@ -281,6 +304,9 @@ impl Host for RealHost {
         }
         if plan.install_units {
             write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-update.service"), SERVICE_UNIT)?;
+            write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-update-failed.service"), FAILED_SERVICE_UNIT)?;
+            write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-update-notify-failed.service"), NOTIFY_FAILED_UNIT)?;
+            write_atomic_mode(Path::new(FAILURE_NOTICE_PATH), FAILURE_NOTICE_SCRIPT.as_bytes(), 0o755)?;
             write_unit_atomic(&Path::new(UNIT_DIR).join(TIMER_NAME), TIMER_UNIT)?;
             write_unit_atomic(&Path::new(UNIT_DIR).join("pxu-notify-flush.service"), FLUSH_SERVICE_UNIT)?;
             write_unit_atomic(&Path::new(UNIT_DIR).join(FLUSH_TIMER_NAME), FLUSH_TIMER_UNIT)?;
@@ -366,6 +392,24 @@ mod tests {
         fn err_line(&mut self, l: &str) {
             self.1.push(l.into());
         }
+    }
+
+    #[test]
+    fn no_kill_timeout_waits_for_a_process_that_finishes_within_the_grace() {
+        let t = std::time::Instant::now();
+        let e = run(&["sh", "-c", "sleep 2; echo done"], &ExecOpts { timeout_s: Some(1), no_kill_on_timeout: true, no_kill_grace_s: Some(30), ..Default::default() }, &mut Vec::<String>::new()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::TimedOut);
+        assert!(e.to_string().contains("not killed; finished with exit 0"), "{e}");
+        assert!(t.elapsed().as_secs() < 10);
+    }
+
+    #[test]
+    fn no_kill_timeout_is_finite_even_if_the_process_never_ends() {
+        // ignora SIGTERM: tras el margen se corta el grupo (último recurso)
+        let t = std::time::Instant::now();
+        let e = run(&["sh", "-c", "trap '' TERM; sleep 60"], &ExecOpts { timeout_s: Some(1), no_kill_on_timeout: true, no_kill_grace_s: Some(1), ..Default::default() }, &mut Vec::<String>::new()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::TimedOut);
+        assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
     }
 
     #[test]

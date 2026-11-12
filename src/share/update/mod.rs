@@ -301,6 +301,7 @@ impl Ctx<'_> {
         self.capture.clear();
         let h = self.host;
         self.interrupted = false;
+        let o = &bounded(o);
         match h.host_cmd(argv, o, self) {
             Ok(e) => Ok(e.code),
             Err(e) => {
@@ -317,7 +318,7 @@ impl Ctx<'_> {
         self.capture.clear();
         let h = self.host;
         let v = self.vmid;
-        h.guest_exec(v, argv, o, self).map(|e| e.code).map_err(|e| e.to_string())
+        h.guest_exec(v, argv, &bounded(o), self).map(|e| e.code).map_err(|e| e.to_string())
     }
 }
 
@@ -343,6 +344,85 @@ pub fn stamp(epoch: u64) -> String {
 
 pub struct Opts {
     pub only: Vec<u32>,
+}
+
+// ---- límites de tiempo de `update`: ninguna operación espera sin cota (systemd ya no corta la corrida a las 4 h)
+/// Consultas cortas (`df`, `systemctl --failed`, `dpkg --audit`, `pvesh get`).
+const T_QUERY_S: u64 = 120;
+/// `pct start|stop|shutdown|reboot`.
+const T_PCT_S: u64 = 300;
+/// `pct snapshot`.
+const T_SNAPSHOT_S: u64 = 1800;
+/// `vzdump`: al vencer se le manda SIGTERM (limpia su archivo y su snapshot) y SIGKILL solo si no acaba.
+const T_VZDUMP_S: u64 = 7200;
+/// `pct rollback` / `pct restore`.
+const T_RESTORE_S: u64 = 7200;
+/// `pct delsnapshot` / `pvesm free`.
+const T_PRUNE_S: u64 = 600;
+/// Red de seguridad para una orden sin límite propio (en las pruebas es un fallo: `debug_assert`).
+const T_DEFAULT_S: u64 = 600;
+/// Plazo total de la corrida: un paso (host, NVIDIA o CT) solo empieza si su peor caso (`*_worst_s`) cabe en lo que queda.
+/// Con `check::CHECK_DEADLINE_S` y `RUN_MARGIN_S` debe quedar por debajo de `TimeoutStartSec` de `dist/systemd/pxu-update.service` (20 h), que es solo el último recurso.
+pub const RUN_DEADLINE_S: u64 = 16 * 3600;
+/// Holgura hasta `TimeoutStartSec` para lo que no cuenta el peor caso de un paso: avisos con reintentos, informe, un chequeo que se pasa de su plazo.
+pub const RUN_MARGIN_S: u64 = 2 * 3600;
+/// Una espera `no_kill_on_timeout` termina como mucho en `timeout_s` + margen + SIGTERM + SIGKILL.
+pub(crate) const NO_KILL_TAIL_S: u64 = crate::share::host::NO_KILL_GRACE_S + 300 + 30;
+
+fn limit(secs: u64) -> ExecOpts<'static> {
+    ExecOpts { timeout_s: Some(secs), ..Default::default() }
+}
+
+/// Toda orden lleva un `timeout_s`: sin él, en producción se aplica `T_DEFAULT_S`; en las pruebas es un fallo.
+fn bounded<'a>(o: &ExecOpts<'a>) -> ExecOpts<'a> {
+    debug_assert!(o.timeout_s.is_some(), "a command without timeout_s");
+    ExecOpts { timeout_s: o.timeout_s.or(Some(T_DEFAULT_S)), ..o.clone() }
+}
+
+/// Borrados de backups viejos por CT y corrida (`pct delsnapshot` / `pvesm free`): los que sobren quedan para la siguiente.
+const MAX_PRUNE: usize = 4;
+/// Del plan de poda (de nuevo a viejo) se borran como mucho `MAX_PRUNE`, los más viejos; devuelve también cuántos quedan para la siguiente corrida.
+fn cap_prune(mut plan: Vec<Entry>) -> (Vec<Entry>, usize) {
+    let later = plan.len().saturating_sub(MAX_PRUNE);
+    (plan.split_off(later), later)
+}
+/// Cola de SIGTERM + SIGKILL de una orden que se corta por su plazo.
+const CUT_S: u64 = 30;
+/// Esperas fijas (`sleep`) del arranque de un CT y de la comprobación tras el rollback.
+const SLEEPS_S: u64 = 5 + 5 + 3;
+
+/// Peor caso de un CT, orden por orden (cada una con su límite y su cola de señal): arrancar/parar/reiniciar (6 `pct`), consultas, snapshot, vzdump,
+/// borrados (`MAX_PRUNE` de la poda + 1 del backup propio), sondas del chequeo (con refresco `3 ×`), upgrade y autoremove con su margen,
+/// rollback/restore (dos intentos) y las esperas fijas.
+fn ct_worst_s(cfg: &Config) -> u64 {
+    let upgrade = cfg.update.timeout_min * 60 + NO_KILL_TAIL_S;
+    6 * (T_PCT_S + CUT_S)
+        + 12 * (T_QUERY_S + CUT_S)
+        + (T_SNAPSHOT_S + CUT_S)
+        + (T_VZDUMP_S + CUT_S)
+        + (MAX_PRUNE as u64 + 1) * (T_PRUNE_S + CUT_S)
+        + 4 * (3 * cfg.check.timeout_s + CUT_S)
+        + 2 * upgrade
+        + 2 * (T_RESTORE_S + CUT_S)
+        + SLEEPS_S
+}
+
+/// Peor caso del host: `dpkg --configure -a`, full-upgrade y autoremove (cada uno con su margen), el tar de respaldo, las consultas
+/// y el chequeo final con una sonda por cada CT NVIDIA.
+fn host_worst_s(cfg: &Config, gpu_cts: u64) -> u64 {
+    3 * (hostupdate::INSTALL_TIMEOUT_S + NO_KILL_TAIL_S) + (1800 + CUT_S) + 20 * (cfg.check.timeout_s + CUT_S) + crate::share::proxmox::hostcheck::worst_s(cfg.check.timeout_s, gpu_cts)
+}
+
+/// Avisos del final de la corrida (un resumen, con todos los reintentos) y del chequeo (hasta 4 eventos con 2 reintentos y dos pasadas de la cola).
+pub fn notify_worst_s() -> u64 {
+    use crate::share::notify::{worst_send_s, ATTEMPT_S, MAX_FLUSH, REVEAL_S};
+    // cada envío y cada pasada de la cola descifran una sola vez
+    worst_send_s(notify::MAX_RETRIES) + 4 * worst_send_s(2) + 2 * (REVEAL_S + (MAX_FLUSH as u64 + 1) * ATTEMPT_S)
+}
+
+/// ¿Cabe un paso de peor caso `worst` en el plazo de la corrida que empezó en `started_at`?
+fn fits(host: &dyn Host, started_at: u64, worst: u64) -> bool {
+    now_s(host).saturating_sub(started_at).saturating_add(worst) <= RUN_DEADLINE_S
 }
 
 struct Done {
@@ -398,7 +478,18 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     let max_fail = if cfg.update.on_failure == "stop" { 1 } else { cfg.update.max_consecutive_failures.max(1) };
     let (mut results, mut streak, mut aborted, mut cancelled) = (Vec::new(), 0u32, None::<String>, false);
     if plan != hostupdate::Plan::Off {
-        let (r, stop) = run_host(host, inv, cfg, &plan, cancel, ev);
+        let (r, stop) = if fits(host, started_at, host_worst_s(cfg, inv.guests.iter().filter(|g| g.gpu.nvidia).count() as u64)) {
+            run_host(host, inv, cfg, &plan, cancel, ev)
+        } else {
+            let why = "not started: run time limit (its worst case does not fit in the time left)";
+            ev(Event::Line(0, format!("host: skipped — {why}")));
+            let r = CtRun {
+                vmid: 0, name: "host".into(), outcome: Outcome::Skipped, step: Step::Pending, detail: why.into(), packages_before: inv.host.as_ref().map_or(0, |h| h.updates()), packages_after: None,
+                security: inv.host.as_ref().map_or(0, |h| h.security()), reboot_required: false, new_failed_units: vec![], backup: None, rollback: None, revert: None, log_path: None, took_s: 0,
+            };
+            ev(Event::Done(r.clone()));
+            (r, None)
+        };
         if r.outcome == Outcome::Cancelled {
             cancelled = true;
         }
@@ -412,7 +503,15 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     if opts.only.is_empty() && aborted.is_none() && !cancelled {
         let reboot = results.iter().any(|r| r.vmid == 0 && r.reboot_required) || host.exists(Path::new("/var/run/reboot-required")) || inv.host.as_ref().is_some_and(|h| h.reboot_pending());
         rec.borrow_mut().begin("NVIDIA driver");
-        if let Some((r, stop)) = nvidia::run(host, inv, cfg, reboot, cancel, ev) {
+        let gpu_cts = inv.guests.iter().filter(|g| g.gpu.nvidia).count() as u64;
+        let step = if cfg.update.host_nvidia_auto && !fits(host, started_at, nvidia::worst_s(cfg, gpu_cts)) {
+            let why = "skipped: not started: run time limit (its worst case does not fit in the time left)";
+            ev(Event::Line(0, format!("NVIDIA driver: {why}")));
+            Some((nvidia::NvidiaRun::skipped(why), None))
+        } else {
+            nvidia::run(host, inv, cfg, reboot, cancel, ev)
+        };
+        if let Some((r, stop)) = step {
             if r.outcome == Outcome::Cancelled {
                 cancelled = true;
             }
@@ -439,6 +538,10 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
         if cancelled {
             finish(bare(Outcome::Cancelled, "cancelled before start"), ev, &mut results);
             continue;
+        }
+        if aborted.is_none() && !fits(host, started_at, ct_worst_s(cfg)) {
+            aborted = Some(format!("run time limit ({} h): the time left does not fit a CT's worst case, no more CTs are started", RUN_DEADLINE_S / 3600));
+            ev(Event::Line(0, format!("!! {}", aborted.as_deref().unwrap_or_default())));
         }
         if let Some(why) = &aborted {
             finish(bare(Outcome::Skipped, &format!("not started: {why}")), ev, &mut results);
@@ -561,7 +664,7 @@ fn run_ct(host: &dyn Host, g: &Guest, cfg: &Config, cancel: &AtomicBool, ev: &mu
         cx.say(&format!("WARNING: CT {} was started by pxu and is LEFT RUNNING: the upgrade timed out and dpkg may still be working inside; stop it yourself once it finishes (pct shutdown {})", g.vmid, g.vmid));
     } else if started_by_us {
         cx.step(Step::Restore);
-        match cx.host_cmd(&["pct", "shutdown", &g.vmid.to_string(), "--timeout", "60"], &ExecOpts::default()) {
+        match cx.host_cmd(&["pct", "shutdown", &g.vmid.to_string(), "--timeout", "60"], &limit(T_PCT_S)) {
             Ok(0) => cx.say("CT returned to stopped"),
             Ok(c) => cx.say(&format!("WARNING: could not stop the CT again (exit {c})")),
             Err(e) => cx.say(&format!("WARNING: could not stop the CT again: {e}")),
@@ -625,10 +728,10 @@ fn ct_steps(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_u
     let host = cx.host;
     // --- pre-checks (CT detenido: se arranca y luego se restaura)
     cx.step(Step::Preflight);
-    let nice = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), ..Default::default() };
+    let nice = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), timeout_s: Some(T_QUERY_S), ..Default::default() };
     let mut gr = g.clone();
     if g.state == RunState::Stopped {
-        match cx.host_cmd(&["pct", "start", &id], &ExecOpts::default()) {
+        match cx.host_cmd(&["pct", "start", &id], &limit(T_PCT_S)) {
             Ok(0) => {}
             Ok(c) => return fail(Step::Preflight, format!("pct start failed (exit {c})")),
             Err(e) => return fail(Step::Preflight, format!("pct start: {e}")),
@@ -752,7 +855,7 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
     let mut outcome = Outcome::Ok;
     if run.reboot_required {
         if cfg.update.reboot == "if-required" {
-            match cx.host_cmd(&["pct", "reboot", &id], &ExecOpts::default()) {
+            match cx.host_cmd(&["pct", "reboot", &id], &limit(T_PCT_S)) {
                 Ok(0) => detail += "; rebooted (reboot-required)",
                 _ => {
                     outcome = Outcome::Warn;
@@ -831,7 +934,7 @@ fn snapshot_supported(cx: &mut Ctx, g: &Guest) -> Result<bool, String> {
         return Err(format!("unusable node name {:?}", g.node));
     }
     let path = format!("/nodes/{}/lxc/{}/feature", g.node, g.vmid);
-    match cx.host_cmd(&["pvesh", "get", &path, "--feature", "snapshot", "--output-format", "json"], &ExecOpts::default()) {
+    match cx.host_cmd(&["pvesh", "get", &path, "--feature", "snapshot", "--output-format", "json"], &limit(T_QUERY_S)) {
         Ok(0) => {}
         Ok(c) => return Err(format!("pvesh exit {c}")),
         Err(e) => return Err(e),
@@ -849,7 +952,7 @@ fn take_snapshot(cx: &mut Ctx, g: &Guest, cfg: &Config, stamp: &str) -> Result<E
     let mut taken = g.conf.snapshots.clone();
     taken.extend(Registry::load(cx.host).entries.iter().filter(|e| e.vmid == g.vmid && e.kind == Kind::Snapshot).map(|e| e.name.clone()));
     let name = backup::unique_snapshot_name(stamp, &taken).ok_or("no free snapshot name for this second (pxu-<stamp>-2 … -99 exist)")?;
-    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), ..Default::default() };
+    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), timeout_s: Some(T_SNAPSHOT_S), ..Default::default() };
     match cx.host_cmd(&["pct", "snapshot", &id, &name], &o) {
         Ok(0) => Ok(Entry { vmid: g.vmid, kind: Kind::Snapshot, name, stamp: stamp.into(), status: backup::Status::Active, storage: None }),
         Ok(c) => Err(format!("pct snapshot exit {c}")),
@@ -866,7 +969,7 @@ fn take_vzdump(cx: &mut Ctx, g: &Guest, cfg: &Config, stamp: &str) -> Result<Ent
     let storage = backup::rootfs_storage(&g.conf).ok_or("cannot read the rootfs storage from the CT config (rollback needs it)")?;
     check_backup_space(cx, g, cfg)?;
     // vzdump es la única orden abortable: con SIGTERM borra su archivo parcial y su snapshot (`snap_*_vzdump`) y quita el lock del CT.
-    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(IoPrio::BestEffort7), cancel: cx.cancel, ..Default::default() };
+    let o = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(IoPrio::BestEffort7), cancel: cx.cancel, timeout_s: Some(T_VZDUMP_S), ..Default::default() };
     let argv = ["vzdump", &id, "--mode", "snapshot", "--storage", &cfg.backup.storage, "--compress", "zstd", "--zstd", "1", "--ionice", "7", "--notes-template", "pxu pre-update {{guestname}}"];
     let r = cx.host_cmd(&argv, &o);
     if cx.interrupted {
@@ -914,7 +1017,7 @@ fn check_backup_space(cx: &mut Ctx, g: &Guest, cfg: &Config) -> Result<(), Strin
     let need = ((root_used + mp_bytes) as f64 * cfg.backup.space_ratio) as u64;
     let path = format!("/nodes/{}/storage/{st}/status", g.node);
     let unread = |why: String| format!("{SKIPPED} cannot read the free space of storage {st} ({why}) — CT untouched");
-    match cx.host_cmd(&["pvesh", "get", &path, "--output-format", "json"], &ExecOpts::default()) {
+    match cx.host_cmd(&["pvesh", "get", &path, "--output-format", "json"], &limit(T_QUERY_S)) {
         Ok(0) => {}
         Ok(c) => return Err(unread(format!("pvesh exit {c}"))),
         Err(e) => return Err(unread(e)),
@@ -957,8 +1060,8 @@ fn verify_vzdump_cleanup(cx: &mut Ctx, g: &Guest) {
 fn delete_backup(cx: &mut Ctx, e: &Entry) -> Result<(), String> {
     let id = e.vmid.to_string();
     let r = match e.kind {
-        Kind::Snapshot => cx.host_cmd(&["pct", "delsnapshot", &id, &e.name], &ExecOpts::default()),
-        Kind::Vzdump => cx.host_cmd(&["pvesm", "free", &e.name], &ExecOpts::default()),
+        Kind::Snapshot => cx.host_cmd(&["pct", "delsnapshot", &id, &e.name], &limit(T_PRUNE_S)),
+        Kind::Vzdump => cx.host_cmd(&["pvesm", "free", &e.name], &limit(T_PRUNE_S)),
     };
     match r {
         Ok(0) => Ok(()),
@@ -1006,10 +1109,10 @@ fn rollback(cx: &mut Ctx, g: &Guest, cfg: &Config, e: &Entry, was_running: bool)
     let id = g.vmid.to_string();
     cx.step(Step::Rollback);
     cx.say(&format!("update failed: rolling back to {}", e.describe()));
-    let _ = cx.host_cmd(&["pct", "shutdown", &id, "--timeout", "60"], &ExecOpts::default()); // best effort
+    let _ = cx.host_cmd(&["pct", "shutdown", &id, "--timeout", "60"], &limit(T_PCT_S)); // best effort
     // `pct stop` sobre un CT ya detenido sale con 255 en PVE: solo se llama si sigue encendido, y si falla se vuelve a mirar el estado real.
     if crate::share::proxmox::guests::lxc_running(cx.host, g.vmid) {
-        let stopped = match cx.host_cmd(&["pct", "stop", &id], &ExecOpts::default()) {
+        let stopped = match cx.host_cmd(&["pct", "stop", &id], &limit(T_PCT_S)) {
             Ok(0) => true,
             Ok(_) | Err(_) => !crate::share::proxmox::guests::lxc_running(cx.host, g.vmid),
         };
@@ -1018,9 +1121,9 @@ fn rollback(cx: &mut Ctx, g: &Guest, cfg: &Config, e: &Entry, was_running: bool)
         }
     }
     let r = match e.kind {
-        Kind::Snapshot => cx.host_cmd(&["pct", "rollback", &id, &e.name], &ExecOpts::default()),
+        Kind::Snapshot => cx.host_cmd(&["pct", "rollback", &id, &e.name], &limit(T_RESTORE_S)),
         Kind::Vzdump => match e.storage.as_deref() {
-            Some(st) => cx.host_cmd(&["pct", "restore", &id, &e.name, "--force", "--storage", st], &ExecOpts::default()),
+            Some(st) => cx.host_cmd(&["pct", "restore", &id, &e.name, "--force", "--storage", st], &limit(T_RESTORE_S)),
             None => return Err("no rootfs storage recorded for this backup".into()),
         },
     };
@@ -1033,12 +1136,12 @@ fn rollback(cx: &mut Ctx, g: &Guest, cfg: &Config, e: &Entry, was_running: bool)
         cx.say("CT restored and left stopped, as before");
         return Ok(());
     }
-    match cx.host_cmd(&["pct", "start", &id], &ExecOpts::default()) {
+    match cx.host_cmd(&["pct", "start", &id], &limit(T_PCT_S)) {
         Ok(0) => {}
         Ok(c) => return Err(format!("restored, but pct start exit {c}")),
         Err(er) => return Err(format!("restored, but pct start: {er}")),
     }
-    let nice = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), ..Default::default() };
+    let nice = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), timeout_s: Some(T_QUERY_S), ..Default::default() };
     for attempt in 0..3 {
         if !cx.host.is_mock() {
             std::thread::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 3 }));
@@ -1075,7 +1178,11 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
                 cx.say("WARNING: the backup registry was corrupt or inconsistent: nothing is pruned in this run (the new backup is kept)");
                 vec![]
             } else {
-                reg.prune_plan(g.vmid, &g.conf.snapshots, keep)
+                let (p, later) = cap_prune(reg.prune_plan(g.vmid, &g.conf.snapshots, keep));
+                if later > 0 {
+                    cx.say(&format!("{later} more old backups to delete: only the {MAX_PRUNE} oldest now, the rest in the next run"));
+                }
+                p
             };
             let mut left = vec![];
             for victim in &plan {
@@ -1528,6 +1635,177 @@ mod tests {
     }
 
     #[test]
+    fn run_deadline_stops_starting_cts_but_finishes_the_one_in_progress() {
+        let h = host("update-cancel-install");
+        h.set_update_enabled(true);
+        let cfg = Config::load(&h).unwrap();
+        let inv = guests::load(&h);
+        let rep = run(&h, &inv, &cfg, &Opts { only: vec![506, 507] }, &AtomicBool::new(false), &mut |e| {
+            if matches!(e, Event::Step(506, Step::Upgrade)) {
+                h.inner().advance_clock(RUN_DEADLINE_S + 1);
+            }
+        })
+        .unwrap();
+        let r = by(&rep, 506);
+        assert!(matches!(r.outcome, Outcome::Ok | Outcome::Warn), "the CT in progress finishes: {r:?}");
+        let next = by(&rep, 507);
+        assert_eq!(next.outcome, Outcome::Skipped, "{next:?}");
+        assert!(next.detail.contains("run time limit"), "{}", next.detail);
+        assert!(guest_cmds(&h, 507).is_empty(), "no command reaches the CT that was not started");
+        assert_eq!(rep.exit_code(), EXIT_ABORTED);
+        assert!(rep.aborted.as_deref().unwrap().contains("16 h"));
+    }
+
+    /// Corre con el reloj adelantado hasta que a `worst` le falta un segundo para no caber (`slack` = segundos que sobran; 0 = justo no cabe).
+    fn run_with_left(h: &ReadOnlyHost<MockHost>, only: &[u32], worst: impl Fn(&Config, &Inventory) -> u64, fits_by: i64) -> RunReport {
+        h.set_update_enabled(true);
+        let cfg = Config::load(h).unwrap();
+        let inv = guests::load(h);
+        let skip = (RUN_DEADLINE_S as i64 - worst(&cfg, &inv) as i64 + if fits_by >= 0 { 0 } else { 1 }) as u64;
+        run(h, &inv, &cfg, &Opts { only: only.to_vec() }, &AtomicBool::new(false), &mut |e| {
+            if matches!(e, Event::Queue(_)) {
+                h.inner().advance_clock(skip);
+            }
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_ct_whose_worst_case_does_not_fit_in_the_time_left_is_not_started() {
+        let h = host("update-cancel-install");
+        let rep = run_with_left(&h, &[506, 507], |c, _| ct_worst_s(c), -1);
+        for id in [506, 507] {
+            let r = by(&rep, id);
+            assert_eq!(r.outcome, Outcome::Skipped, "{r:?}");
+            assert!(r.detail.contains("run time limit"), "{}", r.detail);
+            assert!(guest_cmds(&h, id).is_empty(), "no command reaches CT {id}");
+        }
+        assert_eq!(rep.exit_code(), EXIT_ABORTED);
+        // justo cabe: se actualiza
+        let h = host("update-cancel-install");
+        let rep = run_with_left(&h, &[506], |c, _| ct_worst_s(c), 0);
+        assert!(matches!(by(&rep, 506).outcome, Outcome::Ok | Outcome::Warn), "{:?}", by(&rep, 506));
+    }
+
+    #[test]
+    fn the_host_step_does_not_start_when_its_worst_case_does_not_fit() {
+        let h = ReadOnlyHost::new(world("update-cancel-install").host_auto().build());
+        let rep = run_with_left(&h, &[], |c, i| host_worst_s(c, i.guests.iter().filter(|g| g.gpu.nvidia).count() as u64), -1);
+        let r = rep.results.iter().find(|r| r.vmid == 0).expect("host entry");
+        assert_eq!(r.outcome, Outcome::Skipped, "{r:?}");
+        assert!(r.detail.contains("run time limit"), "{}", r.detail);
+        assert!(!host_cmds(&h).iter().any(|c| c.contains("full-upgrade") || c.contains("dpkg --configure")), "{:?}", host_cmds(&h));
+    }
+
+    #[test]
+    fn the_nvidia_step_does_not_start_when_its_worst_case_does_not_fit() {
+        let h = ReadOnlyHost::new(world("update-cancel-install").host_nvidia_auto().build());
+        let rep = run_with_left(&h, &[], |c, i| nvidia::worst_s(c, i.guests.iter().filter(|g| g.gpu.nvidia).count() as u64), -1);
+        let n = rep.nvidia.as_ref().expect("nvidia entry");
+        assert_eq!(n.outcome, Outcome::Skipped, "{n:?}");
+        assert!(n.detail.contains("run time limit"), "{}", n.detail);
+        assert!(!host_cmds(&h).iter().any(|c| c.contains("NVIDIA") || c.contains(".run")), "{:?}", host_cmds(&h));
+    }
+
+    /// Config con todos los tiempos en su máximo (lo que `Config::load` deja pasar como mucho).
+    fn max_config() -> Config {
+        let mut cfg = Config::default();
+        cfg.check.timeout_s = u64::MAX;
+        cfg.update.timeout_min = u64::MAX / 60;
+        cfg.apprise.timeout_s = u64::MAX;
+        cfg.apprise.retry_delays_ms = vec![u64::MAX; 50];
+        cfg.clamp_limits();
+        cfg
+    }
+
+    #[test]
+    fn config_limits_are_enforced_on_load_and_rejected_by_validate() {
+        use crate::share::config::{MAX_CHECK_TIMEOUT_S, MAX_UPDATE_TIMEOUT_MIN};
+        let cfg = max_config();
+        assert_eq!((cfg.check.timeout_s, cfg.update.timeout_min, cfg.apprise.timeout_s), (MAX_CHECK_TIMEOUT_S, MAX_UPDATE_TIMEOUT_MIN, notify::MAX_TIMEOUT_S));
+        assert!(cfg.apprise.retry_delays_ms.len() <= notify::MAX_RETRIES && cfg.apprise.retry_delays_ms.iter().sum::<u64>() <= notify::MAX_RETRY_TOTAL_MS, "{:?}", cfg.apprise.retry_delays_ms);
+        let defaults = Config::default();
+        let mut d = defaults.clone();
+        d.clamp_limits();
+        assert_eq!((d.check.timeout_s, d.update.timeout_min, d.apprise.retry_delays_ms.clone()), (defaults.check.timeout_s, defaults.update.timeout_min, defaults.apprise.retry_delays_ms.clone()), "the defaults are inside the limits");
+        for (text, what) in [
+            ("[check]\ntimeout_s = 100000\n", "[check] timeout_s"),
+            ("[update]\ntimeout_min = 100000\n", "[update] timeout_min"),
+            ("[apprise]\ntimeout_s = 100000\n", "[apprise] timeout_s"),
+            ("[apprise]\nretry_delays_ms = [1,1,1,1,1,1,1]\n", "retry_delays_ms"),
+            ("[apprise]\nretry_delays_ms = [400000, 400000]\n", "retry_delays_ms"),
+        ] {
+            let h = ReadOnlyHost::new(MockHost::new(Default::default(), Default::default()));
+            let v = crate::share::config::validate_text(&h, text);
+            assert!(v.errors.iter().any(|e| e.contains(what)), "{text}: {:?}", v.errors);
+        }
+        // los máximos mismos son válidos
+        let h = ReadOnlyHost::new(MockHost::new(Default::default(), Default::default()));
+        let ok = format!("[check]\ntimeout_s = {}\n[update]\ntimeout_min = {}\n[apprise]\ntimeout_s = {}\nretry_delays_ms = [100000,100000,100000,100000,100000,100000]\n", crate::share::config::MAX_CHECK_TIMEOUT_S, MAX_UPDATE_TIMEOUT_MIN, notify::MAX_TIMEOUT_S);
+        assert!(crate::share::config::validate_text(&h, &ok).errors.is_empty(), "{:?}", crate::share::config::validate_text(&h, &ok).errors);
+    }
+
+    #[test]
+    fn with_the_maximum_config_every_step_fits_alone_and_the_notices_fit_the_margin() {
+        let cfg = max_config();
+        for gpu in [0, 4] {
+            assert!(host_worst_s(&cfg, gpu) < RUN_DEADLINE_S, "host with {gpu} GPU CTs: {}", host_worst_s(&cfg, gpu));
+        }
+        assert!(ct_worst_s(&cfg) < RUN_DEADLINE_S, "CT {}", ct_worst_s(&cfg));
+        assert!(nvidia::worst_s(&cfg, 4) < RUN_DEADLINE_S, "NVIDIA with 4 GPU CTs: {}", nvidia::worst_s(&cfg, 4));
+        assert!(notify_worst_s() < RUN_MARGIN_S, "the notices {} s must fit the margin {RUN_MARGIN_S} s", notify_worst_s());
+    }
+
+    #[test]
+    fn notices_with_both_secrets_encrypted_fit_the_margin_and_the_systemd_timeout() {
+        use crate::share::notify::{ATTEMPT_S, MAX_FLUSH, MAX_RETRIES, REVEAL_S};
+        // api_key_enc + urls_enc: dos descifrados de 20 s + 30 s de cola, una vez por envío y por pasada
+        assert_eq!(REVEAL_S, 100);
+        let n = notify_worst_s();
+        assert!(n >= 2 * REVEAL_S + (MAX_RETRIES as u64 + 1) * ATTEMPT_S, "{n}");
+        assert!(n <= RUN_MARGIN_S, "the notices {n} s must fit the margin {RUN_MARGIN_S} s");
+        let start = 20 * 3600;
+        let _ = MAX_FLUSH;
+        assert!(check::CHECK_DEADLINE_S + RUN_DEADLINE_S + n < start, "{} s", check::CHECK_DEADLINE_S + RUN_DEADLINE_S + n);
+    }
+
+    #[test]
+    fn worst_cases_fit_the_run_deadline_with_the_default_config() {
+        let cfg = Config::default();
+        assert!(host_worst_s(&cfg, 4) < RUN_DEADLINE_S && ct_worst_s(&cfg) < RUN_DEADLINE_S && nvidia::worst_s(&cfg, 4) < RUN_DEADLINE_S, "a step that can never fit would never run");
+    }
+
+    #[test]
+    fn every_command_of_the_engine_has_a_finite_limit() {
+        // Una orden nueva sin `timeout_s` debe pasar por `limit(..)`; `bounded` además hace panic en depuración.
+        let src = include_str!("mod.rs");
+        let prod = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(!prod.contains("ExecOpts::default()"), "use limit(secs) instead of ExecOpts::default()");
+        assert!(!prod.contains("timeout_s: None"), "every command needs a finite timeout_s");
+        for f in ["nvidia.rs", "hostupdate.rs"] {
+            let p = format!("{}/src/share/update/{f}", env!("CARGO_MANIFEST_DIR"));
+            let t = std::fs::read_to_string(&p).unwrap();
+            let t = &t[..t.find("#[cfg(test)]").unwrap_or(t.len())];
+            assert!(!t.contains("timeout_s: None") && !t.contains("ExecOpts::default()"), "{f}: unbounded command");
+        }
+        const _: () = assert!(RUN_DEADLINE_S < 20 * 3600);
+    }
+
+    #[test]
+    fn sigterm_during_the_install_lets_apt_finish_and_leaves_nothing_half_done() {
+        // `systemctl stop` llega como la señal de cancelación: el CT en curso termina su apt/dpkg, no se deshace nada.
+        let h = host("update-cancel-install");
+        let rep = go_cancel(&h, &[506, 507], |e| matches!(e, Event::Step(506, Step::Upgrade)));
+        assert!(rep.cancelled && rep.exit_code() == EXIT_ABORTED);
+        let g = guest_cmds(&h, 506);
+        let up = g.iter().position(|c| c.contains("upgrade")).expect("upgrade ran");
+        assert!(g.len() > up, "the install command ran to completion: {g:?}");
+        assert!(g.iter().all(|c| !c.contains("kill")), "no apt/dpkg was killed: {g:?}");
+        assert!(host_cmds(&h).iter().all(|c| !c.contains("rollback") && !c.contains("restore")), "nothing was rolled back: {:?}", host_cmds(&h));
+        assert!(guest_cmds(&h, 507).is_empty() && by(&rep, 507).outcome == Outcome::Cancelled);
+    }
+
+    #[test]
     fn vzdump_is_not_launched_when_the_storage_has_no_room() {
         let h = host("update-low-space");
         let rep = go_cancel(&h, &[503], |_| false);
@@ -1776,6 +2054,17 @@ mod tests {
         assert!(reg.entries.iter().any(|e| e.vmid == 461 && e.name == "pxu-202611010300" && e.status == Status::Held), "held entry untouched");
         let kept = reg.entries.iter().filter(|e| e.vmid == 461 && e.status == Status::Kept).count();
         assert!(kept <= 2, "at most keep=2 kept: {:?}", reg.entries);
+    }
+
+    #[test]
+    fn the_prune_plan_is_capped_to_the_oldest_entries() {
+        let e = |n: usize| Entry { vmid: 7, kind: Kind::Snapshot, name: format!("pxu-{n}"), stamp: format!("2026110{n}0300"), status: Status::Kept, storage: None };
+        let plan: Vec<Entry> = (1..=9).rev().map(e).collect(); // de nuevo a viejo
+        let (now, later) = cap_prune(plan);
+        assert_eq!((now.len(), later), (MAX_PRUNE, 9 - MAX_PRUNE));
+        assert!(now.iter().all(|x| x.name.as_str() <= "pxu-4"), "the oldest go first: {now:?}");
+        let (all, none) = cap_prune((1..=3).rev().map(e).collect());
+        assert_eq!((all.len(), none), (3, 0));
     }
 
     #[test]

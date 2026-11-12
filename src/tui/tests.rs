@@ -1008,6 +1008,9 @@ fn apprise_can_be_set_up_without_a_config_file() {
     save_apprise(&h, &mut a);
     assert!(cfg_text(&h).contains("[apprise]") && cfg_text(&h).contains("api_key_enc = \"mockenc") && !cfg_text(&h).contains("api_key = "));
     assert!(!a.read_only, "a config now exists: the TUI leaves read-only");
+    // la credencial del aviso de fallo (para systemd, sin pxu) se guarda cifrada junto a la config
+    let cred = String::from_utf8(h.read_file(std::path::Path::new(pxu::share::notify::FAILURE_CRED_PATH)).expect("failure-notice credential written")).unwrap();
+    assert!(cred.starts_with("mockenc") && !cred.contains("http://apprise.local"), "{cred}");
 }
 
 #[test]

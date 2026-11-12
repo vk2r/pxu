@@ -48,7 +48,7 @@ done
 DESTDIR=${DESTDIR:-}
 bindir=$DESTDIR/usr/local/bin
 unitdir=$DESTDIR/etc/systemd/system
-units="pxu-update.service pxu-update.timer pxu-notify-flush.service pxu-notify-flush.timer"
+units="pxu-update.service pxu-update-failed.service pxu-update-notify-failed.service pxu-update.timer pxu-notify-flush.service pxu-notify-flush.timer"
 dirs="$DESTDIR/etc/pxu $DESTDIR/var/lib/pxu $DESTDIR/var/log/pxu"
 
 if [ -z "$DESTDIR" ]; then
@@ -71,6 +71,7 @@ if [ "$uninstall" = 1 ]; then
         systemctl_do disable --now pxu-notify-flush.timer 2>/dev/null || true
     fi
     for u in $units; do rm -f "$unitdir/$u"; done
+    rm -f "$bindir/pxu-failure-notice"
     # drop-in with the schedule the TUI saves (S key)
     rm -rf "$unitdir/pxu-update.timer.d"
     systemctl_do daemon-reload
@@ -165,6 +166,7 @@ refresh_units=$had_units
 if [ "$refresh_units" = 1 ]; then
     src=${PXU_UNITS:-$here/dist/systemd}
     for u in $units; do [ -f "$src/$u" ] || die "missing unit $src/$u"; done
+    [ -f "$src/pxu-failure-notice" ] || die "missing $src/pxu-failure-notice"
 fi
 
 # shellcheck disable=SC2086
@@ -184,6 +186,7 @@ fi
 if [ "$refresh_units" = 1 ]; then
     install -d -m 0755 "$unitdir"
     for u in $units; do install -m 0644 "$src/$u" "$unitdir/$u"; done
+    install -m 0755 "$src/pxu-failure-notice" "$bindir/pxu-failure-notice"
     systemctl_do daemon-reload
     say "systemd units updated (timers left as they were)"
 fi

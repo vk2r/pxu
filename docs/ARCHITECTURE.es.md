@@ -374,13 +374,17 @@ Las unidades están en `dist/systemd/` (la misma fuente que embebe `share/schedu
 
 ```ini
 # pxu-update.service
+[Unit]
+OnFailure=pxu-update-failed.service pxu-update-notify-failed.service
+
 [Service]
 Type=oneshot
 ExecStart=-/usr/local/bin/pxu check --notify
 ExecStart=/usr/local/bin/pxu update --yes
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=4h
+TimeoutStartSec=20h
+TimeoutStopSec=4h
 KillMode=mixed
 
 # pxu-update.timer
@@ -389,6 +393,10 @@ OnCalendar=*-*-* 04:30
 RandomizedDelaySec=15m
 Persistent=true
 ```
+
+Límites de tiempo. Cada orden de `update` tiene su propio `timeout_s` (consultas 2 min, `pct` start/stop 5 min, `pct snapshot` 30 min, `vzdump` y rollback/restore 2 h; `apt`/`dpkg` usan su plazo más 30 minutos de margen, luego SIGTERM y, como último recurso, SIGKILL al grupo). Una orden sin límite es un error: las compilaciones de depuración hacen panic, las de release aplican 10 min y una prueba falla si aparece `timeout_s: None`. La corrida tiene un presupuesto de 16 h (`RUN_DEADLINE_S`) que cada paso comprueba ANTES de empezar: el host, el paso NVIDIA y cada CT solo empiezan si su peor caso (la suma de sus límites internos: `host_worst_s`, `nvidia::worst_s`, `ct_worst_s`) cabe en el tiempo que queda; si no, quedan como «not started: run time limit» y el informe se marca abortado y se envía por Apprise. `pxu check` tiene su propio presupuesto de 1 h (`CHECK_DEADLINE_S`: los CT que faltan quedan como timeout y se omite el chequeo del host). Las dos `ExecStart` comparten `TimeoutStartSec=20h`; una prueba exige check + `RUN_DEADLINE_S` + `RUN_MARGIN_S` (2 h: avisos con reintentos, informe) < 20 h < 24 h, para que una corrida colgada nunca bloquee la del día siguiente. `TimeoutStartSec` es solo el último recurso: si systemd llega ahí, el SIGKILL final aún puede alcanzar a `apt`/`dpkg`. Con `systemctl stop`, `pxu` recibe SIGTERM, termina el paso en curso y no empieza más CT; `TimeoutStopSec=4h` cubre ese paso (un stop en medio de un full-upgrade largo seguido de un autoremove todavía puede pasarse). Máximos de la config (`config check` los rechaza y al cargar se recortan): `[check] timeout_s` 120 s, `[update] timeout_min` 120, `[apprise] timeout_s` 30 s y como mucho 6 `retry_delays_ms` que sumen 10 min, para que ningún peor caso pase de 16 h y los avisos (`notify_worst_s`: el resumen con todos sus reintentos, los eventos del chequeo y como mucho 10 avisos de la cola por pasada; los secretos cifrados se descifran una vez por envío y una vez por pasada, como mucho dos llamadas a `systemd-creds`, `REVEAL_S` = 100 s) quepan en `RUN_MARGIN_S`. `check` empieza cada sonda de CT (hasta `3 × timeout_s` con refresco) y el chequeo del host solo si su peor caso cabe en `CHECK_DEADLINE_S`. `nvidia::worst_s` suma cada orden larga que ejecuta el paso (host: descarga, extracción, compilación de prueba, sha256, `--check`, instalación; por CT con GPU: copia, instalador, `pct` parar/arrancar y consultas), y una prueba recorre el mock y comprueba que las órdenes nunca suman más (4 CT con GPU). La poda de backups viejos borra como mucho 4 por CT y corrida (los más viejos; el resto espera a la siguiente).
+
+Aviso de fallo que no depende de `pxu`. `OnFailure=` lanza dos unidades cuando el servicio falla o systemd lo mata (no salta mientras la corrida solo está colgada, antes del límite de 20 h): `pxu-update-failed.service` escribe una entrada crítica en el journal (siempre, como respaldo) y `pxu-update-notify-failed.service` manda el aviso por Apprise. Cuando la config de Apprise se guarda desde la TUI, `pxu` escribe también `/etc/pxu/failure-notice.cred` (root, 0600): una segunda credencial cifrada con `systemd-creds` con el mismo nombre (`pxu-apprise`) y las mismas URLs/clave, que contiene un archivo listo para `curl --config -` (Apprise API) o la lista de URLs (CLI). La unidad la carga con `LoadCredentialEncrypted=` y `/usr/local/bin/pxu-failure-notice` (un script pequeño que instalan `install.sh` y el instalador de horario de la TUI; no es pxu) se la pasa a `curl --config -` o `apprise --config /dev/stdin` por stdin: ningún secreto en argv, en la unidad ni en el journal. Sin ese archivo (Apprise nunca guardado desde la TUI) `ConditionPathExists=` omite la unidad y solo queda la entrada del journal; una config guardada antes de este cambio necesita un guardado desde la TUI para crear la credencial. Sin probar en un servidor real: la entrega a un Apprise real.
 
 `dist/systemd/pxu-notify-flush.service` (`pxu notify-flush`, `Nice=10`, `IOSchedulingClass=idle`, `TimeoutStartSec=5min`) y `pxu-notify-flush.timer` (`OnCalendar=*:0/15`, `Persistent=true`) reenvían los avisos en cola; se instalan y activan junto con el timer de update.
 

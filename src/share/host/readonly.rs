@@ -210,6 +210,12 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         }
         self.inner.write_config(data)
     }
+    fn write_failure_notice(&self, data: &[u8]) -> io::Result<()> {
+        if !self.allow_config.load(Ordering::SeqCst) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "read-only mode: refused write to the failure-notice credential"));
+        }
+        self.inner.write_failure_notice(data)
+    }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         self.inner.timer_status()
     }
@@ -619,7 +625,7 @@ mod tests {
         use crate::share::update::nvidia::Grant;
         let h = ro();
         let g = Grant::new("595.120.01", "6.17.13-2-pve", "proprietary", vec![134], vec![134]).unwrap();
-        let cmds: Vec<Vec<String>> = vec![g.mkdir(), g.download(), g.sha256sum(), g.unload(), g.install(), g.ct_shutdown(134), g.ct_start(134), g.ct_push(134), g.cleanup()];
+        let cmds: Vec<Vec<String>> = vec![g.mkdir(), g.download(), g.sha256sum(), g.unload(), g.install(), g.ct_shutdown(134), g.ct_start(134), g.ct_push(134, "/var/lib/pxu-nvidia.Ab3dE9xZ"), g.cleanup()];
         let run = |h: &ReadOnlyHost<MockHost>, c: &Vec<String>| h.host_cmd(&c.iter().map(String::as_str).collect::<Vec<_>>(), &Default::default(), &mut Vec::<String>::new()).is_ok();
         assert!(cmds.iter().all(|c| !run(&h, c)), "denied without the opt-in");
         {
@@ -634,6 +640,6 @@ mod tests {
             assert!(h.write_file(Path::new("/etc/passwd"), b"x").is_err());
         }
         assert!(cmds.iter().all(|c| !run(&h, c)), "the guard closes it again");
-        assert!(!crate::share::update::hostupdate::is_write_argv(&["sh", "/var/tmp/pxu-nvidia/x.run", "--dkms"]));
+        assert!(!crate::share::update::hostupdate::is_write_argv(&["sh", "/var/lib/pxu-nvidia/x.run", "--dkms"]));
     }
 }

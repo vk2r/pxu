@@ -35,6 +35,9 @@ pub struct ExecOpts<'a> {
     /// `true`: al vencer `timeout_s` NO se mata nada (apt-get/dpkg no se interrumpen a medias); se espera a que
     /// el proceso termine y entonces se devuelve `TimedOut`.
     pub no_kill_on_timeout: bool,
+    /// Con `no_kill_on_timeout`: margen (s) tras `timeout_s` antes de rendirse (SIGTERM al proceso; SIGKILL a su grupo si sigue vivo `min(300, margen)` s después).
+    /// `None` = `NO_KILL_GRACE_S`. Así ninguna espera es infinita.
+    pub no_kill_grace_s: Option<u64>,
     /// Bytes que se escriben en el stdin del proceso (secretos: nunca van en argv).
     pub stdin: Option<Vec<u8>>,
     pub env: Vec<(String, String)>,
@@ -45,6 +48,9 @@ pub struct ExecOpts<'a> {
     /// (systemd-creds), donde un aviso en stderr lo corrompería.
     pub split_stderr: bool,
 }
+
+/// Margen por omisión de `ExecOpts::no_kill_grace_s`.
+pub const NO_KILL_GRACE_S: u64 = 1800;
 
 /// Texto del error de `ExecOpts::cancel` (el motor lo reconoce por el tipo `Interrupted`).
 pub const CANCELLED_MSG: &str = "interrupted: cancelled by user (SIGTERM sent)";
@@ -77,6 +83,10 @@ pub trait Host: Sync {
     /// Escribe `/etc/pxu/config.toml` (root, 0600) de forma atómica (tmp en el mismo directorio + rename). Solo la TUI lo usa, tras confirmar.
     fn write_config(&self, _data: &[u8]) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "this host cannot write the config"))
+    }
+    /// Escribe la credencial cifrada del aviso de fallo (`FAILURE_CRED_PATH`, root, 0600, atómica). Solo la TUI lo usa, junto con la config de Apprise.
+    fn write_failure_notice(&self, _data: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "this host cannot write the failure-notice credential"))
     }
     /// Estado real del timer `pxu-update` (solo lectura).
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {

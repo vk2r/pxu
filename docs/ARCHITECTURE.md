@@ -374,13 +374,17 @@ The units are in `dist/systemd/` (the same source that `share/schedule.rs` embed
 
 ```ini
 # pxu-update.service
+[Unit]
+OnFailure=pxu-update-failed.service pxu-update-notify-failed.service
+
 [Service]
 Type=oneshot
 ExecStart=-/usr/local/bin/pxu check --notify
 ExecStart=/usr/local/bin/pxu update --yes
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=4h
+TimeoutStartSec=20h
+TimeoutStopSec=4h
 KillMode=mixed
 
 # pxu-update.timer
@@ -389,6 +393,10 @@ OnCalendar=*-*-* 04:30
 RandomizedDelaySec=15m
 Persistent=true
 ```
+
+Time limits. Every command of `update` has its own `timeout_s` (queries 2 min, `pct` start/stop 5 min, `pct snapshot` 30 min, `vzdump` and rollback/restore 2 h; `apt`/`dpkg` get their timeout plus a 30-minute grace, then SIGTERM, then SIGKILL to the group as the last resort). A command with no limit is a bug: debug builds panic, release builds apply 10 min, and a test fails if `timeout_s: None` appears. The run has a 16 h budget (`RUN_DEADLINE_S`) that every step checks BEFORE it starts: the host, the NVIDIA step and each CT only start if their worst case (the sum of their internal limits: `host_worst_s`, `nvidia::worst_s`, `ct_worst_s`) fits in the time left; otherwise they are reported as "not started: run time limit" and the run is marked aborted and sent through Apprise. `pxu check` has its own 1 h budget (`CHECK_DEADLINE_S`: the CTs left are reported as timeout and the host check is skipped). Both `ExecStart` share `TimeoutStartSec=20h`; a test requires check + `RUN_DEADLINE_S` + `RUN_MARGIN_S` (2 h: notices with retries, report) < 20 h < 24 h, so a stuck run never blocks the next day's. `TimeoutStartSec` is only the last resort: if systemd reaches it, the final SIGKILL can still hit `apt`/`dpkg`. On `systemctl stop`, `pxu` gets SIGTERM, finishes the step in progress and starts no more CTs; `TimeoutStopSec=4h` covers that step (a stop in the middle of a long full-upgrade followed by an autoremove can still go past it). Config maxima (rejected by `config check`, clamped on load): `[check] timeout_s` 120 s, `[update] timeout_min` 120, `[apprise] timeout_s` 30 s and at most 6 `retry_delays_ms` adding up to 10 min, so that no worst case exceeds 16 h and the notices (`notify_worst_s`: the summary with all its retries, the check's events, and at most 10 queued notices per flush pass; the encrypted secrets are decrypted once per send and once per pass, two `systemd-creds` calls at most, `REVEAL_S` = 100 s) fit in `RUN_MARGIN_S`. `check` starts each CT probe (up to `3 × timeout_s` with refresh) and the host check only if its worst case fits in `CHECK_DEADLINE_S`. `nvidia::worst_s` sums every long command the step runs (host: download, extract, test build, sha256, `--check`, install; per GPU CT: copy, installer, `pct` stop/start, queries), and a test walks the mock and checks the commands never add up to more (4 GPU CTs). Pruning old backups deletes at most 4 per CT and run (the oldest; the rest wait for the next run).
+
+Failure notice that does not depend on `pxu`. `OnFailure=` starts two units when the service fails or systemd kills it (it does not fire while the run is merely hung, before the 20 h limit): `pxu-update-failed.service` writes a critical journal entry (always, as the fallback) and `pxu-update-notify-failed.service` sends the Apprise notice. When the Apprise settings are saved from the TUI, `pxu` also writes `/etc/pxu/failure-notice.cred` (root, 0600): a second credential encrypted with `systemd-creds` under the same name (`pxu-apprise`) with the same URLs/key, holding a ready-to-send `curl --config -` file (Apprise API) or the URL list (CLI). The unit loads it with `LoadCredentialEncrypted=` and `/usr/local/bin/pxu-failure-notice` (a small script installed by `install.sh` and by the TUI schedule installer, not pxu) feeds it to `curl --config -` or `apprise --config /dev/stdin` by stdin: no secret in argv, in the unit or in the journal. Without that file (Apprise never saved from the TUI) `ConditionPathExists=` skips the unit and only the journal entry remains; a config saved before this change needs one save from the TUI to create the credential. Not tested on a real server: delivery to a real Apprise.
 
 `dist/systemd/pxu-notify-flush.service` (`pxu notify-flush`, `Nice=10`, `IOSchedulingClass=idle`, `TimeoutStartSec=5min`) and `pxu-notify-flush.timer` (`OnCalendar=*:0/15`, `Persistent=true`) resend the queued notices; they are installed and enabled together with the update timer.
 

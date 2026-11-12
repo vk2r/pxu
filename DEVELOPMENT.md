@@ -9,11 +9,12 @@ Guide for contributors: build, test, run the demos and find your way around the 
 The toolchain is managed with [mise](https://mise.jdx.dev) (`mise.toml`: Rust 1.99.1):
 
 ```sh
-mise install                   # installs the toolchain
+mise install                   # installs the toolchain and cargo-audit
 mise run build                 # target/release/pxu (~1.3 MB, stripped)
 mise run test                  # tests in dev and mock profile, against MockHost, no Proxmox needed
 mise run check                 # tests + release + checks that the production binary rejects --mock
 mise run lint                  # clippy warnings (not blocking yet)
+mise run audit                 # Cargo.lock dependencies against the RustSec advisory database (cargo-audit)
 mise run release-build         # static musl binary for releases (target/x86_64-unknown-linux-musl/release/pxu)
 mise run package               # tarball + SHA256SUMS in target/package (after release-build)
 mise tasks                     # lists all tasks
@@ -43,7 +44,7 @@ GITHUB_URL=<github account base URL>
 
 1. Run `mise run check`.
 2. On `main`, with a clean tree (only `Cargo.toml` and `Cargo.lock` may have changes): `mise run publish -- v1.2.3`. `tools/publish.sh` checks that the tag looks like `v1.2.3` and doesn't exist yet, sets `version` in `Cargo.toml` to `1.2.3`, updates `Cargo.lock` and commits both (`🔖 bump version to 1.2.3`) if they changed, creates the annotated tag and pushes `main` and the tag to Forgejo in a single push, so the mirror sync it triggers carries both to GitHub. It never forces and doesn't wait: it prints the links to the build in GitHub Actions and to the release. GitHub is only read, to refuse a tag that already exists there.
-3. The tag on GitHub starts `.github/workflows/release.yml`: it checks tag and version, runs `mise run check` and `mise run lint`, builds the binary, packages it, attests it (build provenance) and publishes the release with `pxu`, `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json`.
+3. The tag on GitHub starts `.github/workflows/release.yml`: it checks tag and version, runs `mise run audit`, `mise run check` and `mise run lint`, builds the binary, packages it, attests it (build provenance) and publishes the release with `pxu`, `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json`.
 
 The binary is static (`x86_64-unknown-linux-musl`). A glibc build on ubuntu-24.04 links against glibc 2.39 and would not run on Proxmox 8 (Debian 12, glibc 2.36); the static one runs on 8 and 9. `mise run package` builds the same tarball locally to inspect it. Nothing is pushed straight to GitHub: anything changed there is overwritten by the next mirror sync. `publish` doesn't use git remotes: it builds the URLs from `FORGEJO_URL` and `GITHUB_URL` plus the name of the repository folder (`pxu`).
 

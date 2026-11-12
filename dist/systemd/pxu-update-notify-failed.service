@@ -1,0 +1,12 @@
+[Unit]
+Description=pxu: Apprise notice when pxu-update.service fails (does not run pxu)
+# Without the credential (Apprise never saved from the TUI) the unit is skipped, not failed: the journal entry of pxu-update-failed.service remains.
+ConditionPathExists=/etc/pxu/failure-notice.cred
+
+[Service]
+Type=oneshot
+# Same Apprise URLs/key as pxu, encrypted with systemd-creds under the same name; the script reads it from $CREDENTIALS_DIRECTORY and feeds curl/apprise by stdin (nothing in argv).
+LoadCredentialEncrypted=pxu-apprise:/etc/pxu/failure-notice.cred
+ExecStart=/usr/local/bin/pxu-failure-notice
+Nice=10
+TimeoutStartSec=2min

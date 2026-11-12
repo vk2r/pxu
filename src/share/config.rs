@@ -1,5 +1,6 @@
 //! `/etc/pxu/config.toml` (ARCHITECTURE §5): listado, chequeo, update, backup y `[apprise]`.
 use crate::share::host::Host;
+use crate::share::notify;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -60,6 +61,10 @@ fn d_io() -> String {
 fn d_log_days() -> u32 {
     30
 }
+/// Máximos de los tiempos configurables: con ellos el peor caso de cada paso de `update` y de `check` queda acotado (ARCHITECTURE §Límites de tiempo).
+/// `validate` los rechaza con un error claro; `Config::load` los aplica de todos modos (`clamp_limits`).
+pub const MAX_CHECK_TIMEOUT_S: u64 = 120;
+pub const MAX_UPDATE_TIMEOUT_MIN: u64 = 120;
 /// Tope de `log_retention_days` (10 años): un valor mayor casi seguro es una errata.
 pub const MAX_LOG_RETENTION_DAYS: u32 = 3650;
 fn d_nice() -> i32 {
@@ -244,7 +249,23 @@ impl Config {
             return Err(format!("{CONFIG_PATH}: {e}"));
         }
         let bytes = host.read_file(p).map_err(|e| format!("{CONFIG_PATH}: {e}"))?;
-        toml::from_str(&String::from_utf8_lossy(&bytes)).map_err(|e| format!("{CONFIG_PATH}: {e}"))
+        let mut cfg: Config = toml::from_str(&String::from_utf8_lossy(&bytes)).map_err(|e| format!("{CONFIG_PATH}: {e}"))?;
+        cfg.clamp_limits();
+        Ok(cfg)
+    }
+
+    /// Aplica los máximos de tiempo (`MAX_*`): ningún valor de la config puede alargar un peor caso por encima de su presupuesto.
+    pub fn clamp_limits(&mut self) {
+        self.check.timeout_s = self.check.timeout_s.min(MAX_CHECK_TIMEOUT_S);
+        self.update.timeout_min = self.update.timeout_min.min(MAX_UPDATE_TIMEOUT_MIN);
+        let a = &mut self.apprise;
+        a.timeout_s = a.timeout_s.min(notify::MAX_TIMEOUT_S);
+        a.retry_delays_ms.truncate(notify::MAX_RETRIES);
+        let mut left = notify::MAX_RETRY_TOTAL_MS;
+        for d in a.retry_delays_ms.iter_mut() {
+            *d = (*d).min(left);
+            left -= *d;
+        }
     }
 
     /// Carga para usar la config al ESCRIBIR (`update`, TUI): además de `load`, pasa por la misma validación que `config check`.
@@ -454,6 +475,18 @@ fn validate_text_into(host: &dyn Host, text: &str, v: &mut Validation) {
     oneof(v, "[general] io_class", &cfg.general.io_class, &["idle", "best-effort"]);
     if cfg.general.log_retention_days > MAX_LOG_RETENTION_DAYS {
         v.errors.push(format!("[general] log_retention_days = {}: expected 0..{MAX_LOG_RETENTION_DAYS} (0 = never delete)", cfg.general.log_retention_days));
+    }
+    if cfg.check.timeout_s > MAX_CHECK_TIMEOUT_S {
+        v.errors.push(format!("[check] timeout_s = {}: expected at most {MAX_CHECK_TIMEOUT_S}", cfg.check.timeout_s));
+    }
+    if cfg.update.timeout_min > MAX_UPDATE_TIMEOUT_MIN {
+        v.errors.push(format!("[update] timeout_min = {}: expected at most {MAX_UPDATE_TIMEOUT_MIN}", cfg.update.timeout_min));
+    }
+    if cfg.apprise.timeout_s > notify::MAX_TIMEOUT_S {
+        v.errors.push(format!("[apprise] timeout_s = {}: expected at most {}", cfg.apprise.timeout_s, notify::MAX_TIMEOUT_S));
+    }
+    if cfg.apprise.retry_delays_ms.len() > notify::MAX_RETRIES || cfg.apprise.retry_delays_ms.iter().sum::<u64>() > notify::MAX_RETRY_TOTAL_MS {
+        v.errors.push(format!("[apprise] retry_delays_ms: expected at most {} entries adding up to {} ms or less", notify::MAX_RETRIES, notify::MAX_RETRY_TOTAL_MS));
     }
     oneof(v, "[update] stopped", &cfg.update.stopped, &["skip", "start_and_restore"]);
     oneof(v, "[update] reboot", &cfg.update.reboot, &["never", "if-required"]);
@@ -924,6 +957,9 @@ pub fn plan_apprise(host: &dyn Host, edit: &AppriseEdit) -> Result<ApprisePlan, 
 /// Escribe `[apprise]` en `/etc/pxu/config.toml` (crea el archivo si falta): valida la config resultante ANTES y la escritura es atómica (host).
 pub fn write_apprise(host: &dyn Host, edit: &AppriseEdit) -> Result<(), String> {
     let plan = plan_apprise(host, edit)?;
+    // La credencial del aviso de fallo (la usa systemd sin ejecutar pxu) se escribe ANTES: si falla, la config no cambia.
+    let new: Config = toml::from_str(&plan.text).map_err(|e| format!("{CONFIG_PATH}: {e}"))?;
+    crate::share::notify::write_failure_cred(host, &new.apprise).map_err(|e| format!("failure-notice credential: {e}: nothing was written"))?;
     host.write_config(plan.text.as_bytes()).map_err(|e| format!("{CONFIG_PATH}: {e}"))
 }
 

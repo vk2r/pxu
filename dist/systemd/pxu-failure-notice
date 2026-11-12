@@ -1,0 +1,22 @@
+#!/bin/sh
+# Sends the "pxu-update.service failed" notice WITHOUT running pxu. Run by pxu-update-notify-failed.service.
+# Input: the credential pxu-apprise (decrypted by systemd into $CREDENTIALS_DIRECTORY), written by pxu when the Apprise
+# settings are saved. Its first line says how to send it; the rest is the secret, fed to curl/apprise by stdin only.
+set -u
+cred="${CREDENTIALS_DIRECTORY:-}/pxu-apprise"
+[ -n "${CREDENTIALS_DIRECTORY:-}" ] && [ -r "$cred" ] || { echo "pxu-failure-notice: no credential" >&2; exit 0; }
+first=$(head -n 1 "$cred")
+case $first in
+    "# pxu-failure-notice transport=api")
+        exec curl --config - < "$cred"
+        ;;
+    "# pxu-failure-notice transport=cli")
+        exec timeout 60 apprise --config /dev/stdin -t "pxu update FAILED" \
+            -b "pxu-update.service failed or was killed: check journalctl -u pxu-update.service and /var/log/pxu; a CT may be half updated" \
+            -n failure < "$cred"
+        ;;
+    *)
+        echo "pxu-failure-notice: unknown credential format" >&2
+        exit 1
+        ;;
+esac

@@ -1325,6 +1325,102 @@ mod tests {
         assert!(!a.iter().any(|a| a.contains("modprobe") || a.contains("--dkms") || a.starts_with("pct push")), "{a:?}");
     }
 
+    fn nvidia_aborted_untouched(w: impl FnOnce(World) -> World, why: &str) {
+        let h = gpu_world(|x| w(x.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"])));
+        let n0 = h.inner().recorded().len();
+        let rep = timer_run(&h);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Failed, "{}", nv.detail);
+        assert!(nv.detail.contains(why), "{}", nv.detail);
+        let c = all_cmds(&h, n0);
+        let bad = ["install -d", "download.nvidia.com/XFree86/Linux-x86_64/NVIDIA", "--dkms", "modprobe", "pct push", "--no-kernel-modules"];
+        assert!(!c.iter().any(|a| bad.iter().any(|b| a.contains(b))), "{c:#?}");
+    }
+
+    #[test]
+    fn nvidia_work_dir_that_is_a_symlink_is_refused() {
+        nvidia_aborted_untouched(|w| w.file("/exec/0/nvidia-workdir.meta", b"0700 0 symlink"), "symlink");
+    }
+
+    #[test]
+    fn nvidia_work_dir_with_another_owner_is_refused() {
+        nvidia_aborted_untouched(|w| w.file("/exec/0/nvidia-workdir.meta", b"0700 1000 dir"), "not owned by root");
+    }
+
+    #[test]
+    fn nvidia_work_dir_with_a_loose_mode_is_refused() {
+        nvidia_aborted_untouched(|w| w.file("/exec/0/nvidia-workdir.meta", b"0755 0 dir"), "mode 0700");
+    }
+
+    #[test]
+    fn nvidia_work_dir_that_is_a_file_is_refused() {
+        nvidia_aborted_untouched(|w| w.file("/exec/0/nvidia-workdir.meta", b"0700 0 file"), "not a directory");
+    }
+
+    #[test]
+    fn nvidia_ct_hostile_temp_dir_is_refused_before_copying() {
+        for hostile in ["/var/tmp/pxu-nvidia.run", "/var/lib/pxu-nvidia.../../../tmp/x", "/tmp"] {
+            let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]).file("/exec/134/nvidia-mktemp.out", hostile.as_bytes()));
+            let n0 = h.inner().recorded().len();
+            let rep = timer_run(&h);
+            let ct = rep.nvidia.as_ref().unwrap().cts.iter().find(|c| c.vmid == 134).expect("ct entry");
+            assert_eq!(ct.outcome, Outcome::Failed, "{hostile}: {}", ct.detail);
+            let c = all_cmds(&h, n0);
+            assert!(!c.iter().any(|a| a.contains("pct push") || a.contains("--no-kernel-modules") || a.contains(hostile) && a.starts_with("ct134 rm")), "{hostile}: {c:#?}");
+        }
+    }
+
+    #[test]
+    fn nvidia_ct_copy_that_differs_is_not_executed() {
+        let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]).file("/exec/134/nvidia-ct-sha.out", b"deadbeef  x\n"));
+        let n0 = h.inner().recorded().len();
+        let rep = timer_run(&h);
+        let ct = rep.nvidia.as_ref().unwrap().cts.iter().find(|c| c.vmid == 134).expect("ct entry");
+        assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
+        let c = all_cmds(&h, n0);
+        assert!(!c.iter().any(|a| a.contains("--no-kernel-modules")), "{c:#?}");
+        assert!(c.iter().any(|a| a.starts_with("ct134 rm -rf -- /var/lib/pxu-nvidia.")), "the temp dir is removed: {c:#?}");
+    }
+
+    #[test]
+    fn nvidia_ct_installer_runs_from_a_fresh_private_dir_and_it_is_removed() {
+        let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]));
+        let n0 = h.inner().recorded().len();
+        let rep = timer_run(&h);
+        let ct = rep.nvidia.as_ref().unwrap().cts.iter().find(|c| c.vmid == 134).expect("ct entry");
+        assert_eq!(ct.outcome, Outcome::Ok, "{}", ct.detail);
+        let c = all_cmds(&h, n0);
+        assert!(!c.iter().any(|a| a.contains("/var/tmp/pxu-nvidia")), "{c:#?}");
+        let pos = |p: &str| c.iter().position(|a| a.contains(p)).unwrap_or_else(|| panic!("{p} missing in {c:#?}"));
+        assert!(pos("ct134 mktemp -d") < pos("pct push") && pos("pct push") < pos("ct134 sha256sum") && pos("ct134 sha256sum") < pos("--no-kernel-modules") && pos("--no-kernel-modules") < pos("ct134 rm -rf --"), "{c:#?}");
+    }
+
+    #[test]
+    fn nvidia_worst_s_covers_every_command_it_runs() {
+        // 4 CT con GPU; dos mundos idénticos, uno con NVIDIA automático y otro sin: la diferencia de «peor caso por orden» es lo que cuesta el paso.
+        use crate::share::mock::scenario::Ct;
+        let nv = "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file";
+        let world = |on: bool| {
+            gpu_world(|w| {
+                let w = w.ct(Ct::new(136).conf(nv)).ct(Ct::new(137).conf(nv)).ct_config(134, &["auto_update = true", "nvidia_auto = true"]).ct_config(135, &["nvidia_auto = true"]).ct_config(136, &["nvidia_auto = true"]).ct_config(137, &["nvidia_auto = true"]);
+                if on { w.host_nvidia_auto() } else { w }
+            })
+        };
+        let (with, without) = (world(true), world(false));
+        let (b0, b1) = (with.inner().exec_budget_s(), without.inner().exec_budget_s());
+        let rep = timer_run(&with);
+        timer_run(&without);
+        let nvr = rep.nvidia.as_ref().expect("the NVIDIA step ran");
+        assert!(nvr.cts.len() >= 3, "{:?}", nvr.cts.iter().map(|c| (c.vmid, &c.detail)).collect::<Vec<_>>());
+        let cost = (with.inner().exec_budget_s() - b0) - (without.inner().exec_budget_s() - b1);
+        let gpu_cts = guests::load(&with).guests.iter().filter(|g| g.gpu.nvidia).count() as u64;
+        assert_eq!(gpu_cts, 4);
+        let cfg = Config::load(&with).unwrap();
+        assert!(cost > 0 && cost < u64::MAX / 2, "an NVIDIA command without timeout_s: {cost}");
+        assert!(cost <= crate::share::update::nvidia::worst_s(&cfg, gpu_cts), "the commands add up to {cost} s but worst_s reserves {} s", crate::share::update::nvidia::worst_s(&cfg, gpu_cts));
+        assert!(crate::share::update::nvidia::worst_s(&cfg, gpu_cts) < crate::share::update::RUN_DEADLINE_S, "with 4 GPU CTs the step must be able to start");
+    }
+
     #[test]
     fn nothing_newer_leaves_no_entry() {
         let h = gpu_world(|w| w.host_nvidia_auto().nvidia_run_driver(&["595.112.07", "596.10.01"]));
