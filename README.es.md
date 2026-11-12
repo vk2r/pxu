@@ -10,8 +10,6 @@ pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué
 
 Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en segundo plano.
 
-> Versión 0.1, en desarrollo. Probado en Proxmox VE 9.2.
-
 ## Contenido
 
 - [Requisitos](#requisitos)

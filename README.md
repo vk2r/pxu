@@ -10,8 +10,6 @@ pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which
 
 You use it from a terminal screen (the "TUI"). It leaves nothing running in the background.
 
-> Version 0.1, in development. Tested on Proxmox VE 9.2.
-
 ## Contents
 
 - [Requirements](#requirements)
