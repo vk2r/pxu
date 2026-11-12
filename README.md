@@ -29,7 +29,7 @@ You use it from a terminal screen (the "TUI"). It leaves nothing running in the 
 - A Proxmox VE server, and `root` access.
 - For notifications (optional): an [Apprise API](https://github.com/caronc/apprise-api) server reachable from Proxmox.
 
-## Install pxu
+## Install **pxu**
 
 Pxu is installed on Proxmox from a binary made elsewhere. You can download the signed release or build it yourself.
 
@@ -59,7 +59,7 @@ gh attestation verify pxu-<version>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle
 
 ### Option B: build it yourself
 
-Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then install it on Proxmox.
+Build **pxu** on another machine (with Rust, via [mise](https://mise.jdx.dev)), then install it on Proxmox.
 
 1. Build the binary:
 
@@ -82,9 +82,9 @@ Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then
    cd /root/pxu-install && sh install.sh ./pxu
    ```
 
-The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat the steps of the option you used.
+The installer is safe to rerun and never overwrites your configuration. To update **pxu**, repeat the steps of the option you used.
 
-## Try pxu in read-only mode
+## Try **pxu** in read-only mode
 
 On the server, as root:
 
@@ -92,7 +92,7 @@ On the server, as root:
 pxu
 ```
 
-pxu runs as root, but without a configuration file (`/etc/pxu/config.toml`) it starts in **read-only mode**, a mode of pxu itself so you can try it safely: you can see your containers and check for updates, but `u` updates nothing. Use `↑↓` to move, `c` to check and `q` to quit. Press `?` for all keys. Press `d` for the Storage page (space per storage and container, with alerts). To leave read-only mode, change any setting from the TUI, for example mark a container with `a`: pxu creates the configuration and from then on `u` updates.
+**pxu** runs as root, but without a configuration file (`/etc/pxu/config.toml`) it starts in **read-only mode**, a mode of **pxu** itself so you can try it safely: you can see your containers and check for updates, but `u` updates nothing. Use `↑↓` to move, `c` to check and `q` to quit. Press `?` for all keys. Press `d` for the Storage page (space per storage and container, with alerts). To leave read-only mode, change any setting from the TUI, for example mark a container with `a`: **pxu** creates the configuration and from then on `u` updates.
 
 ![Storage page: space per storage and per container, with alerts](screenshots/06-storage.png)
 
@@ -100,9 +100,9 @@ pxu runs as root, but without a configuration file (`/etc/pxu/config.toml`) it s
 
 **pxu only updates containers marked with `a` or with a tag listed in `auto_update_tags` (for example `autoupdate`). All other containers are left untouched.**
 
-1. Press `a` on a container. pxu asks for confirmation and creates the configuration file.
+1. Press `a` on a container. **pxu** asks for confirmation and creates the configuration file.
 2. Press `c` to check for updates.
-3. Press `u` to update. pxu asks for confirmation first.
+3. Press `u` to update. **pxu** asks for confirmation first.
 
 Only containers you checked less than an hour ago are updated.
 
@@ -110,7 +110,7 @@ Only containers you checked less than an hour ago are updated.
 
 For each container, one at a time: temporary backup → dry run → update → verification.
 
-- If the update or the verification fails, pxu restores the container to its previous state and deletes the backup.
+- If the update or the verification fails, **pxu** restores the container to its previous state and deletes the backup.
 - If the restore fails or the update runs over its time limit, **the backup is kept**, the run stops, and the log and the notification show the command to restore by hand.
 - If there is no room for the backup, that container is not touched.
 - **The backup covers only the container's main disk.** Disks mounted from outside (`/mnt/pve/...`) are not included.
@@ -118,7 +118,7 @@ For each container, one at a time: temporary backup → dry run → update → v
 
 ## Enable automatic updates
 
-The daily run is turned on from the TUI: press `g` for the **Config** screen, then `s`. pxu installs the systemd timers and from then on checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked as above. Stopped containers are skipped by default.
+The daily run is turned on from the TUI: press `g` for the **Config** screen, then `s`. **pxu** installs the systemd timers and from then on checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked as above. Stopped containers are skipped by default.
 
 On the same screen, `s` also changes the time or turns the daily run off, and `d` sets how many days of logs are kept (30 by default).
 
@@ -130,7 +130,7 @@ Each run writes one log; open it with `l`.
 
 ## Set up notifications
 
-Each run ends with **a single notification**: a table with the server first and then each container. If it cannot be sent, pxu retries it later by itself.
+Each run ends with **a single notification**: a table with the server first and then each container. If it cannot be sent, **pxu** retries it later by itself.
 
 1. In Config (`g`), press `n`.
 2. Type the address of your Apprise API, then either the API key or the destination URLs, and (optional) a tag and the events you want to be told about.
@@ -143,7 +143,7 @@ Each run ends with **a single notification**: a table with the server first and 
 
 ## Proxmox host and NVIDIA driver (optional)
 
-pxu can also update the Proxmox host itself (select the host row and press `u`, or run `pxu update --host`) and the NVIDIA driver. Both are **off** unless you ask for them: in the `a` window of the host row or of a container with a GPU you will find «Include GPU driver update», and `host_auto` in the configuration includes the host in the daily run. pxu never reboots the server. Details: [ARCHITECTURE](docs/ARCHITECTURE.md) §3.6–3.7.
+**pxu** can also update the Proxmox host itself (select the host row and press `u`, or run `pxu update --host`) and the NVIDIA driver. Both are **off** unless you ask for them: in the `a` window of the host row or of a container with a GPU you will find «Include GPU driver update», and `host_auto` in the configuration includes the host in the daily run. **pxu** never reboots the server. Details: [ARCHITECTURE](docs/ARCHITECTURE.md) §3.6–3.7.
 
 ## Uninstall
 
@@ -175,7 +175,7 @@ With the `install.sh` you already have on the server (option B):
 ## More documentation
 
 - [DEVELOPMENT.md](DEVELOPMENT.md): build, test, screenshots and contribute.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how pxu works, installer, configuration, command line, logs.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how **pxu** works, installer, configuration, command line, logs.
 - [docs/DESIGN.md](docs/DESIGN.md): the TUI, screen by screen, with all keys.
 - [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md): security review.
 

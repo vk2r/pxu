@@ -2,7 +2,7 @@
 
 [English](README.md) | Español
 
-pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede ejecutarse cada día y avisarte por cualquier servicio compatible con Apprise.
+Proxmox Updater mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede ejecutarse cada día y avisarte por cualquier servicio compatible con Apprise.
 
 ![Lista de contenedores con las columnas de actualizaciones, backup y auto-update](screenshots/01-list.png)
 
@@ -29,7 +29,7 @@ Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en
 - Un servidor Proxmox VE, y acceso como `root`.
 - Para los avisos (opcional): un servidor [Apprise API](https://github.com/caronc/apprise-api) accesible desde Proxmox.
 
-## Instalar pxu
+## Instalar **pxu**
 
 Pxu se instala en Proxmox desde un binario hecho en otro lado. Puedes descargar la versión firmada o compilarlo tú.
 
@@ -59,7 +59,7 @@ gh attestation verify pxu-<versión>-x86_64-linux.tar.gz --repo vk2r/pxu --bundl
 
 ### Opción B: compilarlo tú
 
-Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e instálalo en Proxmox.
+Compila **pxu** en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e instálalo en Proxmox.
 
 1. Compila el binario:
 
@@ -82,9 +82,9 @@ Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e inst�
    cd /root/pxu-install && sh install.sh ./pxu
    ```
 
-El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite los pasos de la opción que usaste.
+El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar **pxu**, repite los pasos de la opción que usaste.
 
-## Probar pxu en modo solo lectura
+## Probar **pxu** en modo solo lectura
 
 En el servidor, como root:
 
@@ -92,7 +92,7 @@ En el servidor, como root:
 pxu
 ```
 
-pxu corre como root, pero sin archivo de configuración (`/etc/pxu/config.toml`) arranca en **modo solo lectura**, un modo propio de pxu para probarlo sin riesgo: puedes ver tus contenedores y comprobar actualizaciones, pero `u` no actualiza nada. Usa `↑↓` para moverte, `c` para comprobar y `q` para salir. Pulsa `?` para ver todas las teclas. Con `d` abres la página Storage (espacio por storage y por contenedor, con alertas). Para salir del modo solo lectura, cambia cualquier ajuste desde la TUI, por ejemplo marca un contenedor con `a`: pxu crea la configuración y desde ahí `u` actualiza.
+**pxu** corre como root, pero sin archivo de configuración (`/etc/pxu/config.toml`) arranca en **modo solo lectura**, un modo propio de **pxu** para probarlo sin riesgo: puedes ver tus contenedores y comprobar actualizaciones, pero `u` no actualiza nada. Usa `↑↓` para moverte, `c` para comprobar y `q` para salir. Pulsa `?` para ver todas las teclas. Con `d` abres la página Storage (espacio por storage y por contenedor, con alertas). Para salir del modo solo lectura, cambia cualquier ajuste desde la TUI, por ejemplo marca un contenedor con `a`: **pxu** crea la configuración y desde ahí `u` actualiza.
 
 ![Página Storage: espacio por storage y por contenedor, con alertas](screenshots/06-storage.png)
 
@@ -100,9 +100,9 @@ pxu corre como root, pero sin archivo de configuración (`/etc/pxu/config.toml`)
 
 **pxu solo actualiza los contenedores marcados con `a` o con una etiqueta listada en `auto_update_tags` (por ejemplo `autoupdate`). Los demás contenedores no se tocan.**
 
-1. Pulsa `a` en un contenedor. pxu pide confirmación y crea el archivo de configuración.
+1. Pulsa `a` en un contenedor. **pxu** pide confirmación y crea el archivo de configuración.
 2. Pulsa `c` para comprobar actualizaciones.
-3. Pulsa `u` para actualizar. pxu pide confirmación antes.
+3. Pulsa `u` para actualizar. **pxu** pide confirmación antes.
 
 Solo se actualizan los contenedores que comprobaste hace menos de una hora.
 
@@ -110,7 +110,7 @@ Solo se actualizan los contenedores que comprobaste hace menos de una hora.
 
 Con cada contenedor, de uno en uno: copia temporal → simulación → actualización → verificación.
 
-- Si la actualización o la verificación fallan, pxu devuelve el contenedor a su estado anterior y borra la copia.
+- Si la actualización o la verificación fallan, **pxu** devuelve el contenedor a su estado anterior y borra la copia.
 - Si la restauración falla o la actualización se pasa de tiempo, **la copia se conserva**, la corrida se detiene y el log y el aviso muestran el comando para restaurar a mano.
 - Si no hay espacio para la copia, ese contenedor no se toca.
 - **La copia cubre solo el disco principal del contenedor.** Los discos montados desde fuera (`/mnt/pve/...`) no entran.
@@ -118,7 +118,7 @@ Con cada contenedor, de uno en uno: copia temporal → simulación → actualiza
 
 ## Activar las actualizaciones automáticas
 
-La corrida diaria se activa desde la TUI: pulsa `g` para abrir la pantalla **Config** y luego `s`. pxu instala los timers de systemd y desde ahí comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados como arriba. Los contenedores apagados se omiten por defecto.
+La corrida diaria se activa desde la TUI: pulsa `g` para abrir la pantalla **Config** y luego `s`. **pxu** instala los timers de systemd y desde ahí comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados como arriba. Los contenedores apagados se omiten por defecto.
 
 En la misma pantalla, `s` también cambia la hora o desactiva la corrida diaria, y `d` define cuántos días se guardan los logs (30 por defecto).
 
@@ -130,7 +130,7 @@ Cada corrida deja un log; ábrelo con `l`.
 
 ## Configurar los avisos
 
-Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor. Si no se puede enviar, pxu lo reintenta después por sí solo.
+Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor. Si no se puede enviar, **pxu** lo reintenta después por sí solo.
 
 1. En Config (`g`), pulsa `n`.
 2. Escribe la dirección de tu Apprise API, luego la clave o las URL de destino, y (opcional) una etiqueta y los eventos de los que quieres enterarte.
@@ -143,7 +143,7 @@ Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y 
 
 ## Host Proxmox y driver NVIDIA (opcional)
 
-pxu también puede actualizar el propio host Proxmox (selecciona la fila del host y pulsa `u`, o ejecuta `pxu update --host`) y el driver NVIDIA. Ambos están **desactivados** salvo que lo pidas: en la ventana `a` de la fila del host o de un contenedor con GPU está «Include GPU driver update», y `host_auto` en la configuración incluye el host en la corrida diaria. pxu nunca reinicia el servidor. Detalles: [ARCHITECTURE](docs/ARCHITECTURE.es.md) §3.6–3.7.
+**pxu** también puede actualizar el propio host Proxmox (selecciona la fila del host y pulsa `u`, o ejecuta `pxu update --host`) y el driver NVIDIA. Ambos están **desactivados** salvo que lo pidas: en la ventana `a` de la fila del host o de un contenedor con GPU está «Include GPU driver update», y `host_auto` en la configuración incluye el host en la corrida diaria. **pxu** nunca reinicia el servidor. Detalles: [ARCHITECTURE](docs/ARCHITECTURE.es.md) §3.6–3.7.
 
 ## Desinstalar
 
@@ -175,7 +175,7 @@ Con el `install.sh` que ya tienes en el servidor (opción B):
 ## Más documentación
 
 - [DEVELOPMENT.es.md](DEVELOPMENT.es.md): compilar, probar, capturas y contribuir.
-- [docs/ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona pxu, instalador, configuración, línea de comandos, logs.
+- [docs/ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona **pxu**, instalador, configuración, línea de comandos, logs.
 - [docs/DESIGN.es.md](docs/DESIGN.es.md): la TUI, pantalla por pantalla, con todas las teclas.
 - [docs/SECURITY-REVIEW.es.md](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
 
