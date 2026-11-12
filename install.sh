@@ -1,13 +1,23 @@
 #!/bin/sh
-# Installs pxu on a Proxmox host (run as root on the host).
+# Installs or updates pxu on a Proxmox host (run as root on the host).
 # Usage: ./install.sh [options] [path-to-binary]
+# Without a local binary it downloads the release bundle from GitHub and checks it against the
+# release's SHA256SUMS before installing anything. If pxu is already installed it says which
+# version is there: the same version stops without changes, another one is replaced, together
+# with the systemd units if they were installed.
 set -eu
+
+# GitHub repository the releases are downloaded from (owner/name).
+repo=${PXU_REPO:-vk2r/pxu}
 
 usage() {
     cat <<'USAGE'
-Usage: ./install.sh [--timer] [--force] [--uninstall [--purge]] [path-to-binary]
-  path-to-binary   defaults to ./pxu next to the script, else target/release/pxu
-  --timer          install and enable pxu-update.timer and pxu-notify-flush.timer (systemd)
+Usage: ./install.sh [--timer] [--force] [--release vX.Y.Z] [--uninstall [--purge]] [path-to-binary]
+  path-to-binary   defaults to ./pxu next to the script, else target/release/pxu; if neither
+                   exists, the release bundle is downloaded from GitHub and its SHA-256 checked
+  --release TAG    download that release instead of the latest one (implies downloading)
+  --timer          install and enable pxu-update.timer and pxu-notify-flush.timer (systemd);
+                   on an update, units installed earlier are refreshed even without it
   --force          do not require the machine to be Proxmox
   --uninstall      remove the binary and units; keep /etc/pxu and /var/lib/pxu
   --purge          with --uninstall, also delete /etc/pxu, /var/lib/pxu and /var/log/pxu
@@ -19,9 +29,12 @@ die() { echo "error: $*" >&2; exit 1; }
 say() { echo "pxu: $*"; }
 
 here=$(cd "$(dirname "$0")" && pwd)
-timer=0 force=0 uninstall=0 purge=0 bin=""
+timer=0 force=0 uninstall=0 purge=0 bin="" release="" want_release=0
 for a in "$@"; do
+    if [ "$want_release" = 1 ]; then release=$a; want_release=0; continue; fi
     case $a in
+        --release) want_release=1 ;;
+        --release=*) release=${a#--release=} ;;
         --timer) timer=1 ;;
         --force) force=1 ;;
         --uninstall) uninstall=1 ;;
@@ -31,7 +44,9 @@ for a in "$@"; do
         *) [ -z "$bin" ] || die "only one binary path is allowed"; bin=$a ;;
     esac
 done
+[ "$want_release" = 0 ] || die "--release needs a tag, e.g. --release v1.0.2"
 [ "$purge" = 0 ] || [ "$uninstall" = 1 ] || die "--purge only works with --uninstall"
+[ -z "$release" ] || [ -z "$bin" ] || die "--release and a binary path cannot be used together"
 
 DESTDIR=${DESTDIR:-}
 bindir=$DESTDIR/usr/local/bin
@@ -74,15 +89,90 @@ if [ "$uninstall" = 1 ]; then
     exit 0
 fi
 
-if [ -z "$bin" ]; then
+# Version of the pxu already installed, empty if there is none.
+installed=""
+if [ -x "$bindir/pxu" ]; then
+    installed=$("$bindir/pxu" --version 2>/dev/null | awk '{print $2}') || installed=""
+    [ -n "$installed" ] || installed=unknown
+fi
+# Units installed by an earlier --timer: an update refreshes them.
+[ -f "$unitdir/pxu-update.timer" ] && had_units=1 || had_units=0
+
+# Stops when version $1 is the one installed, unless --timer still has units to install.
+stop_if_current() {
+    [ "$installed" = "$1" ] || return 0
+    if [ "$timer" = 1 ] && [ "$had_units" = 0 ]; then
+        say "pxu $1 is already installed; installing the timers"
+        return 0
+    fi
+    say "pxu $1 is already installed and up to date; nothing to do"
+    exit 0
+}
+
+work=""
+cleanup() {
+    [ -z "$work" ] || rm -rf "$work"
+    [ -z "${tmp:-}" ] || rm -f "$tmp"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+# Downloads the release bundle into $work, checks it against SHA256SUMS and points $here and $bin
+# at its contents.
+download() {
+    command -v curl >/dev/null 2>&1 || die "curl is needed to download pxu"
+    base=https://github.com/$repo/releases
+    if [ -z "$release" ]; then
+        # /releases/latest redirects to /releases/tag/<tag>.
+        url=$(curl -fsSLo /dev/null -w '%{url_effective}' "$base/latest") || die "cannot reach $base/latest"
+        release=${url##*/}
+    fi
+    case $release in
+        v[0-9]*) ;;
+        *) die "no release found at $base (got '$release')" ;;
+    esac
+    stop_if_current "${release#v}"
+    name=pxu-${release#v}-x86_64-linux
+    work=$(mktemp -d)
+    say "downloading $release from $base"
+    curl -fsSL -o "$work/SHA256SUMS" "$base/download/$release/SHA256SUMS" || die "cannot download SHA256SUMS of $release"
+    curl -fsSL -o "$work/$name.tar.gz" "$base/download/$release/$name.tar.gz" || die "cannot download $name.tar.gz"
+    line=$(grep "  $name.tar.gz\$" "$work/SHA256SUMS") || die "$name.tar.gz is not listed in SHA256SUMS"
+    (cd "$work" && printf '%s\n' "$line" | sha256sum -c --quiet -) || die "SHA-256 of $name.tar.gz does not match SHA256SUMS"
+    say "SHA-256 checked"
+    tar -xzf "$work/$name.tar.gz" -C "$work"
+    here=$work/$name
+    bin=$here/pxu
+}
+
+if [ -n "$release" ]; then
+    download
+elif [ -z "$bin" ]; then
     if [ -f "$here/pxu" ]; then bin=$here/pxu
     elif [ -f "$here/target/release/pxu" ]; then bin=$here/target/release/pxu
-    else die "cannot find the binary (./pxu or target/release/pxu); pass its path"; fi
+    else download; fi
 fi
 [ -f "$bin" ] || die "binary does not exist: $bin"
 "$bin" --help >/dev/null 2>&1 || die "the binary does not run on this machine: $bin"
+new=$("$bin" --version 2>/dev/null | awk '{print $2}') || new=""
+[ -n "$new" ] || die "cannot read the version of $bin"
+stop_if_current "$new"
+if [ -z "$installed" ]; then
+    say "installing pxu $new"
+elif [ "$installed" = "$new" ]; then
+    say "pxu $new stays as it is"
+elif [ "$installed" = unknown ]; then
+    say "a pxu of unknown version is installed; replacing it with $new"
+elif [ "$(printf '%s\n%s\n' "$installed" "$new" | sort -V | tail -n 1)" = "$new" ]; then
+    say "pxu $installed is installed; updating to $new"
+else
+    say "pxu $installed is installed, newer than $new; going back to $new"
+fi
+# An update refreshes the units an earlier --timer installed, without enabling them again.
+refresh_units=0
+[ "$timer" = 1 ] || [ "$had_units" = 0 ] || [ "$installed" = "$new" ] || refresh_units=1
 
-if [ "$timer" = 1 ]; then
+if [ "$timer" = 1 ] || [ "$refresh_units" = 1 ]; then
     src=${PXU_UNITS:-$here/dist/systemd}
     for u in $units; do [ -f "$src/$u" ] || die "missing unit $src/$u"; done
 fi
@@ -91,10 +181,9 @@ fi
 install -d -m 0700 $dirs
 install -d -m 0755 "$bindir"
 tmp=$bindir/.pxu.new.$$
-trap 'rm -f "$tmp"' EXIT INT TERM
 install -m 0755 "$bin" "$tmp"
 mv -f "$tmp" "$bindir/pxu"
-say "binary installed at /usr/local/bin/pxu"
+say "pxu $new installed at /usr/local/bin/pxu"
 
 if [ -f "$DESTDIR/etc/pxu/config.toml" ]; then
     say "existing config.toml left untouched"
@@ -109,5 +198,10 @@ if [ "$timer" = 1 ]; then
     systemctl_do enable --now pxu-update.timer
     systemctl_do enable --now pxu-notify-flush.timer
     say "pxu-update and pxu-notify-flush timers enabled"
+elif [ "$refresh_units" = 1 ]; then
+    install -d -m 0755 "$unitdir"
+    for u in $units; do install -m 0644 "$src/$u" "$unitdir/$u"; done
+    systemctl_do daemon-reload
+    say "systemd units updated (timers left as they were)"
 fi
 say "done"

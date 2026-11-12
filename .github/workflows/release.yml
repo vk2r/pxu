@@ -76,3 +76,31 @@ jobs:
             --verify-tag \
             --title "$GITHUB_REF_NAME" \
             --notes-file notes.md
+
+  # Publishes this tag's install.sh on GitHub Pages, so the latest release installs with
+  # curl -fsSL https://vk2r.github.io/pxu/install.sh | sh
+  # Runs only after the release is published: the script downloads that release.
+  pages:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}install.sh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Site with install.sh
+        run: mkdir -p target/pages && cp install.sh target/pages/install.sh
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/pages
+
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

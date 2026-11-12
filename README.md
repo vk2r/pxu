@@ -35,25 +35,27 @@ You use it from a terminal screen (the "TUI"). It leaves nothing running in the 
 
 Pxu is installed on Proxmox from a binary made elsewhere. You can download the signed release or build it yourself.
 
-### Option A: download the release
+### Option A: install script
 
-Each release on [GitHub](https://github.com/vk2r/pxu/releases) has a static binary (it runs on Proxmox 8 and 9), a bundle with `install.sh` and `dist/`, the checksums and GitHub's build attestation. It is built and signed by GitHub from the release tag.
+On Proxmox, as root:
 
-1. On your machine, download `pxu-<version>-x86_64-linux.tar.gz`, `SHA256SUMS` and `provenance.sigstore.json` from the release, and check them (needs the [GitHub CLI](https://cli.github.com)):
+```sh
+curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --timer
+```
 
-   ```sh
-   sha256sum -c --ignore-missing SHA256SUMS
-   gh attestation verify pxu-<version>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
-   ```
+The script downloads the latest [release](https://github.com/vk2r/pxu/releases) (a static binary that runs on Proxmox 8 and 9, plus `dist/`), checks its SHA-256 against the release's `SHA256SUMS` and installs it; it stops before installing anything if they don't match. To install a given version add `--release v1.2.3`. To update, run the same command: the script says which version is installed, stops if it is already the latest and otherwise replaces it, along with the timers if they were installed. To read the script before running it:
 
-2. Copy the tarball to Proxmox and install, as root:
+```sh
+curl -fsSLo install.sh https://vk2r.github.io/pxu/install.sh
+less install.sh
+sh install.sh --timer
+```
 
-   ```sh
-   scp pxu-<version>-x86_64-linux.tar.gz root@your-proxmox:/root/
-   ssh root@your-proxmox
-   tar xzf pxu-<version>-x86_64-linux.tar.gz && cd pxu-<version>-x86_64-linux
-   sh install.sh ./pxu --timer
-   ```
+Each release is built and signed by GitHub from its tag. To also check who built it, verify GitHub's build attestation on your machine (needs the [GitHub CLI](https://cli.github.com)): download `pxu-<version>-x86_64-linux.tar.gz` and `provenance.sigstore.json` from the release and run
+
+```sh
+gh attestation verify pxu-<version>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
+```
 
 ### Option B: build it yourself
 
