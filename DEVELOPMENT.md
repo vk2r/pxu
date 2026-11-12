@@ -1,4 +1,4 @@
-English | [Español](development.es.md)
+English | [Español](DEVELOPMENT.es.md)
 
 # pxu: development
 
@@ -28,6 +28,21 @@ Predefined cases and the `World` builder: [`docs/ARCHITECTURE.md` §8.3](docs/AR
 
 `mise run demo` first builds `target/mock/pxu` (`cargo build --profile mock --features mock`). The production binary rejects `--mock` (exits with code 2), and `--release --features mock` doesn't compile.
 
+## Screenshots
+
+The PNGs in `screenshots/` (used by the README) come from the mock, never from a real server:
+
+```sh
+mise run screenshots     # tmux (headless, 120×40) + freeze; builds target/mock/pxu first
+```
+
+`screenshots/screenshots.sh` drives the TUI with keys and calls `shot NN-name` for each capture. To add one, add a `run <case>; keys …; shot NN-name` line and reference the PNG from the README. If ImageMagick (`magick`) is installed the PNGs are reduced to a 96-colour palette (~3× smaller). Use only mock data: no real IPs, names or secrets.
+
+## Where documents go
+
+- **`DEVELOPMENT.md`** (this file) and **`docs/`**: permanent definitions, in English and Spanish (`.md` / `.es.md`, linked to each other).
+- **`development/`** (root, lowercase): temporary working and research documents (reports, comparisons, plans). It does not exist until needed.
+
 ## Code map
 
 ```
@@ -43,6 +58,7 @@ src/share/            what both use:
 install.sh            installer for the Proxmox host
 dist/systemd/         pxu-update and pxu-notify-flush (.service and .timer)
 tests/snapshots/      TUI captures
+screenshots/          PNGs of the README (mise run screenshots)
 docs/             ARCHITECTURE.md, DESIGN.md (TUI) and SECURITY-REVIEW.md
 ```
 

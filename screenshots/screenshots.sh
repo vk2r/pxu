@@ -12,6 +12,8 @@ command -v freeze >/dev/null || { echo "falta freeze (mise install)"; exit 1; }
 shot() { # nombre: captura el panel con colores y lo pasa a PNG
   $S capture-pane -ep -t 0 | freeze --language ansi --config user --theme dracula --font.family "JetBrainsMono Nerd Font" \
     --font.size 14 --line-height 1.2 --padding 20 --margin 0 --window=false --border.radius 8 -o "$OUT/$1.png" >/dev/null
+  # opcional: paleta reducida (PNG8) para que cada captura pese ~10x menos; el texto sigue nítido
+  if command -v magick >/dev/null; then magick "$OUT/$1.png" -colors 96 -define png:compression-level=9 "PNG8:$OUT/$1.png"; fi
   echo "$OUT/$1.png"
 }
 run() { # inicia una sesión nueva con el caso mock dado
@@ -30,3 +32,8 @@ run demo;      keys u; keys Enter; sleep 1; shot 05-update
 run demo;      keys d; sleep 2; keys S; keys S; keys S; keys g; shot 06-storage
 # 07: CT 131 (caso arr: disco real al 66% pero bloques del thin al 99.8%) → id ↑, g, 31 veces abajo, Enter
 keys S; keys g; keys $(printf 'Down %.0s' {1..31}); keys Enter; sleep 1; shot 07-storage-detail
+# 08-11: Config, ventana de notificaciones (con tag), su confirmación y el horario (todo con datos del mock)
+run demo-scheduled; keys g; shot 08-config
+keys n; keys Tab; keys Tab; keys Tab; keys -l system; shot 09-notifications
+keys Enter; shot 10-notifications-confirm
+run demo-scheduled; keys S; shot 11-schedule

@@ -4,7 +4,7 @@ English | [Español](ARCHITECTURE.es.md)
 pxu is a lightweight LXC container updater for Proxmox VE, designed as an alternative to ProxMenux. It is a single Rust binary with a TUI (ratatui) and a CLI. It has no daemon and no dependencies on the host, and uses a few MB of RAM while it runs.
 
 
-Technical reference of how `pxu` works today. The TUI is described in [DESIGN.md](DESIGN.md); the security analysis, in [SECURITY-REVIEW.md](SECURITY-REVIEW.md). Installation and usage: [README.md](../README.md); building and testing: [development.md](../development.md).
+Technical reference of how `pxu` works today. The TUI is described in [DESIGN.md](DESIGN.md); the security analysis, in [SECURITY-REVIEW.md](SECURITY-REVIEW.md). Installation and usage: [README.md](../README.md); building and testing: [DEVELOPMENT.md](../DEVELOPMENT.md).
 
 Known limitation: the logic is tested against a simulated server (`MockHost`, §8). Behavior with every storage type and Proxmox version has not been verified on a real server.
 
@@ -105,7 +105,7 @@ The upgrades are in `update/mod.rs::upgrade_argv`, which is the single source fo
 
 - Sequential, one CT after another; the per-CT timeout is `[check] timeout_s` (60 s; triple with refresh).
 - The result is saved in `/var/lib/pxu/state.json` (atomic write): date, manager, packages, number of security updates, index age and a **fingerprint** (FNV-1a of the sorted list `name=new_version`, `state::fingerprint`).
-- The fingerprint avoids repeating notifications: §4.3. A check is "recent" for `update` if it is less than `[update] require_fresh_check_minutes` (60) old.
+- The fingerprint avoids repeating notifications: §4.2. A check is "recent" for `update` if it is less than `[update] require_fresh_check_minutes` (60) old.
 - `pxu check` also reviews the **Proxmox host** (`proxmox/hostcheck.rs`, read-only): pending packages, repositories, pending reboot and NVIDIA GPU/driver. The only commands it uses are `apt-get update` (only with refresh), `apt list --upgradable`, `apt-get -s … full-upgrade`, `lspci -nn` and `dkms status`.
 
 ---
@@ -128,7 +128,7 @@ Code: `src/share/update/mod.rs`. It is the only command that writes.
 2. If `[update] host_auto = true`, the "all" run starts with the **host** (§3.6); then the NVIDIA driver if `host_nvidia_auto` (§3.7). Only if the host finished well does it continue with the CTs.
 3. Each CT, by ascending vmid, goes through the steps in §3.3.
 4. **Circuit breaker:** `max_consecutive_failures` failures in a row (2) stop the run (with `on_failure = "stop"`, the first failure). The remaining CTs are left `skipped`.
-5. At the end: report, final log and single notification (§4.3).
+5. At the end: report, final log and single notification (§4.4).
 
 Cancellation (Ctrl-C/SIGINT/SIGTERM/SIGHUP in the CLI, dialog in the TUI): the run finishes the CT in progress and stops; the following ones are left `cancelled` and the exit is 30. `dpkg`/`apt` are never killed by a cancellation. Exception: before the install (pre-checks/backup) the cancel is immediate: only `vzdump` is signalled (SIGTERM; SIGKILL of its group after 120 s), the partial file/snapshot/lock are cleaned up by vzdump itself (pxu verifies it) and the CT ends `cancelled`, untouched.
 
@@ -328,6 +328,7 @@ pxu check  [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]
 pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
 pxu update --host [--yes]
 pxu config check
+pxu config encrypt-secrets
 pxu notify-test
 pxu notify-flush
 ```
@@ -352,6 +353,18 @@ pxu notify-flush
 | `30` | `update` | run stopped: circuit breaker or cancelled |
 
 (`check.rs` and `update/mod.rs`, `EXIT_*` constants.)
+
+### Installer (`install.sh`)
+
+`install.sh [--timer] [--force] [--uninstall [--purge]] [path-to-binary]`. It must run as root; without `--force` it requires the machine to look like Proxmox (`pct` and `/etc/pve`). It is safe to rerun.
+
+- **Installs** the binary at `/usr/local/bin/pxu` (atomic replacement) and creates `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu` with mode `0700`. It **never touches** an existing `/etc/pxu/config.toml`; if there is none, it says pxu stays read-only.
+- **`--timer`** copies the four units from `dist/systemd/` to `/etc/systemd/system`, reloads systemd and enables `pxu-update.timer` and `pxu-notify-flush.timer`. Without it only the binary is installed.
+- **`--uninstall`** disables the timers and removes the units, the `pxu-update.timer.d` drop-in (the schedule the TUI saves) and the binary; it keeps `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu`. With `--purge` it also deletes those three directories.
+- Variables for testing: `DESTDIR` (install under another root, no root, no systemctl) and `PXU_UNITS` (units folder).
+- To **update** pxu, repeat the install: the binary is replaced and the configuration is kept.
+- Build, copy to the server and first steps: [README](../README.md).
+
 
 ### systemd timer
 
@@ -405,13 +418,11 @@ Without touching `systemctl` by hand: in the Config view (`g`) you see the real 
 
 One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the name; `update/runlog.rs`).
 
-- It is created when the lock is taken with a minimal header (`pxu-run-log 1`, `started`, `node`, `---` line) and grows while it runs, with one section per host, NVIDIA and CT and the local time of each line.
+- It is created when the lock is taken with a minimal header (`pxu-run-log 1`, `started`, `node`, `---` line) and grows while it runs, with one section per host, NVIDIA and CT and the local time of each line. It is also written if the run is stopped or cancelled (with the reason); mode `0600`.
 - When it ends it is rewritten entirely: full header (`duration`, `result`), the sections and the same summary as the notification (a single source, `update/report.rs`). A log without `result` (abrupt cut) is shown as `⛔ INCOMPLETE`.
-- Retention by days: `[general] log_retention_days` (30; `0` = don't delete). When each run ends, the oldest `run-*.log` are deleted; `prune_in` only touches names in pxu's format. Logs in the previous format (`host-*.log`, `nvidia-*.log`, per-CT folders) also expire by days, but the Logs page only lists `run-*.log`.
+- Retention by days: `[general] log_retention_days` (30; `0` = don't delete). When each run ends, the oldest `run-*.log` are deleted; `prune_in` only touches names in pxu's format. Logs in the previous format (`host-*.log`, `nvidia-*.log`, per-CT folders) also expire by days, but the Logs page only lists `run-*.log`. Empty `<vmid>` folders of the old format are also removed; maximum 3650 days; only regular files with a pxu name are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
 - The log masks URLs with user and password (`fmt::mask_url_creds`) and replaces control characters (`fmt::clean`).
 - The TUI lists and opens them with the `l` key (up to `LIST_MAX = 1000` logs and `VIEW_MAX_LINES = 100 000` lines); see DESIGN §5.
-- Each run writes **one log**: `/var/log/pxu/run-YYYYMMDD-HHMM.log` (UTC in the name; `-SS` if one from that minute already exists; `0600`). It is created at the start and grows while it runs: one section per host, NVIDIA driver and CT, with the time of each line, and at the end the summary identical to the notification; it is also written if the run is stopped or cancelled (with the reason). `/var/log/pxu/<vmid>/…`, `host-….log` and `nvidia-….log` are no longer created. An abrupt cut (SIGKILL, host crash) leaves the log partial, which the Logs page lists as `⛔ INCOMPLETE`.
-- `[general] log_retention_days = 30` (default): when each run ends, pxu logs older than N days are deleted, including the old formats and empty `<vmid>` folders; `0` = never delete (max 3650). Only regular files with a pxu name inside `/var/log/pxu` are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
 - TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `d` in the Config view edits `log_retention_days`.
 - Results shown in the Logs page: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` if something failed, `⛔ STOPPED` if the run was stopped, and `⛔ INCOMPLETE` if it was cut off abruptly (for example, the server shut down mid-run) or is still in progress. The list says "no run logs yet" until there has been a run.
 
@@ -421,7 +432,7 @@ One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the n
 
 ### 8.1 Tree
 
-The code tree, the dependencies and the build profile live in [development.md](../development.md) ("Code map"). The sections below describe the `Host` trait, the test builder and the tests.
+The code tree, the dependencies and the build profile live in [DEVELOPMENT.md](../DEVELOPMENT.md) ("Code map"). The sections below describe the `Host` trait, the test builder and the tests.
 
 ### 8.2 The `Host` trait
 
@@ -450,7 +461,7 @@ A case declares only what changes (distro, running/stopped, storage with or with
 - Unit: `.conf` parser, `@@` protocol, parsers of each manager, config, notifications (simulated curl), timer schedule.
 - Integration: full `check` and `update` against `MockHost`; the exact sequence of commands is checked, which also proves that read-only mode never emits `apt-get update`/`apk update`/etc. (`check_path_is_read_only`).
 - TUI: `TestBackend` captures against `tests/snapshots/`.
-- `mise run test` runs the tests in the dev and `mock` profiles; `mise run check` additionally checks that the production binary rejects `--mock`. See [development.md](../development.md).
+- `mise run test` runs the tests in the dev and `mock` profiles; `mise run check` additionally checks that the production binary rejects `--mock`. See [DEVELOPMENT.md](../DEVELOPMENT.md).
 
 ## 9. Storage page (`share/storage.rs`, `tui/storage.rs`)
 

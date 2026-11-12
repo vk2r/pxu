@@ -696,12 +696,14 @@ impl World {
     // ---- servidores predefinidos (demo del binario `--mock` y tests que necesitan "un servidor poblado") ----
 
     pub fn preset_names() -> &'static [&'static str] {
-        &["demo", "update-ok", "update-fail", "distros", "cluster", "failures", "vms", "host"]
+        &["demo", "demo-scheduled", "update-ok", "update-fail", "distros", "cluster", "failures", "vms", "host"]
     }
 
     pub fn preset(name: &str) -> Option<World> {
         Some(match name {
             "demo" => World::demo(),
+            // demo con el timer diario instalado y activo (04:30): para las capturas de Config/Horario
+            "demo-scheduled" => World::demo().auto_tags(&["auto"]).timer(true, true, "*-*-* 04:30"),
             "host" => World::host_gpu(),
             "update-ok" => World::new()
                 .ct(Ct::new(401).tags("auto").std_updates().checked_minutes_ago(5))

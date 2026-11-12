@@ -11,7 +11,7 @@ Código: `src/tui/` — `app.rs` (estado y teclas), `views.rs` (dibujo), `logs.r
 ## 1. Principios
 
 1. **Tabla densa, no tarjetas.** Una fila por guest, estilo `htop`/`k9s`: estado → recursos → updates.
-2. **Reducer puro.** `App::on_key` (`app.rs:486`) no hace IO: devuelve una `Action` que ejecuta el bucle (`mod.rs`); `views::draw` solo dibuja. Por eso cada pantalla se prueba con `TestBackend` contra los snapshots (`PXU_UPDATE_SNAPSHOTS=1` los regenera).
+2. **Reducer puro.** `App::on_key` (`app.rs`) no hace IO: devuelve una `Action` que ejecuta el bucle (`mod.rs`); `views::draw` solo dibuja. Por eso cada pantalla se prueba con `TestBackend` contra los snapshots (`PXU_UPDATE_SNAPSHOTS=1` los regenera).
 3. **El color nunca es la única señal.** Estados en palabras (`run`, `stopped`), marcas en los pasos (`●` en curso, `✓` ok, `✗` fail, `»` skip, `·` pendiente), cursor con `>` además del video inverso. Funciona con `NO_COLOR`.
 4. **Teclado primero, ratón opcional.** Todo se hace con teclado; cada pantalla declara sus teclas en el pie. El ratón solo actúa en la vista de logs (§4.7).
 5. **Lo caro, bajo pedido.** La vista por defecto vive de archivos de `/etc/pve` y cgroups; el chequeo de paquetes solo corre con `c`/`C`.
@@ -21,9 +21,9 @@ Mínimo cómodo: 80×24; el pie (`keybar`) y las columnas se adaptan al ancho (�
 
 ## 2. Redibujo y muestreo
 
-El bucle (`mod.rs`, ~380-470) dibuja en cada iteración y luego espera eventos con `poll`:
+El bucle (`mod.rs`) dibuja en cada iteración y luego espera eventos con `poll`:
 
-- **Sin trabajo activo:** espera hasta la próxima muestra de CPU. La columna CPU se muestrea 1 s tras abrir y luego cada 3 s (`CPU_FIRST` / `CPU_EVERY`, `mod.rs:369-370`); lee `cpu.stat` de los LXC en marcha, sin recargar el inventario. Muestra `—` sin dato y en CT apagados.
+- **Sin trabajo activo:** espera hasta la próxima muestra de CPU. La columna CPU se muestrea 1 s tras abrir y luego cada 3 s (`CPU_FIRST` / `CPU_EVERY`, `mod.rs`); lee `cpu.stat` de los LXC en marcha, sin recargar el inventario. Muestra `—` sin dato y en CT apagados.
 - **Con un chequeo, una corrida o un comando en curso:** `poll` de como mucho 150 ms para atender teclas y mensajes de los workers.
 - El reloj del header (`HH:MM`) se actualiza en cada dibujo.
 - **Corrida de update:** el tiempo del paso en curso se actualiza cuando llega una línea de log o cambia el estado (pie: `step times update on log lines or state changes`); no hay spinner. Cada línea del log en vivo lleva su hora.
@@ -44,17 +44,17 @@ El bucle (`mod.rs`, ~380-470) dibuja en cada iteración y luego espera eventos c
 | negrita | títulos y encabezados |
 | video inverso | fila seleccionada |
 
-**Pie de teclas (`keybar`, `views.rs:61-81`).** Formato `[tecla] acción` separado por dos espacios. Las teclas van alineadas a la izquierda con huecos de 2 espacios, sin justificar. Todas las vistas (`keybar_wrap`) tratan sus teclas como una sola secuencia: en una fila si caben en el ancho (p. ej. a 230 columnas); si no, pasan a la fila siguiente llenando cada fila con todas las teclas que entren, sin cortar ninguna, con 2 filas como máximo (si aun así no caben, se descartan acciones enteras desde el final, conservando siempre las últimas `keep`, las de `?` y `q`). Cuando la lista necesita una sola fila, la fila sobrante pasa a la tabla. Todas las vistas con pie lo componen igual, de arriba abajo: una regla `─` de lado a lado, la línea de estado, otra regla `─` y las filas de teclas (una o dos filas de teclas, más la fila de nota en Config y detalle). La ayuda ocupa lo que haga falta. Las dos reglas restan 2 filas a la tabla; las filas visibles se calculan con el alto que queda. Header: título + badges (`[RO]`, `[MOCK]`) a la izquierda y reloj a la derecha (`badges`, `views.rs:134-143`). Tras el header, una línea de contexto (filtros, resumen) y una regla `─`.
+**Pie de teclas (`keybar`, `views.rs`).** Formato `[tecla] acción` separado por dos espacios. Las teclas van alineadas a la izquierda con huecos de 2 espacios, sin justificar. Todas las vistas (`keybar_wrap`) tratan sus teclas como una sola secuencia: en una fila si caben en el ancho (p. ej. a 230 columnas); si no, pasan a la fila siguiente llenando cada fila con todas las teclas que entren, sin cortar ninguna, con 2 filas como máximo (si aun así no caben, se descartan acciones enteras desde el final, conservando siempre las últimas `keep`, las de `?` y `q`). Cuando la lista necesita una sola fila, la fila sobrante pasa a la tabla. Todas las vistas con pie lo componen igual, de arriba abajo: una regla `─` de lado a lado, la línea de estado, otra regla `─` y las filas de teclas (una o dos filas de teclas, más la fila de nota en Config y detalle). La ayuda ocupa lo que haga falta. Las dos reglas restan 2 filas a la tabla; las filas visibles se calculan con el alto que queda. Header: título + badges (`[RO]`, `[MOCK]`) a la izquierda y reloj a la derecha (`badges`, `views.rs`). Tras el header, una línea de contexto (filtros, resumen) y una regla `─`.
 
 Formato de datos: updates `n/s` (total/seguridad), tamaños `x/y GB`, edad del índice `5h`, `32d*` (con `*` = stale), duraciones `0m00s` / `45m 11s`. Texto de UI en inglés, estados en minúscula (`run`, `stopped`, `ok`) y resultados cortos (`ok`, `warn`, `FAIL`, `skip`, `canceled`).
 
 ## 4. Mapa de teclas
 
-Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, backup, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
+Prioridad (`on_key`, `app.rs`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, backup, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
 
 `Ctrl-C` con una corrida de update activa abre el diálogo de cancelación (§7); sin corrida sale.
 
-### 4.1 Lista (`list_key`, `app.rs:1015-1064`)
+### 4.1 Lista (`list_key`, `app.rs`)
 
 | Tecla | Acción |
 |---|---|
@@ -78,15 +78,15 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | `l` | logs de las corridas |
 | `?` / `q` | ayuda / salir · `Esc` borra la búsqueda |
 
-### 4.2 Detalle (`detail_key`, `app.rs:1196-1223`)
+### 4.2 Detalle (`detail_key`, `app.rs`)
 
 `↑↓/jk` desplaza · `PgUp PgDn` 10 · `Home` arriba · `u` actualizar este guest · `r` recargar · `c` chequear · `a` auto-update · `b` backup · `g` Config · `S` horario · `?` ayuda · `Esc`/`Backspace` vuelve · `q` sale.
 
-### 4.3 Resultado del chequeo (`check_key`, `app.rs:1139-1172`)
+### 4.3 Resultado del chequeo (`check_key`, `app.rs`)
 
 `↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` detalle del CT · `c` re-chequear con refresco de índices · `C` (o `R`) chequeo solo lectura · `u` actualizar los CT con updates · `Esc`/`Backspace` vuelve (con un chequeo en curso, lo cancela) · `?` · `q`.
 
-### 4.4 Corrida de update (`update_key`, `app.rs:932-`)
+### 4.4 Corrida de update (`update_key`, `app.rs`)
 
 `x`, `q` o `Esc` con la corrida activa abren el diálogo de cancelación · `↑↓/jk` y `PgUp PgDn` recorren el log · `f` o `End` siguen el final · `Home` principio · `?` ayuda · `u` queda deshabilitado durante la corrida. Terminada la corrida: `Esc`/`Backspace` vuelve a la lista y `q` sale. No hay foco alterno ni `Tab`.
 
@@ -100,27 +100,27 @@ Prioridad (`on_key`, `app.rs:486-562`): `Ctrl-C` → modales (actualización, co
 | Backup (`b`) | `y`/`Enter` guardar · `Esc`/`n`/`q` cancelar |
 | Columnas (`o`) | `Space` mostrar/ocultar · `Enter` cerrar |
 | Cancelar corrida | `Enter` terminar el CT en curso y parar · `Esc` seguir |
-| Horario (`S`) | `Tab`/`↓` y `BackTab`/`↑` campo · `←/→/Space` cambiar · `Enter` validar · `Esc` cancelar; en la confirmación `y`/`Enter` guarda, `b`/`Backspace` vuelve a editar |
-| Apprise (`N`) | igual que Horario |
-| Retención (`L`) | dígitos (hasta 5) · `Backspace` · `Enter` guardar · `Esc` cancelar |
+| Horario (`S`; Config `s`) | `Tab`/`↓` y `BackTab`/`↑` campo · `←/→/Space` cambiar · `Enter` validar · `Esc` cancelar; en la confirmación `y`/`Enter` guarda, `b`/`Backspace` vuelve a editar |
+| Apprise (Config `n`) | igual que Horario |
+| Retención (Config `d`) | dígitos (hasta 5) · `Backspace` · `Enter` guardar · `Esc` cancelar |
 | Refresco (`C`) | `y` confirma; cualquier otra tecla cancela |
 | Ayuda (`?`) | cualquier tecla cierra; `q` sale |
 
-### 4.6 Config (`config_key`, `app.rs:682-696`)
+### 4.6 Config (`config_key`, `app.rs`)
 
 `s` horario · `n` notificaciones (Apprise) · `d` retención de logs (`S`/`N`/`L` también funcionan, ocultas) · `t` aviso de prueba · `l` logs · `r` releer · `?` · `Esc`/`Backspace` vuelve · `q` sale.
 
-### 4.7 Logs (`logs.rs:80-140`)
+### 4.7 Logs (`logs.rs`)
 
 Lista: `↑↓/jk` · `PgUp PgDn` (10) · `Home`/`g` primera · `End`/`G` última · `Enter` abrir · `Esc`/`Backspace`/`l` vuelve · `q` sale.
 Visor: `↑↓/jk` · `PgUp PgDn`/`Space` página · `g`/`G` principio/final · `n`/`p` siguiente/anterior log · `q`/`Esc`/`Backspace` vuelve a la lista.
-**Ratón** (solo en Logs; el bucle activa la captura al entrar y la desactiva al salir, `sync_mouse`, `mod.rs:317`): la rueda desplaza 3 líneas, un clic selecciona una fila y un doble clic (≤ 500 ms) la abre.
+**Ratón** (solo en Logs; el bucle activa la captura al entrar y la desactiva al salir, `sync_mouse`, `mod.rs`): la rueda desplaza 3 líneas, un clic selecciona una fila y un doble clic (≤ 500 ms) la abre.
 
 ## 5. Pantallas
 
 ### 5.1 Lista principal
 
-Cada columna mide lo que mide su contenido (como mínimo su cabecera), con huecos de 2 espacios, alineadas a la izquierda; el ancho sobrante no se reparte. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` y `AUTO` miden max(cabecera, valor más largo entre los guests actuales); `CPU` es fija (6, o 5 en estrecho) porque su valor cambia cada segundo y la tabla no debe saltar. `NAME` va primero con el ancho del nombre más largo y solo se recorta con `…` si no cabe ni sin `TAGS`; `TAGS` se lleva lo que quede hasta su texto más largo y, si le quedan menos de 6 columnas, se oculta (cabecera incluida) en vez de recortar `NAME`. Si todo cabe el resto de la línea queda vacío. La barra de selección cubre toda la fila. Columnas: `ID NAME STATE OS CPU RAM UPD BACKUP AUTO`, más `TYPE`, `DISK`, `TAGS` (oculta por defecto) y `GPU` según el ancho y la elección de `o` (`ID`, `NAME` y `STATE` siempre; la selección se guarda en `config.toml`). `BACKUP` es `yes` si pxu hace backup antes de actualizar ese CT (modo auto/snap/vzdump) y `-` si no (modo `none`, VMs y host); el modo exacto está en el detalle y en `b`. El pie de lista (`views.rs:446-451`) y la línea bajo la tabla (`▼ 21 below …`, resumen del guest seleccionado) cambian con la selección.
+Cada columna mide lo que mide su contenido (como mínimo su cabecera), con huecos de 2 espacios, alineadas a la izquierda; el ancho sobrante no se reparte. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` y `AUTO` miden max(cabecera, valor más largo entre los guests actuales); `CPU` es fija (6, o 5 en estrecho) porque su valor cambia cada segundo y la tabla no debe saltar. `NAME` va primero con el ancho del nombre más largo y solo se recorta con `…` si no cabe ni sin `TAGS`; `TAGS` se lleva lo que quede hasta su texto más largo y, si le quedan menos de 6 columnas, se oculta (cabecera incluida) en vez de recortar `NAME`. Si todo cabe el resto de la línea queda vacío. La barra de selección cubre toda la fila. Columnas: `ID NAME STATE OS CPU RAM UPD BACKUP AUTO`, más `TYPE`, `DISK`, `TAGS` (oculta por defecto) y `GPU` según el ancho y la elección de `o` (`ID`, `NAME` y `STATE` siempre; la selección se guarda en `config.toml`). `BACKUP` es `yes` si pxu hace backup antes de actualizar ese CT (modo auto/snap/vzdump) y `-` si no (modo `none`, VMs y host); el modo exacto está en el detalle y en `b`. El pie de lista (`views.rs`) y la línea bajo la tabla (`▼ 21 below …`, resumen del guest seleccionado) cambian con la selección.
 
 ```
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
@@ -253,7 +253,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 [r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
-**Ayuda (`?`).** Texto de `draw_help` (`views.rs:1040-1085`), propio de cada vista:
+**Ayuda (`?`).** Texto de `draw_help` (`views.rs`), propio de cada vista:
 
 ```
 px┌ help · any key closes ───────────────────────────────────────────────────┐16
@@ -508,13 +508,13 @@ The confirmation (`Enter` in the window above) shows one block per state, one fi
 ┌ Save the notifications? ────────────────────────────────────────────────────┐
 │                                                                             │
 │ today                                                                       │
-│   api_url   http://192.168.1.28:8000                                        │
+│   api_url   http://apprise.example:8000                                        │
 │   urls      ••• (encrypted)                                                 │
 │   tag       system                                                          │
 │   on        update_failed, run_summary                                      │
 │                                                                             │
 │ new                                                                         │
-│   api_url   http://192.168.1.28:8000                                        │
+│   api_url   http://apprise.example:8000                                        │
 │   api_key   ••• (encrypted)                                                 │
 │   tag       system                                                          │
 │   on        update_failed, run_summary                                      │

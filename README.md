@@ -8,11 +8,13 @@ pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which
 
 ![Update run result](screenshots/05-update.png)
 
-![Storage page: space per storage and per container, with alerts](screenshots/06-storage.png)
-
 You use it from a terminal screen (the "TUI"). It leaves nothing running in the background.
 
 > Version 0.1, in development. Tested on Proxmox VE 9.2.
+
+## Contents
+
+[Requirements](#requirements) · [Install](#install-pxu) · [Try it read-only](#try-pxu-in-read-only-mode) · [Choose containers](#choose-which-containers-to-update) · [Safety and rollback](#safety-and-rollback) · [Automatic updates](#enable-automatic-updates) · [Notifications](#set-up-notifications) · [Proxmox host and NVIDIA](#proxmox-host-and-nvidia-driver-optional) · [Uninstall](#uninstall) · [Common problems](#common-problems) · [More documentation](#more-documentation)
 
 ## Requirements
 
@@ -47,8 +49,6 @@ Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then
 `--timer` enables the daily run. Without it, only the program is installed.
 The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat these three steps.
 
-Paths: program `/usr/local/bin/pxu`; configuration `/etc/pxu/config.toml` (you create it); logs `/var/log/pxu/`. The installer creates `/etc/pxu`, `/var/lib/pxu` and `/var/log/pxu` with mode `0700`.
-
 ## Try pxu in read-only mode
 
 On the server, as root:
@@ -58,7 +58,9 @@ pxu
 ```
 
 Without a configuration file, pxu is **read-only**: you can see your containers and check for updates, but nothing is updated.
-Use `↑↓` to move, `c` to check, `a` to mark a container, `u` to update and `q` to quit. Press `?` for all keys.
+Use `↑↓` to move, `c` to check, `a` to mark a container, `u` to update and `q` to quit. Press `?` for all keys. Press `d` for the Storage page (space per storage and container, with alerts).
+
+![Storage page: space per storage and per container, with alerts](screenshots/06-storage.png)
 
 ## Choose which containers to update
 
@@ -74,28 +76,40 @@ Only containers you checked less than an hour ago are updated.
 
 For each container, one at a time: temporary backup → dry run → update → verification.
 
-- The backup is a snapshot if the storage allows it, otherwise a vzdump copy.
-- If the update or the verification fails, pxu restores the container, starts it and deletes the backup.
+- If the update or the verification fails, pxu restores the container to its previous state and deletes the backup.
 - If the restore fails or the update runs over its time limit, **the backup is kept**, the run stops, and the log and the notification show the command to restore by hand.
+- If there is no room for the backup, that container is not touched.
 - **The backup covers only the container's main disk.** Disks mounted from outside (`/mnt/pve/...`) are not included.
+- You can turn the backup off for a container with `b` (then there is no automatic rollback either).
 
 ## Enable automatic updates
 
 With `--timer` at install time, pxu checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked as above. Stopped containers are skipped by default.
 
-To change the time or turn it off, press `S` in the list or in Config (`g`).
+Press `g` for the **Config** screen. There, `s` changes the time or turns the daily run off, and `d` sets how many days of logs are kept (30 by default).
 
-Each run writes one log in `/var/log/pxu/`; open it with `l`. Logs are deleted after 30 days (change with `d` in Config; `0` keeps them forever).
+![Config screen: schedule, log retention and notifications](screenshots/08-config.png)
+
+![Schedule dialog](screenshots/11-schedule.png)
+
+Each run writes one log; open it with `l`.
 
 ## Set up notifications
 
-Each run ends with **a single notification**: a table with the server first and then each container.
+Each run ends with **a single notification**: a table with the server first and then each container. If it cannot be sent, pxu retries it later by itself.
 
 1. In Config (`g`), press `n`.
-2. Type the address of your Apprise API and the key, then confirm.
-3. Press `t` to send a test notification.
+2. Type the address of your Apprise API, then either the API key or the destination URLs, and (optional) a tag and the events you want to be told about.
+3. Review the summary and confirm. Keys are never shown on screen and are saved encrypted.
+4. Press `t` to send a test notification.
 
-Keys are never shown on screen.
+![Notifications dialog](screenshots/09-notifications.png)
+
+![Confirmation before saving](screenshots/10-notifications-confirm.png)
+
+## Proxmox host and NVIDIA driver (optional)
+
+pxu can also update the Proxmox host itself (select the host row and press `u`, or run `pxu update --host`) and the NVIDIA driver. Both are **off** unless you ask for them: in the `a` window of the host row or of a container with a GPU you will find «Include GPU driver update», and `host_auto` in the configuration includes the host in the daily run. pxu never reboots the server. Details: [ARCHITECTURE](docs/ARCHITECTURE.md) §3.6–3.7.
 
 ## Uninstall
 
@@ -103,23 +117,24 @@ On the server, as root:
 
 ```sh
 ./install.sh --uninstall           # removes the program and the daily run; keeps configuration and logs
-./install.sh --uninstall --purge   # also deletes /etc/pxu, /var/lib/pxu and /var/log/pxu
+./install.sh --uninstall --purge   # also deletes your configuration, state and logs
 ```
 
 ## Common problems
 
 - **"must be run as root"** during install: run `install.sh` as root on the server.
 - **"this machine does not look like Proxmox"** during install: run it on the Proxmox server, or use `--force`, which skips that check.
-- **The TUI won't let you update and says "read-only"**: `/etc/pxu/config.toml` is missing or has errors. Mark a container with `a`, or check the file with `pxu config check`. The file must be owned by root with `0600` permissions.
+- **The TUI won't let you update and says "read-only"**: `/etc/pxu/config.toml` is missing or has errors. Mark a container with `a`, or check the file with `pxu config check`.
 - **A container doesn't update**: it must be marked with `a` (or have a tag listed in `auto_update_tags`), and you must have checked it with `c` less than an hour ago.
-- **Notifications don't arrive**: test with `t` in Config. Check the address of your Apprise API.
-- **The Logs list is empty**: there hasn't been a run with this version yet. Old logs are still in `/var/log/pxu` but don't appear in the list.
+- **Notifications don't arrive**: test with `t` in Config and check the address of your Apprise API. If you set a tag, the destinations in Apprise need the same tag.
+- **`pxu config check` says a secret is "stored in plain text"**: open Config → `n` and save, or run `pxu config encrypt-secrets` as root.
+- **The Logs list is empty**: there hasn't been a run with this version yet.
 - **A log says `⛔ INCOMPLETE`**: the run was cut off (or is still in progress). The details are in the log itself.
 
 ## More documentation
 
-- [development.md](development.md): build, test and contribute.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how pxu works, configuration, command line, logs.
+- [DEVELOPMENT.md](DEVELOPMENT.md): build, test, screenshots and contribute.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how pxu works, installer, configuration, command line, logs.
 - [docs/DESIGN.md](docs/DESIGN.md): the TUI, screen by screen, with all keys.
 - [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md): security review.
 

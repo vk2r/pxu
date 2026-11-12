@@ -4,7 +4,7 @@ English | [Español](SECURITY-REVIEW.es.md)
 
 Security status of the current code: attack surface, threat model and findings with their status. Each status has been checked against the code (file:line or test name). Architecture references are in [ARCHITECTURE.md](ARCHITECTURE.md) and interface references in [DESIGN.md](DESIGN.md).
 
-Revision: committed on 2026-11-09 (`f726c66`, initial commit). The date and commit of the original review were not recorded because the git history was flattened; the statuses below were not re-checked against this commit when the documentation was reorganized.
+Revision: committed on 2026-11-09 (`f726c66`, initial commit). The date and commit of the original review were not recorded because the git history was flattened; the statuses below were not re-checked against this commit when the documentation was reorganized. Update 2026-11-12: the Apprise secrets are now stored encrypted (rows below and [ARCHITECTURE §4.6](ARCHITECTURE.md)); this was not part of the original review, and the `file:line` references of the findings may have drifted.
 
 Statuses: **fixed** (the cause no longer exists), **mitigated** (the risk is reduced but a described residue remains), **accepted** (a conscious decision), **open** (not fixed).
 
@@ -23,13 +23,13 @@ Statuses: **fixed** (the cause no longer exists), **mitigated** (the risk is red
 | CT update | Backup (snapshot/vzdump), upgrade, verification and rollback | Explicit opt-in (`UpdateOptIn`, RAII) and writes bound to the CT in progress (`readonly.rs:120`) |
 | Proxmox host update | Host `apt-get full-upgrade`, copy of `/etc` to `/var/backups/pxu` and ZFS snapshot if the root is ZFS; does not reboot | Its own opt-in (`HostUpdateOptIn`), separate from the CT one; exact allowlist (`hostupdate.rs:74`, `:85`); by hand it requires a TTY, unattended only with `[update] host_auto = true` |
 | NVIDIA driver | Downloads the `.run` from `download.nvidia.com`, checks its `sha256`, installs it on the host and puts the libraries into the CTs with `nvidia_auto` | Opt-ins `host_nvidia_auto` / `nvidia_auto` (off by default); a grant (`nvidia::Grant`) with a specific version, kernel and vmid; only upgrades within the same major branch; curl with `--proto =https` (`nvidia.rs:30`) |
-| Notifications | `curl --config -` (Apprise API) or the `apprise` CLI | Configuration and secrets via stdin, never in argv; fixed `proto` and `max-filesize` (`notify.rs:163`) |
+| Notifications | `curl --config -` (Apprise API) or the `apprise` CLI | Configuration and secrets via stdin, never in argv; fixed `proto` and `max-filesize` (`notify.rs:163`). `api_key` / `urls` are stored encrypted (`systemd-creds`, `api_key_enc` / `urls_enc`) and decrypted only right before sending; if it cannot be decrypted it fails, never falls back to plain text. Root on the same host can still decrypt (ARCHITECTURE §4.6) |
 | Own state | `/var/lib/pxu`, `/var/log/pxu` (run logs), `/etc/pxu/config.toml` (from the TUI), timer drop-in | `own_state_path` (`readonly.rs:149`), atomic write with `O_EXCL\|O_NOFOLLOW` (`real.rs:158`), `write_config` and `apply_schedule` only with their opt-in |
 
 **Trust boundaries.**
 
 - **CT → host.** All CT output is untrusted data: it is sanitized with `fmt::clean` before being displayed, logged or sent (H1).
-- **Config and registry → actions.** `/etc/pxu/config.toml` decides what gets updated and holds secrets: root and `0600` or it is not used (`config.rs:296`). `/var/lib/pxu/backups.json` decides which backups belong to `pxu` and is validated on load (M4).
+- **Config and registry → actions.** `/etc/pxu/config.toml` decides what gets updated and holds the Apprise secrets (encrypted when saved from the TUI; old plain-text ones keep working and `config check` flags them): root and `0600` or it is not used (`config.rs:296`). `/var/lib/pxu/backups.json` decides which backups belong to `pxu` and is validated on load (M4).
 - **Unprivileged local users.** They can only affect the locks in `/run/lock` (L3). There is no data path from them into root commands.
 - **Network.** Only `curl` calls to the configured Apprise API and the NVIDIA downloads go out, and the latter only happen with opt-in.
 

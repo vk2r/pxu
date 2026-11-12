@@ -8,11 +8,13 @@ pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué
 
 ![Resultado de una actualización](screenshots/05-update.png)
 
-![Página Storage: espacio por storage y por contenedor, con alertas](screenshots/06-storage.png)
-
 Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en segundo plano.
 
 > Versión 0.1, en desarrollo. Probado en Proxmox VE 9.2.
+
+## Contenido
+
+[Requisitos](#requisitos) · [Instalar](#instalar-pxu) · [Probar en solo lectura](#probar-pxu-en-modo-solo-lectura) · [Elegir contenedores](#elegir-qué-contenedores-actualizar) · [Seguridad y vuelta atrás](#seguridad-y-vuelta-atrás) · [Actualizaciones automáticas](#activar-las-actualizaciones-automáticas) · [Avisos](#configurar-los-avisos) · [Host Proxmox y NVIDIA](#host-proxmox-y-driver-nvidia-opcional) · [Desinstalar](#desinstalar) · [Problemas comunes](#problemas-comunes) · [Más documentación](#más-documentación)
 
 ## Requisitos
 
@@ -47,8 +49,6 @@ Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e inst�
 `--timer` activa la corrida diaria. Sin él, se instala solo el programa.
 El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite estos tres pasos.
 
-Rutas: programa `/usr/local/bin/pxu`; configuración `/etc/pxu/config.toml` (la creas tú); logs `/var/log/pxu/`. El instalador crea `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu` con modo `0700`.
-
 ## Probar pxu en modo solo lectura
 
 En el servidor, como root:
@@ -58,7 +58,9 @@ pxu
 ```
 
 Sin archivo de configuración, pxu está en **solo lectura**: puedes ver tus contenedores y comprobar actualizaciones, pero no actualiza nada.
-Usa `↑↓` para moverte, `c` para comprobar, `a` para marcar un contenedor, `u` para actualizar y `q` para salir. Pulsa `?` para ver todas las teclas.
+Usa `↑↓` para moverte, `c` para comprobar, `a` para marcar un contenedor, `u` para actualizar y `q` para salir. Pulsa `?` para ver todas las teclas. Con `d` abres la página Storage (espacio por storage y por contenedor, con alertas).
+
+![Página Storage: espacio por storage y por contenedor, con alertas](screenshots/06-storage.png)
 
 ## Elegir qué contenedores actualizar
 
@@ -74,28 +76,40 @@ Solo se actualizan los contenedores que comprobaste hace menos de una hora.
 
 Con cada contenedor, de uno en uno: copia temporal → simulación → actualización → verificación.
 
-- La copia es una instantánea si el almacenamiento lo permite; si no, una copia con vzdump.
-- Si la actualización o la verificación fallan, pxu restaura el contenedor, lo enciende y borra la copia.
+- Si la actualización o la verificación fallan, pxu devuelve el contenedor a su estado anterior y borra la copia.
 - Si la restauración falla o la actualización se pasa de tiempo, **la copia se conserva**, la corrida se detiene y el log y el aviso muestran el comando para restaurar a mano.
+- Si no hay espacio para la copia, ese contenedor no se toca.
 - **La copia cubre solo el disco principal del contenedor.** Los discos montados desde fuera (`/mnt/pve/...`) no entran.
+- Puedes desactivar la copia de un contenedor con `b` (entonces tampoco hay vuelta atrás automática).
 
 ## Activar las actualizaciones automáticas
 
 Con `--timer` en la instalación, pxu comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados como arriba. Los contenedores apagados se omiten por defecto.
 
-Para cambiar la hora o desactivarla, pulsa `S` en la lista o en Config (`g`).
+Pulsa `g` para abrir la pantalla **Config**. Ahí, `s` cambia la hora o desactiva la corrida diaria, y `d` define cuántos días se guardan los logs (30 por defecto).
 
-Cada corrida deja un log en `/var/log/pxu/`; ábrelo con `l`. Los logs se borran pasados 30 días (cámbialo con `d` en Config; `0` los conserva siempre).
+![Pantalla Config: horario, logs y avisos](screenshots/08-config.png)
+
+![Ventana del horario](screenshots/11-schedule.png)
+
+Cada corrida deja un log; ábrelo con `l`.
 
 ## Configurar los avisos
 
-Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor.
+Cada corrida termina con **un solo aviso**: una tabla con el servidor primero y luego cada contenedor. Si no se puede enviar, pxu lo reintenta después por sí solo.
 
 1. En Config (`g`), pulsa `n`.
-2. Escribe la dirección de tu Apprise API y la clave, y confirma.
-3. Pulsa `t` para enviar un aviso de prueba.
+2. Escribe la dirección de tu Apprise API, luego la clave o las URL de destino, y (opcional) una etiqueta y los eventos de los que quieres enterarte.
+3. Revisa el resumen y confirma. Las claves nunca se muestran en pantalla y se guardan cifradas.
+4. Pulsa `t` para enviar un aviso de prueba.
 
-Las claves nunca se muestran en pantalla.
+![Ventana de avisos](screenshots/09-notifications.png)
+
+![Confirmación antes de guardar](screenshots/10-notifications-confirm.png)
+
+## Host Proxmox y driver NVIDIA (opcional)
+
+pxu también puede actualizar el propio host Proxmox (selecciona la fila del host y pulsa `u`, o ejecuta `pxu update --host`) y el driver NVIDIA. Ambos están **desactivados** salvo que lo pidas: en la ventana `a` de la fila del host o de un contenedor con GPU está «Include GPU driver update», y `host_auto` en la configuración incluye el host en la corrida diaria. pxu nunca reinicia el servidor. Detalles: [ARCHITECTURE](docs/ARCHITECTURE.es.md) §3.6–3.7.
 
 ## Desinstalar
 
@@ -103,23 +117,24 @@ En el servidor, como root:
 
 ```sh
 ./install.sh --uninstall           # quita el programa y la corrida diaria; conserva configuración y logs
-./install.sh --uninstall --purge   # además borra /etc/pxu, /var/lib/pxu y /var/log/pxu
+./install.sh --uninstall --purge   # además borra tu configuración, el estado y los logs
 ```
 
 ## Problemas comunes
 
 - **"must be run as root"** («hay que ejecutarlo como root») al instalar: ejecuta `install.sh` como root en el servidor.
 - **"this machine does not look like Proxmox"** («este equipo no parece Proxmox») al instalar: ejecútalo en el servidor Proxmox, o usa `--force`, que se salta esa comprobación.
-- **La TUI no deja actualizar y dice «read-only»** (solo lectura): falta `/etc/pxu/config.toml` o tiene errores. Marca un contenedor con `a`, o revisa el archivo con `pxu config check`. El archivo debe ser de root y con permisos `0600`.
+- **La TUI no deja actualizar y dice «read-only»** (solo lectura): falta `/etc/pxu/config.toml` o tiene errores. Marca un contenedor con `a`, o revisa el archivo con `pxu config check`.
 - **Un contenedor no se actualiza**: tiene que estar marcado con `a` (o tener una etiqueta listada en `auto_update_tags`), y haberlo comprobado con `c` hace menos de una hora.
-- **No llegan avisos**: prueba con `t` en Config. Revisa la dirección de tu Apprise API.
-- **La lista de Logs está vacía**: aún no hubo ninguna corrida con esta versión. Los logs antiguos siguen en `/var/log/pxu` pero no aparecen en la lista.
+- **No llegan avisos**: prueba con `t` en Config y revisa la dirección de tu Apprise API. Si pusiste una etiqueta, los destinos en Apprise necesitan esa misma etiqueta.
+- **`pxu config check` dice que un secreto está «stored in plain text»**: abre Config → `n` y guarda, o ejecuta `pxu config encrypt-secrets` como root.
+- **La lista de Logs está vacía**: aún no hubo ninguna corrida con esta versión.
 - **Un log dice `⛔ INCOMPLETE`**: la corrida se cortó (o sigue en marcha). El detalle está en el propio log.
 
 ## Más documentación
 
-- [development.es.md](development.es.md): compilar, probar y contribuir.
-- [docs/ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona pxu, configuración, línea de comandos, logs.
+- [DEVELOPMENT.es.md](DEVELOPMENT.es.md): compilar, probar, capturas y contribuir.
+- [docs/ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona pxu, instalador, configuración, línea de comandos, logs.
 - [docs/DESIGN.es.md](docs/DESIGN.es.md): la TUI, pantalla por pantalla, con todas las teclas.
 - [docs/SECURITY-REVIEW.es.md](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
 

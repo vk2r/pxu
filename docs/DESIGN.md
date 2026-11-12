@@ -11,7 +11,7 @@ Code: `src/tui/` — `app.rs` (state and keys), `views.rs` (drawing), `logs.rs` 
 ## 1. Principles
 
 1. **Dense table, not cards.** One row per guest, `htop`/`k9s` style: state → resources → updates.
-2. **Pure reducer.** `App::on_key` (`app.rs:486`) does no IO: it returns an `Action` that the loop executes (`mod.rs`); `views::draw` only draws. That is why every screen is tested with `TestBackend` against the snapshots (`PXU_UPDATE_SNAPSHOTS=1` regenerates them).
+2. **Pure reducer.** `App::on_key` (`app.rs`) does no IO: it returns an `Action` that the loop executes (`mod.rs`); `views::draw` only draws. That is why every screen is tested with `TestBackend` against the snapshots (`PXU_UPDATE_SNAPSHOTS=1` regenerates them).
 3. **Color is never the only signal.** States in words (`run`, `stopped`), step marks (`●` in progress, `✓` ok, `✗` fail, `»` skip, `·` pending), cursor with `>` in addition to reverse video. Works with `NO_COLOR`.
 4. **Keyboard first, mouse optional.** Everything is done with the keyboard; each screen declares its keys in the footer. The mouse only acts in the logs view (§4.7).
 5. **Expensive things on demand.** The default view lives off files in `/etc/pve` and cgroups; the package check only runs with `c`/`C`.
@@ -21,9 +21,9 @@ Comfortable minimum: 80×24; the footer (`keybar`) and the columns adapt to the 
 
 ## 2. Redraw and sampling
 
-The loop (`mod.rs`, ~380-470) draws on every iteration and then waits for events with `poll`:
+The loop (`mod.rs`) draws on every iteration and then waits for events with `poll`:
 
-- **No active work:** it waits until the next CPU sample. The CPU column is sampled 1 s after opening and then every 3 s (`CPU_FIRST` / `CPU_EVERY`, `mod.rs:369-370`); it reads `cpu.stat` of the running LXCs, without reloading the inventory. It shows `—` when there is no data and for stopped CTs.
+- **No active work:** it waits until the next CPU sample. The CPU column is sampled 1 s after opening and then every 3 s (`CPU_FIRST` / `CPU_EVERY`, `mod.rs`); it reads `cpu.stat` of the running LXCs, without reloading the inventory. It shows `—` when there is no data and for stopped CTs.
 - **With a check, a run or a command in progress:** `poll` of at most 150 ms to handle keys and messages from the workers.
 - The header clock (`HH:MM`) is updated on every draw.
 - **Update run:** the time of the step in progress is updated when a log line arrives or the state changes (footer: `step times update on log lines or state changes`); there is no spinner. Each line of the live log carries its time.
@@ -44,17 +44,17 @@ The loop (`mod.rs`, ~380-470) draws on every iteration and then waits for events
 | bold | titles and headings |
 | reverse video | selected row |
 
-**Key footer (`keybar`, `views.rs:61-81`).** Format `[key] action` separated by two spaces. Keys are left-aligned with 2-space gaps, never justified. All views (`keybar_wrap`) treat their keys as one sequence: on one row if they fit the width, otherwise on the next row, filling each row with every key that fits and never cutting one, with 2 rows at most (if they still do not fit, whole actions are dropped from the end, always keeping the last `keep` ones, those of `?` and `q`). When the list needs only one row, the spare row goes to the table. All views with a footer compose it the same way, from top to bottom: a full-width `─` rule, the status line, another `─` rule and the key rows (one or two key rows, plus the note row in Config and detail). Help takes whatever it needs. The two rules take 2 rows from the table; the visible rows are computed from the remaining height. Header: title + badges (`[RO]`, `[MOCK]`) on the left and clock on the right (`badges`, `views.rs:134-143`). After the header, a context line (filters, summary) and a `─` rule.
+**Key footer (`keybar`, `views.rs`).** Format `[key] action` separated by two spaces. Keys are left-aligned with 2-space gaps, never justified. All views (`keybar_wrap`) treat their keys as one sequence: on one row if they fit the width, otherwise on the next row, filling each row with every key that fits and never cutting one, with 2 rows at most (if they still do not fit, whole actions are dropped from the end, always keeping the last `keep` ones, those of `?` and `q`). When the list needs only one row, the spare row goes to the table. All views with a footer compose it the same way, from top to bottom: a full-width `─` rule, the status line, another `─` rule and the key rows (one or two key rows, plus the note row in Config and detail). Help takes whatever it needs. The two rules take 2 rows from the table; the visible rows are computed from the remaining height. Header: title + badges (`[RO]`, `[MOCK]`) on the left and clock on the right (`badges`, `views.rs`). After the header, a context line (filters, summary) and a `─` rule.
 
 Data format: updates `n/s` (total/security), sizes `x/y GB`, index age `5h`, `32d*` (with `*` = stale), durations `0m00s` / `45m 11s`. UI text in English, states in lowercase (`run`, `stopped`, `ok`) and short results (`ok`, `warn`, `FAIL`, `skip`, `canceled`).
 
 ## 4. Key map
 
-Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, backup, schedule, Apprise, retention) → help `?` → search → view key. A modal captures all keys.
+Priority (`on_key`, `app.rs`): `Ctrl-C` → modals (update, columns, host, NVIDIA, auto-update, backup, schedule, Apprise, retention) → help `?` → search → view key. A modal captures all keys.
 
 `Ctrl-C` with an active update run opens the cancel dialog (§7); without a run it exits.
 
-### 4.1 List (`list_key`, `app.rs:1015-1064`)
+### 4.1 List (`list_key`, `app.rs`)
 
 | Key | Action |
 |---|---|
@@ -78,15 +78,15 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | `l` | run logs |
 | `?` / `q` | help / quit · `Esc` clears the search |
 
-### 4.2 Detail (`detail_key`, `app.rs:1196-1223`)
+### 4.2 Detail (`detail_key`, `app.rs`)
 
 `↑↓/jk` scroll · `PgUp PgDn` 10 · `Home` top · `u` update this guest · `r` reload · `c` check · `a` auto-update · `b` backup · `g` Config · `S` schedule · `?` help · `Esc`/`Backspace` back · `q` quit.
 
-### 4.3 Check result (`check_key`, `app.rs:1139-1172`)
+### 4.3 Check result (`check_key`, `app.rs`)
 
 `↑↓/jk` · `PgUp PgDn` · `Home End` · `Enter` CT detail · `c` re-check with index refresh · `C` (or `R`) read-only check · `u` update the CTs with updates · `Esc`/`Backspace` back (with a check in progress, it cancels it) · `?` · `q`.
 
-### 4.4 Update run (`update_key`, `app.rs:932-`)
+### 4.4 Update run (`update_key`, `app.rs`)
 
 `x`, `q` or `Esc` with the run active open the cancel dialog · `↑↓/jk` and `PgUp PgDn` scroll the log · `f` or `End` follow the end · `Home` start · `?` help · `u` is disabled during the run. When the run is finished: `Esc`/`Backspace` goes back to the list and `q` quits. There is no alternate focus or `Tab`.
 
@@ -100,27 +100,27 @@ Priority (`on_key`, `app.rs:486-562`): `Ctrl-C` → modals (update, columns, hos
 | Backup (`b`) | `y`/`Enter` save · `Esc`/`n`/`q` cancel |
 | Columns (`o`) | `Space` show/hide · `Enter` close |
 | Cancel run | `Enter` finish the CT in progress and stop · `Esc` continue |
-| Schedule (`S`) | `Tab`/`↓` and `BackTab`/`↑` field · `←/→/Space` change · `Enter` validate · `Esc` cancel; on the confirmation `y`/`Enter` saves, `b`/`Backspace` goes back to editing |
-| Apprise (`N`) | same as Schedule |
-| Retention (`L`) | digits (up to 5) · `Backspace` · `Enter` save · `Esc` cancel |
+| Schedule (`S`; Config `s`) | `Tab`/`↓` and `BackTab`/`↑` field · `←/→/Space` change · `Enter` validate · `Esc` cancel; on the confirmation `y`/`Enter` saves, `b`/`Backspace` goes back to editing |
+| Apprise (Config `n`) | same as Schedule |
+| Retention (Config `d`) | digits (up to 5) · `Backspace` · `Enter` save · `Esc` cancel |
 | Refresh (`C`) | `y` confirms; any other key cancels |
 | Help (`?`) | any key closes; `q` quits |
 
-### 4.6 Config (`config_key`, `app.rs:682-696`)
+### 4.6 Config (`config_key`, `app.rs`)
 
 `s` schedule · `n` notifications (Apprise) · `d` log retention (`S`/`N`/`L` also work, hidden) · `t` test notification · `l` logs · `r` re-read · `?` · `Esc`/`Backspace` back · `q` quit.
 
-### 4.7 Logs (`logs.rs:80-140`)
+### 4.7 Logs (`logs.rs`)
 
 List: `↑↓/jk` · `PgUp PgDn` (10) · `Home`/`g` first · `End`/`G` last · `Enter` open · `Esc`/`Backspace`/`l` back · `q` quit.
 Viewer: `↑↓/jk` · `PgUp PgDn`/`Space` page · `g`/`G` start/end · `n`/`p` next/previous log · `q`/`Esc`/`Backspace` back to the list.
-**Mouse** (only in Logs; the loop enables capture on entering and disables it on leaving, `sync_mouse`, `mod.rs:317`): the wheel scrolls 3 lines, a click selects a row and a double click (≤ 500 ms) opens it.
+**Mouse** (only in Logs; the loop enables capture on entering and disables it on leaving, `sync_mouse`, `mod.rs`): the wheel scrolls 3 lines, a click selects a row and a double click (≤ 500 ms) opens it.
 
 ## 5. Screens
 
 ### 5.1 Main list
 
-Every column is as wide as its content (at least its header), with 2-space gaps, left-aligned; spare width is never spread. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` and `AUTO` measure max(header, longest value among the current guests); `CPU` is fixed (6, or 5 when narrow) because its value changes every second and the table must not jump. `NAME` comes first at the width of the longest name and is only cut with `…` if it does not fit even without `TAGS`; `TAGS` takes what is left up to its longest text, and when less than 6 columns are left it is hidden (header included) instead of cutting `NAME`. If everything fits the rest of the line stays empty. The selection bar spans the whole row. Columns: `ID NAME STATE OS CPU RAM UPD BACKUP AUTO`, plus `TYPE`, `DISK`, `TAGS` and `GPU` (`TAGS` hidden by default) depending on the width and the choice made with `o` (`ID`, `NAME` and `STATE` always; the selection is saved in `config.toml`). `BACKUP` is `yes` if pxu makes a backup before updating that CT (mode auto/snap/vzdump) and `-` if not (mode `none`, VMs and the host); the exact mode is in the detail and in `b`. The list footer (`views.rs:446-451`) and the line under the table (`▼ 21 below …`, summary of the selected guest) change with the selection.
+Every column is as wide as its content (at least its header), with 2-space gaps, left-aligned; spare width is never spread. `ID`, `TYPE`, `STATE`, `OS`, `RAM`, `DISK`, `GPU`, `UPD` and `AUTO` measure max(header, longest value among the current guests); `CPU` is fixed (6, or 5 when narrow) because its value changes every second and the table must not jump. `NAME` comes first at the width of the longest name and is only cut with `…` if it does not fit even without `TAGS`; `TAGS` takes what is left up to its longest text, and when less than 6 columns are left it is hidden (header included) instead of cutting `NAME`. If everything fits the rest of the line stays empty. The selection bar spans the whole row. Columns: `ID NAME STATE OS CPU RAM UPD BACKUP AUTO`, plus `TYPE`, `DISK`, `TAGS` and `GPU` (`TAGS` hidden by default) depending on the width and the choice made with `o` (`ID`, `NAME` and `STATE` always; the selection is saved in `config.toml`). `BACKUP` is `yes` if pxu makes a backup before updating that CT (mode auto/snap/vzdump) and `-` if not (mode `none`, VMs and the host); the exact mode is in the detail and in `b`. The list footer (`views.rs`) and the line under the table (`▼ 21 below …`, summary of the selected guest) change with the selection.
 
 ```
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
@@ -253,7 +253,7 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 [r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
 ```
 
-**Help (`?`).** Text of `draw_help` (`views.rs:1040-1085`), specific to each view:
+**Help (`?`).** Text of `draw_help` (`views.rs`), specific to each view:
 
 ```
 px┌ help · any key closes ───────────────────────────────────────────────────┐16
@@ -508,13 +508,13 @@ The confirmation (`Enter` in the window above) shows one block per state, one fi
 ┌ Save the notifications? ────────────────────────────────────────────────────┐
 │                                                                             │
 │ today                                                                       │
-│   api_url   http://192.168.1.28:8000                                        │
+│   api_url   http://apprise.example:8000                                        │
 │   urls      ••• (encrypted)                                                 │
 │   tag       system                                                          │
 │   on        update_failed, run_summary                                      │
 │                                                                             │
 │ new                                                                         │
-│   api_url   http://192.168.1.28:8000                                        │
+│   api_url   http://apprise.example:8000                                        │
 │   api_key   ••• (encrypted)                                                 │
 │   tag       system                                                          │
 │   on        update_failed, run_summary                                      │

@@ -4,7 +4,7 @@
 
 Estado de seguridad del código actual: superficie, modelo de amenazas y hallazgos con su estado. Cada estado está comprobado contra el código (archivo:línea o nombre del test). Las referencias de arquitectura están en [ARCHITECTURE.es.md](ARCHITECTURE.es.md) y las de interfaz en [DESIGN.es.md](DESIGN.es.md).
 
-Revisión: confirmada el 2026-11-09 (`f726c66`, commit inicial). La fecha y el commit de la revisión original no quedaron registrados porque se aplanó el historial de git; los estados de abajo no se volvieron a comprobar contra este commit al reorganizar la documentación.
+Revisión: confirmada el 2026-11-09 (`f726c66`, commit inicial). La fecha y el commit de la revisión original no quedaron registrados porque se aplanó el historial de git; los estados de abajo no se volvieron a comprobar contra este commit al reorganizar la documentación. Actualización 2026-11-12: los secretos de Apprise ahora se guardan cifrados (filas de abajo y [ARCHITECTURE §4.6](ARCHITECTURE.es.md)); no formaba parte de la revisión original y las referencias `archivo:línea` de los hallazgos pueden haberse movido.
 
 Estados: **corregido** (la causa ya no existe), **mitigado** (el riesgo se reduce pero queda un residuo descrito), **aceptado** (decisión consciente), **abierto** (sin corregir).
 
@@ -23,13 +23,13 @@ Estados: **corregido** (la causa ya no existe), **mitigado** (el riesgo se reduc
 | Update de CT | Backup (snapshot/vzdump), upgrade, verificación y rollback | Opt-in explícito (`UpdateOptIn`, RAII) y escrituras atadas al CT en curso (`readonly.rs:120`) |
 | Update del host Proxmox | `apt-get full-upgrade` del host, copia de `/etc` a `/var/backups/pxu` y snapshot ZFS si la raíz es ZFS; no reinicia | Opt-in propio (`HostUpdateOptIn`) separado del de los CT; lista blanca exacta (`hostupdate.rs:74`, `:85`); a mano exige TTY, desatendido solo con `[update] host_auto = true` |
 | Driver NVIDIA | Descarga el `.run` de `download.nvidia.com`, comprueba su `sha256`, lo instala en el host y pone las librerías en los CT con `nvidia_auto` | Opt-ins `host_nvidia_auto` / `nvidia_auto` (apagados por defecto); permiso (`nvidia::Grant`) con versión, kernel y vmid concretos; solo sube dentro de la misma rama mayor; curl con `--proto =https` (`nvidia.rs:30`) |
-| Avisos | `curl --config -` (Apprise API) o CLI `apprise` | Configuración y secretos por stdin, nunca en argv; `proto` y `max-filesize` fijos (`notify.rs:163`) |
+| Avisos | `curl --config -` (Apprise API) o CLI `apprise` | Configuración y secretos por stdin, nunca en argv; `proto` y `max-filesize` fijos (`notify.rs:163`). `api_key` / `urls` se guardan cifradas (`systemd-creds`, `api_key_enc` / `urls_enc`) y se descifran justo antes de enviar; si no se pueden descifrar falla, nunca cae a texto plano. Root en el mismo host aún puede descifrar (ARCHITECTURE §4.6) |
 | Estado propio | `/var/lib/pxu`, `/var/log/pxu` (logs de corrida), `/etc/pxu/config.toml` (desde la TUI), drop-in del timer | `own_state_path` (`readonly.rs:149`), escritura atómica con `O_EXCL\|O_NOFOLLOW` (`real.rs:158`), `write_config` y `apply_schedule` solo con su opt-in |
 
 **Fronteras de confianza.**
 
 - **CT → host.** Toda salida de un CT es dato no confiable: se sanea con `fmt::clean` antes de mostrarla, registrarla o enviarla (H1).
-- **Config y registro → acciones.** `/etc/pxu/config.toml` decide qué se actualiza y guarda secretos: root y `0600` o no se usa (`config.rs:296`). `/var/lib/pxu/backups.json` decide qué backups son de `pxu` y se valida al cargar (M4).
+- **Config y registro → acciones.** `/etc/pxu/config.toml` decide qué se actualiza y guarda los secretos de Apprise (cifrados al guardar desde la TUI; los viejos en texto plano siguen funcionando y `config check` los avisa): root y `0600` o no se usa (`config.rs:296`). `/var/lib/pxu/backups.json` decide qué backups son de `pxu` y se valida al cargar (M4).
 - **Usuarios locales sin privilegios.** Solo pueden afectar a los locks de `/run/lock` (L3). No hay entrada de datos suya hacia comandos de root.
 - **Red.** Solo salen `curl` hacia la Apprise API configurada y las descargas de NVIDIA, que solo se hacen con opt-in.
 
