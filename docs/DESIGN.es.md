@@ -126,27 +126,27 @@ Cada columna mide lo que mide su contenido (como mínimo su cabecera), con hueco
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
-   100  ct-100           run      debian 12         —  0.2/0.5 GB    0      —
-   101  ct-101           run      debian 12         —  0.3/1.0 GB    4/1    —
-   102  ct-102           run      debian 12         —  0.2/0.5 GB    2/1    —
->  103  ct-103           run      debian 12         —  0.3/1.0 GB    7/2    yes
-   104  ct-104           run      alpine 3.20       —  0.2/0.5 GB    4/1    —
-   105  ct-105           run      fedora 41         —  0.3/1.0 GB    0      yes
-   106  ct-106           run      debian 12         —  0.2/0.5 GB    3/1    yes
-   107  ct-107           run      debian 12         —  0.3/1.0 GB    4/1    —
-   108  ct-108           run      debian 12         —  0.2/0.5 GB    2/1    yes
-   109  ct-109           run      alpine 3.20       —  0.3/1.0 GB    0      —
-   110  ct-110           run      debian 12         —  0.2/0.5 GB    4/1    yes
-   111  ct-111           run      alpine 3.20       —  0.3/1.0 GB    0      —
-   112  ct-112           run      alpine 3.20       —  0.2/0.5 GB    3/1    —
-   113  ct-113           run      debian 12         —  0.3/1.0 GB    0      —
-▼ 23 below (next 114 ct-114)   — filter: all · 37 guests
+   ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+  100  ct-100        run      debian 12         —  0.2/0.5 GB  0    yes     —
+  101  ct-101        run      debian 12         —  0.3/1.0 GB  4/1  yes     —
+  102  ct-102        run      debian 12         —  0.2/0.5 GB  2/1  yes     —
+> 103  ct-103        run      debian 12         —  0.3/1.0 GB  7/2  yes     yes
+  104  ct-104        run      alpine 3.20       —  0.2/0.5 GB  4/1  yes     —
+  105  ct-105        run      fedora 41         —  0.3/1.0 GB  0    yes     yes
+  106  ct-106        run      debian 12         —  0.2/0.5 GB  3/1  yes     yes
+  107  ct-107        run      debian 12         —  0.3/1.0 GB  4/1  yes     —
+  108  ct-108        run      debian 12         —  0.2/0.5 GB  2/1  yes     yes
+  109  ct-109        run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
+  110  ct-110        run      debian 12         —  0.2/0.5 GB  4/1  yes     yes
+  111  ct-111        run      alpine 3.20       —  0.3/1.0 GB  0    yes     —
+  112  ct-112        run      alpine 3.20       —  0.2/0.5 GB  3/1  yes     —
+  113  vaultwarden1  run      debian 12         —  0.3/1.0 GB  0    yes     —
+▼ 23 below (next 114 llama-swap)   — filter: all · 37 guests
 ────────────────────────────────────────────────────────────────────────────────
 > 103 ct-103 · debian 12 · 7 updates (2 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
 ```
 
 **La fila del host.** El Proxmox mismo aparece como fila `vmid 0` (`GuestKind::Host`) con su resumen de paquetes en el header (`host: 7 upd`). `u` sobre ella abre su propia confirmación (lista de paquetes agrupada por kernel/firmware/pve/security/other, aviso de reinicio, copia de `/etc` previa, sin rollback automático) y nunca entra en una corrida de CT. `a` sobre ella alterna `[update] host_auto`, el opt-in del timer. Antes de `c` el host aparece como "not reviewed yet: press c".
@@ -155,14 +155,14 @@ pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:
 pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00:16
 [All 6]  Run 5   Stop 1   Upd 1  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME                   STATE    GPU       CPU  RAM           UPD    AUTO
->    0  server                 run      NV ✓        —  24.4/62.5 GB  7/2    —
-   131  ct-131                 run      AMD ✓       —  0.2/0.5 GB    0      —
-   134  ct-134                 run      NV ✓        —  0.2/0.5 GB    1/0    —
-   135  ct-135                 stopped  NV ?        —  —/0.5 GB      0      —
-   140  ct-140                 run      —           —  0.2/0.5 GB    0      —
-   150  ct-150                 run      —           —  0.2/0.5 GB    0      —
-   200  vm-200                 run      pass        —  —/2.0 GB      —      —
+   ID  NAME        STATE    GPU      CPU  RAM           UPD  BACKUP  AUTO
+>   0  server      run      NV ✓       —  24.4/62.5 GB  7/2  -       —
+  131  ct-131      run      AMD ✓      —  0.2/0.5 GB    0    yes     —
+  134  openweb-ui  run      NV ✓       —  0.2/0.5 GB    1/0  yes     —
+  135  ct-135      stopped  NV ?       —  —/0.5 GB      0    yes     —
+  140  ct-140      run      —          —  0.2/0.5 GB    0    yes     —
+  150  ct-150      run      —          —  0.2/0.5 GB    0    yes     —
+  200  vm-200      run      pass       —  —/2.0 GB      —    -       —
 
 
 
@@ -174,15 +174,15 @@ pxu [RO] [MOCK]                    server · 5/6 up · 1 upd · host: 7 upd   00
 ────────────────────────────────────────────────────────────────────────────────
 > 0 server · proxmox ve 9.0.11 · 7 updates (2 security) · auto: no · [Enter] de…
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
 ```
 
 ```
 pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00:16
 [┌ confirm host update ───────────────────────────────────────────────────────┐
 ─│ Install 7 packages on the Proxmox host (2 security)?                       │─
- │                                                                            │O
+ │                                                                            │
 >│ kernel (2)                                                                 │
  │   proxmox-kernel-6.17 6.17.9-1 → 6.17.13-2                                 │
  │   proxmox-default-kernel 2.0.1 → 2.0.2                                     │
@@ -201,8 +201,8 @@ pxu [MOCK]                         server · 5/6 up · 1 upd · host: 7 upd   00
 ─│ [Enter] install  [↑↓/jk] scroll  [Esc] cancel                              │─
 >│                                                                            │…
 ─└────────────────────────────────────────────────────────────────────────────┘─
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
 ```
 
 **GPU / NVIDIA.** La columna `GPU` (`NV ✓`, `AMD ✓`, `pass`, `—`) aparece cuando hay GPUs; `+drv` tras una etiqueta NVIDIA (`NV ✓+drv`, `NVIDIA ✓+drv` en ancho) indica que las actualizaciones programadas incluyen el driver (`host_nvidia_auto` / `[[ct]] nvidia_auto`); la columna mide su contenido como cualquier otra. El detalle del guest tiene una línea `gpu driver:` (el del host, `driver update:` bajo NVIDIA). No hay tecla ni ventana aparte: la opción vive en la ventana de `a`, con dos casillas en su valor guardado: `[ ] Automatic updates` y, solo en el host o en un CT con GPU NVIDIA y driver instalado con el `.run`, `[ ] Include GPU driver update` (con versión instalada/última, qué hace la corrida y el reinicio del CT). `↑↓/jk` mueven el foco, `Space` cambia la casilla, `Enter` guarda solo lo que cambió y la línea `Saves:` dice qué se escribirá (o `nothing changed`, y Enter no escribe). El driver depende del auto-update: con «Automatic updates» desmarcado la casilla del driver sale atenuada y no se puede marcar, y desmarcar el auto-update desmarca también el driver (apaga el driver de esa máquina, como antes). Marcar el driver en un CT activa también `host_nvidia_auto` (los CT reciben las librerías de la versión del host); desmarcarlo en un CT solo apaga ese CT; desmarcarlo en el host apaga `host_nvidia_auto` y la ventana avisa de que los CT con `nvidia_auto` no reciben nada mientras esté apagado. Si la máquina no aplica, no hay casilla y una línea da el motivo (`no NVIDIA GPU` / `driver not installed with the .run`); si no se puede leer el índice de NVIDIA, la casilla sale igual (`unknown`). El timer instala el driver `.run` después de actualizar el host, siempre sin reiniciar.
@@ -230,57 +230,56 @@ nothing changed: Enter writes nothing          (driver unchecked: "Saves: [[ct]]
 pxu [RO] [MOCK]                               server · 34/37 up · 13 upd   00:16
 [All 37]  Run 34   Stop 3   Upd 13  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
->  100  ct-100   ┌ columns ───────────────────────────────────┐GB    0      —
-   101  ct-101   │ ID, NAME and STATE are always shown        │GB    4/1    —
-   102  ct-102   │                                            │GB    2/1    —
-   103  ct-103   │> [x] TYPE                                  │GB    7/2    yes
-   104  ct-104   │  [x] OS                                    │GB    4/1    —
-   105  ct-105   │  [x] CPU                                   │GB    0      yes
-   106  ct-106   │  [x] RAM                                   │GB    3/1    yes
-   107  ct-107   │  [x] DISK                                  │GB    4/1    —
-   108  ct-108   │  [ ] TAGS                                  │GB    2/1    yes
-   109  ct-109   │  [x] GPU                                   │GB    0      —
-   110  ct-110   │  [x] UPD                                   │GB    4/1    yes
-   111  ct-111   │  [x] AUTO                                  │GB    0      —
-   112  ct-112   │                                            │GB    3/1    —
-   113  ct-113   │ [Space] show/hide  [Enter] close           │GB    0      —
-▼ 23 below (next └────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────
+   ID  NAME          STATE    OS              CPU  RAM         UPD  BACKUP  AUTO
+> 100  ct-100    ┌ columns ───────────────────────────────────┐0    yes     —
+  101  ct-101    │ ID, NAME and STATE are always shown        │4/1  yes     —
+  102  ct-102    │                                            │2/1  yes     —
+  103  ct-103    │> [x] TYPE                                  │7/2  yes     yes
+  104  ct-104    │  [x] OS                                    │4/1  yes     —
+  105  ct-105    │  [x] CPU                                   │0    yes     yes
+  106  ct-106    │  [x] RAM                                   │3/1  yes     yes
+  107  ct-107    │  [x] DISK                                  │4/1  yes     —
+  108  ct-108    │  [ ] TAGS                                  │2/1  yes     yes
+  109  ct-109    │  [x] GPU                                   │0    yes     —
+  110  ct-110    │  [x] UPD                                   │4/1  yes     yes
+  111  ct-111    │  [x] BACKUP                                │0    yes     —
+  112  ct-112    │  [x] AUTO                                  │3/1  yes     —
+  113  vaultwarde│                                            │0    yes     —
+▼ 23 below (next │ [Space] show/hide  [Enter] close           │
+─────────────────└────────────────────────────────────────────┘─────────────────
 > 100 ct-100 · debian 12 · 0 updates (0 security) · auto: no · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
 ```
 
 **Ayuda (`?`).** Texto de `draw_help` (`views.rs`), propio de cada vista:
 
 ```
-px┌ help · any key closes ───────────────────────────────────────────────────┐16
-[A│↑↓ / j k     move cursor                                                  │
-──│PgUp PgDn    move 10 · Home End first/last                                │──
-  │1 2 3 4      filter All / Running / Stopped / Updates                     │TO
-> │/            search name, tag or id (Esc clears)                          │
-  │s            cycle sort: vmid · name · updates · ram                      │
-  │r            reload /etc/pve confs (files only)                           │
-  │Enter        guest detail                                                 │s
-  │c            check LXC updates (visible CTs, or all): refreshes indexes   │
-  │C            read-only check: does not refresh the indexes                │s
-  │v            show the last check result                                   │s
-  │o            choose visible columns (Space toggles; saved in config.toml) │
-  │u            update the visible CTs with updates (asks first)             │s
-  │             temporary backup, verify, auto-rollback on failure           │
-  │a            toggle scheduled auto-update of the CT (asks first)          │s
-  │             host row: host_auto · host/GPU CT: also the GPU driver box   │
-  │b            toggle the backup before updating the CT (asks first)        │
-  │g / S        config view + timer state · S change schedule (asks first)   │
-  │l            run logs (one file per update run)                           │
-▼ │?            this help · q quit                                           │
-──│Columns: UPD pending updates (all/security) · — no data yet (press c)     │──
-> │AUTO yes = in the scheduled run · host row: u asks before updating        │
+px┌ help · ↑↓ scroll · any other key closes ─────────────────────────────────┐16
+[A│── Keys ──────────────────────────────────────────────────────────────────│
+──│ ↑↓ / j k   move cursor                                                   │──
+  │ PgUp PgDn  move 10 · Home End first/last                                 │TO
+> │ 1 2 3 4    filter All / Running / Stopped / Updates                      │
+  │ /          search name, tag or id (Esc clears)                           │
+  │ s          cycle sort: vmid · name · updates · ram                       │
+  │ r          reload /etc/pve confs (files only)                            │s
+  │ Enter      guest detail                                                  │
+  │ c          check LXC updates (visible CTs, or all): refreshes the package│s
+  │            indexes                                                       │s
+  │ C          read-only check: does not refresh the indexes                 │
+  │ v          show the last check result                                    │s
+  │ o          choose visible columns (Space toggles; saved in config.toml)  │
+  │ u          update the visible CTs with updates (asks first): temporary   │s
+  │            backup, verify, auto-rollback on failure                      │
+  │ a          toggle scheduled auto-update of the CT (asks first); host row:│
+  │            host_auto · host/GPU CT: also the NVIDIA driver checkbox      │
+▼ │            (Space toggles, Enter saves)                                  │
+──│ b          toggle the backup before updating the CT (asks first)         │──
+> │ g / S      config view + timer state · S change schedule (asks first)    │
 ──│                                                                          │──
-[↑│read-only: no command that writes can run                                 │
-[r└──────────────────────────────────────────────────────────────────────────┘
+[↑│read-only: no command that writes can run                                 │ad
+[a└─────────────────────────────────────────────────────────────── pxu X.Y.Z ┘
 ```
 
 ### 5.2 Detalle
@@ -305,12 +304,12 @@ detail · config (left) · state & updates (right)
 │                                                                              │
 │network                                                                       │
 │  net0 name=eth0 bridge=vmbr0 ip=192.168.1.29/24 firewall=1                   │
-│       hwaddr BC:24:11:2A:67:D1 · gw 192.168.1.1                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
 ct-103 · read from /etc/pve/nodes/server/lxc/103.conf
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [?] help  [q] quit
+[↑↓/jk] scroll  [u] update (asks)  [r] reload  [a] auto  [b] backup  [g] config
+[S] schedule  [Esc] back  [?] help  [q] quit
 config is read from the .conf file (no processes); runtime metrics come from cg…
 ```
 
@@ -331,7 +330,6 @@ pxu · check [RO] [MOCK]            read-only · finished 00:16 · took 0 s   00
     106  ct-106          apt        5h    3    1  no      ok
     107  ct-107          apt        5h    4    1  no      ok
     108  ct-108          apt        5h    2    1  no      ok
-    109  ct-109          apk        5h    0    0  no      ok
  packages · 100 ct-100 · apt ───────────────────────────────────────────────────
 up to date
 
@@ -342,7 +340,8 @@ up to date
 ────────────────────────────────────────────────────────────────────────────────
 a check is already running
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] select  [Enter] detail  [c] refresh+check  [C] read-only  [?] help  [q] quit
+[↑↓] select  [Enter] detail  [c] refresh+check  [C] read-only  [Esc] back
+[?] help  [q] quit
 ```
 
 ### 5.4 Corrida de update
@@ -389,14 +388,14 @@ ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
 » 423   ct-423           skip                  —  not started: stopped after 2 …
 » 424   ct-424           skip                  —  not started: stopped after 2 …
 ── live log ────────────────────────────────────────────────────────────────────
- 00:16:00  422 $ [CT 422] df -Pk /
- 00:16:00  422 Filesystem 1024-blocks Used Available Capacity Mounted on
- 00:16:00  422 /dev/loop0 4000000 1000000 3000000 25% /
  00:16:00  422 $ [CT 422] systemctl --failed --no-legend --plain
  00:16:00  422 == backup
  00:16:00  422 $ pvesh get /nodes/server/lxc/422/feature --feature snapshot --o…
  00:16:00  422 {"hasFeature":0}
  00:16:00  422 snapshot not used (PVE reports no snapshot support for this CT);…
+ 00:16:00  422 $ pvesh get /nodes/server/storage/local/status --output-format j…
+ 00:16:00  422 {"active":1,"avail":858993459200,"total":1073741824000,"used":21…
+ 00:16:00  422 backup space: ~1.0 GB needed (rootfs used + mount points, ratio …
  00:16:00  422 $ vzdump 422 --mode snapshot --storage local --compress zstd --z…
  00:16:00  422 ERROR: vzdump failed
  00:16:00  422 == result: Failed: backup failed, CT untouched: vzdump exit 255
@@ -415,7 +414,7 @@ Lista los CT con updates incluidos por defecto (`Space` los excluye), muestra el
 pxu [MOCK]                                       server · 2/3 up · 3 upd   00:16
 [All 3]  Run 2   Stop 1   Upd 3  / search…
 ────────────────────────────────────────────────────────────────────────────────
-    ID  NAME             STATE    OS              CPU  RAM           UPD    AUTO
+   ID  NAME    STATE    OS             CPU  RAM         UPD  BACKUP  AUTO
 >┌ confirm ───────────────────────────────────────────────────────────────────┐
  │ Update 3 guests?                                                           │
  │                                                                            │
@@ -434,8 +433,8 @@ pxu [MOCK]                                       server · 2/3 up · 3 upd   00:
 ────────────────────────────────────────────────────────────────────────────────
 > 401 ct-401 · debian 12 · 3 updates (1 security) · auto: yes · [Enter] detail
 ────────────────────────────────────────────────────────────────────────────────
-[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update (asks)
-[r] reload  [a] auto  [b] bkp  [o] cols  [g] cfg  [l] logs  [?] help  [q] quit
+[↑↓] move  [1-4] filter  [/] search  [s] sort  [c] check  [u] update  [r] reload
+[a] auto  [b] bkp  [o] cols  [g] cfg  [d] space  [l] logs  [?] help  [q] quit
 ```
 
 ### 5.6 Config, horario y Apprise
@@ -460,14 +459,12 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 │                                                                              │
 │ Notifications (Apprise)                                                      │
 │ status          : configured, sends via apprise-api (curl)                   │
-│ api_url         : http://apprise.local:8000                                  │
-│ api_key         : ••• (set, encrypted)                                       │
-│ tag             : system                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
 [s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read
+[Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…
 ```
 
@@ -478,12 +475,11 @@ pxu · config [MOCK]                                                        00:1
 config · automatic update schedule (systemd timer pxu-update) and notifications…
 ────────────────────────────────────────────────────────────────────────────────
 ┌ Schedule ────────────────────────────────────────────────────────────────────┐
-│ units installed : yes                                                        │
 │┌ Notifications (Apprise) ───────────────────────────────────────────────────┐│
 ││ > API address              http://apprise.local:8000_                      ││
 ││   Sends with               (•) saved key in Apprise API  ( ) urls          ││
 ││   API key                  (stored — leave empty to keep)                  ││
-││   Tag                      system_                                         ││
+││   Tag                      (none)                                          ││
 ││   Notify on                [x] updates_found                               ││
 ││                            [x] update_failed                               ││
 ││                            [x] run_summary                                 ││
@@ -492,39 +488,42 @@ config · automatic update schedule (systemd timer pxu-update) and notifications
 ││ secrets are never shown (dots) and are saved encrypted (systemd-creds)     ││
 ││ tag empty: only untagged targets of the key are notified                   ││
 ││                                                                            ││
-││ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            ││
-│└────────────────────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────
+└│ [Tab] field  [←/→/Space] change  [Enter] validate  [Esc] cancel            │┘
+─└────────────────────────────────────────────────────────────────────────────┘─
 [s] schedule  [n] notifications  [d] log days  [t] test notice
 ────────────────────────────────────────────────────────────────────────────────
-[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read  [Esc] back  [?] help  [q] quit
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read
+[Esc] back  [?] help  [q] quit
 the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…
 ```
 
 The confirmation (`Enter` in the window above) shows one block per state, one field per line with aligned labels and a blank line between sections; in `new` the fields that change are highlighted (bold). It always stays inside the content area of Config (it never covers the footer): when it is taller than the space, it drops first the blank lines (the top one, then the ones between blocks), then the «the rest of…» note, and finally cuts the end with «…». Notes that do not fit in one line continue with a hanging indent. At 80x24 the real case (urls → api_key, with tag) fits with no blank lines (drawing at 120x40):
 
 ```
-┌ Save the notifications? ────────────────────────────────────────────────────┐
-│                                                                             │
-│ today                                                                       │
-│   api_url   http://apprise.example:8000                                        │
-│   urls      ••• (encrypted)                                                 │
-│   tag       system                                                          │
-│   on        update_failed, run_summary                                      │
-│                                                                             │
-│ new                                                                         │
-│   api_url   http://apprise.example:8000                                        │
-│   api_key   ••• (encrypted)                                                 │
-│   tag       system                                                          │
-│   on        update_failed, run_summary                                      │
-│                                                                             │
-│ · the stored urls are removed (the key and the urls exclude each other)     │
-│ · stored encrypted (systemd-creds); no plain-text copy stays in the file    │
-│ · the rest of /etc/pxu/config.toml is kept as it is                         │
-│                                                                             │
-│ [y/Enter] save  [b] back  [Esc] cancel                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+pxu · config [MOCK]                                                        00:16
+config · automatic update schedule (systemd timer pxu-update) and notifications…
+────────────────────────────────────────────────────────────────────────────────
+┌┌ Save the notifications? ───────────────────────────────────────────────────┐┐
+││ today                                                                      ││
+││   api_url   http://192.168.1.28:8000                                       ││
+││   urls      ••• (encrypted)                                                ││
+││   tag       system                                                         ││
+││   on        update_failed, run_summary                                     ││
+││ new                                                                        ││
+││   api_url   http://192.168.1.28:8000                                       ││
+││   api_key   ••• (encrypted)                                                ││
+││   tag       system                                                         ││
+││   on        update_failed, run_summary                                     ││
+││ · the stored urls are removed (the key and the urls exclude each other)    ││
+││ · stored encrypted (systemd-creds); no plain-text copy stays in the file   ││
+││ [y/Enter] save  [b] back  [Esc] cancel                                     ││
+└└────────────────────────────────────────────────────────────────────────────┘┘
+────────────────────────────────────────────────────────────────────────────────
+[s] schedule  [n] notifications  [d] log days  [t] test notice
+────────────────────────────────────────────────────────────────────────────────
+[s] schedule  [n] notifications  [d] log days  [l] logs  [t] test  [r] re-read
+[Esc] back  [?] help  [q] quit
+the timer runs `pxu check` then `pxu update --yes` (host first if host_auto; th…
 ```
 
 ### 5.7 Logs
@@ -563,14 +562,30 @@ lines 1-17 of 100
 Se abre con `d` desde la lista (no hace falta la fila del host). Solo lectura: ejecuta únicamente lecturas de la allowlist y nunca entra a un CT.
 
 ```
-pxu · storage [RO]                                                    00:16
+pxu · storage [RO] [MOCK]                                                  00:16
 node server · 4 storages · 37 guests
-── Storages ──────────────────────────────────────────────────────────────
- local-lvm  lvmthin [█████░░░░░░░] 16.4G/40.0G  41%  alloc 25.0G (63%)
- remote-backup-3   pbs     [█░░░░░░░░░░░] 26.6G/2.0T   1%  dedup 4.2× · 47 bk · 112G logical
-── Guests · sort: used ↓ ─────────────────────────────────────────────────
-   ID NAME     STATE    USED/ALLOC    % SNAPS LAST BACKUP BK SIZE BACKUP ALERT
-! 133 ct-133   running   4.9G/5.0G  99%     0 2026-09-24     3.0G yes    last backup 44 d ago, disk 99% full
+── Storages ────────────────────────────────────────────────────────────────────
+ local           dir     [██░░░░░░]  20.5G/100G  21%  2 bk · 2.4G · pxu target …
+ local-lvm       lvmthin [████░░░░] 18.6G/40.0G  46%  alloc 25.0G (63%)
+ local-zfs       zfspool [██░░░░░░]   129G/900G  14%
+ remote-backup-3 pbs     [█░░░░░░░]  26.6G/2.0T   1%  dedup 4.2× · 47 bk · 112G
+── Guests · sort: used ↓ ───────────────────────────────────────────────────────
+   ID NAME          USED/ALLOC    % SNAPS LAST BACKUP BK SIZE BACKUP ALERT
+! 133 ct-133         4.8G/4.8G  99%     0 2026-09-24     3.0G yes    old-bk
+  114 llama-swap     4.2G/5.8G  73%     0 2026-11-03     3.6G yes
+  134 openweb-ui     3.7G/5.8G  63%     0 2026-11-03     3.6G yes
+  128 uptime-kuma    3.4G/4.8G  71%     0 2026-11-04     3.0G yes
+  113 vaultwarden1   3.2G/4.8G  66%     0 2026-11-04     3.0G yes
+  104 ct-104         3.1G/5.8G  53%     0 2026-11-03     3.6G yes
+  107 ct-107         2.9G/3.9G  74%     0 2026-11-05     2.4G yes
+  124 technitium     2.5G/5.8G  43%     0 2026-11-03     3.6G yes
+  127 ct-127         2.5G/3.9G  64%     0 2026-11-05     2.4G yes
+ alerts · no backup: 1 (100) · backup > 30 d: 2 (101,133) · disk >= 98%: 1 (133)
+────────────────────────────────────────────────────────────────────────────────
+1 / 37
+────────────────────────────────────────────────────────────────────────────────
+[↑↓] move  [Enter] detail  [S] sort  [f] filter (alerts)  [r] refresh  [?] help
+[q] back
 ```
 
 - **Storages**: barra, usado/total, %, más info: plantillas y backups en `dir`, `alloc` (suma de los volúmenes thin, solo en `lvmthin`), `N backups · X logical · dedup N.N×` en PBS (logical = suma del contenido de backups; dedup = logical / usado) y `pxu pre-update target` en el storage que recibe los backups previos al update. Lo que no se puede leer muestra `—`.
