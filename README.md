@@ -143,7 +143,7 @@ Each run ends with **a single notification**: a table with the server first and 
 
 ## Proxmox host and NVIDIA driver (optional)
 
-**pxu** can also update the Proxmox host itself (select the host row and press `u`, or run `pxu update --host`) and the NVIDIA driver. Both are **off** unless you ask for them: in the `a` window of the host row or of a container with a GPU you will find «Include GPU driver update», and `host_auto` in the configuration includes the host in the daily run. **pxu** never reboots the server. Details: [ARCHITECTURE](docs/ARCHITECTURE.md) §3.6–3.7.
+**pxu** can also update the Proxmox host itself (select the host row and press `u`, or run `pxu update --host`) and the NVIDIA driver. Both are **off** unless you ask for them: in the `a` window of the host row or of a container with a GPU you will find «Include GPU driver update», and `host_auto` in the configuration includes the host in the daily run. **pxu** never reboots the server. Details: [ARCHITECTURE §3.6](docs/ARCHITECTURE.md#36-proxmox-host-updatehostupdaters)–[3.7](docs/ARCHITECTURE.md#37-nvidia-driver-updatenvidiars).
 
 ## Uninstall
 

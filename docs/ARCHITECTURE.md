@@ -7,7 +7,7 @@ pxu is a lightweight LXC container updater for Proxmox VE. It is a single Rust b
 
 Technical reference of how `pxu` works today. The TUI is described in [DESIGN](DESIGN.md); the security analysis, in [SECURITY-REVIEW](SECURITY-REVIEW.md). Installation and usage: [README](../README.md); building and testing: [DEVELOPMENT](../DEVELOPMENT.md).
 
-Tested on: the automated tests run against a simulated server (`MockHost`, §8), and pxu runs daily on a real server with Proxmox VE 9.2 and `dir`, `lvmthin` and `pbs` storages. Other storage types (ZFS, Ceph, NFS…) and other Proxmox versions have not been tried on a real server yet.
+Tested on: the automated tests run against a simulated server (`MockHost`, [§8](#8-code-structure-and-testing)), and pxu runs daily on a real server with Proxmox VE 9.2 and `dir`, `lvmthin` and `pbs` storages. Other storage types (ZFS, Ceph, NFS…) and other Proxmox versions have not been tried on a real server yet.
 
 Status: v0.1, in development. Tested on PVE 9.2 (real update and rollback on a Debian 13 CT). Apprise notifications and the rollback of a CT that was stopped are only tested with simulated data.
 
@@ -20,14 +20,14 @@ Status: v0.1, in development. Tested on PVE 9.2 (real update and rollback on a D
 | Language / TUI | Rust + ratatui (crossterm); `libc` for locks, priorities and signals | `Cargo.toml` |
 | Process | **No daemon.** It runs, does its work and exits. Automation is a systemd timer | `dist/systemd/` |
 | Concurrency | **No async runtime.** The TUI spawns one thread per job (check, update); the CLI works on the main thread | `src/tui/mod.rs`, `src/cli/mod.rs` |
-| Listing | Reads `/etc/pve/**/*.conf` and `/sys/fs/cgroup`; without launching processes | §1 |
-| Execution in CT | **A single execution per CT per check** (embedded `probe.sh` script) with `lxc-attach` | §2.1 |
-| Check | Refreshes the indexes by default (`[check] refresh`); `--no-refresh` / `C` = read-only | §2.3 |
-| Update | Sequential; global lock + per-CT lock; prior temporary backup (snapshot or vzdump) with automatic rollback; post-update verification | §3 |
-| Proxmox host and NVIDIA | Reviewed on every `check`; only updated on explicit order or with an opt-in in config | §3.6, §3.7 |
-| Notifications | Apprise API via `curl` (fallback: `apprise` CLI); a single notification per run | §4 |
-| Config | `/etc/pxu/config.toml`, 0600 root | §5 |
-| Testing | `Host` trait with `RealHost` and `MockHost` (in-memory simulated server) | §8 |
+| Listing | Reads `/etc/pve/**/*.conf` and `/sys/fs/cgroup`; without launching processes | [§1](#1-listing-lxcs-and-vms) |
+| Execution in CT | **A single execution per CT per check** (embedded `probe.sh` script) with `lxc-attach` | [§2.1](#21-one-execution-per-ct) |
+| Check | Refreshes the indexes by default (`[check] refresh`); `--no-refresh` / `C` = read-only | [§2.3](#23-modes) |
+| Update | Sequential; global lock + per-CT lock; prior temporary backup (snapshot or vzdump) with automatic rollback; post-update verification | [§3](#3-update-pxu-update) |
+| Proxmox host and NVIDIA | Reviewed on every `check`; only updated on explicit order or with an opt-in in config | [§3.6](#36-proxmox-host-updatehostupdaters), [§3.7](#37-nvidia-driver-updatenvidiars) |
+| Notifications | Apprise API via `curl` (fallback: `apprise` CLI); a single notification per run | [§4](#4-notifications-apprise) |
+| Config | `/etc/pxu/config.toml`, 0600 root | [§5](#5-configuration-etcpxuconfigtoml) |
+| Testing | `Host` trait with `RealHost` and `MockHost` (in-memory simulated server) | [§8](#8-code-structure-and-testing) |
 
 Nothing `pxu` runs goes through a host shell: every `Command` carries a fixed argv. The only `sh -c` runs **inside** the CT with the binary's constant script.
 
@@ -45,7 +45,7 @@ Nothing `pxu` runs goes through a host shell: every `Command` carries a fixed ar
 | VM running | `/var/run/qemu-server/<vmid>.pid` + existing `/proc/<pid>` |
 | Live RAM and CPU (LXC) | `memory.current` and `cpu.stat` of the cgroup; the TUI samples CPU every 3 s (the first one, at 1 s) |
 
-`pxu list --all-nodes` includes the guests of other nodes; without the option only those of the local node appear. Besides the guests, the inventory includes a row for the **Proxmox host** (vmid `0`, §3.6).
+`pxu list --all-nodes` includes the guests of other nodes; without the option only those of the local node appear. Besides the guests, the inventory includes a row for the **Proxmox host** (vmid `0`, [§3.6](#36-proxmox-host-updatehostupdaters)).
 
 ### `.conf` parser (`proxmox/conf.rs`)
 
@@ -106,7 +106,7 @@ The upgrades are in `update/mod.rs::upgrade_argv`, which is the single source fo
 
 - Sequential, one CT after another; the per-CT timeout is `[check] timeout_s` (60 s; triple with refresh).
 - The result is saved in `/var/lib/pxu/state.json` (atomic write): date, manager, packages, number of security updates, index age and a **fingerprint** (FNV-1a of the sorted list `name=new_version`, `state::fingerprint`).
-- The fingerprint avoids repeating notifications: §4.2. A check is "recent" for `update` if it is less than `[update] require_fresh_check_minutes` (60) old.
+- The fingerprint avoids repeating notifications: [§4.2](#42-events-apprise-on). A check is "recent" for `update` if it is less than `[update] require_fresh_check_minutes` (60) old.
 - `pxu check` also reviews the **Proxmox host** (`proxmox/hostcheck.rs`, read-only): pending packages, repositories, pending reboot and NVIDIA GPU/driver. The only commands it uses are `apt-get update` (only with refresh), `apt list --upgradable`, `apt-get -s … full-upgrade`, `lspci -nn` and `dkms status`.
 
 ---
@@ -117,7 +117,7 @@ Code: `src/share/update/mod.rs`. It is the only command that writes.
 
 ### 3.1 Selection
 
-`update::select` takes, without arguments, the LXCs with `auto_update` (by `[[ct]]` or by tag, §5); with vmids or `--ct` it takes those. Each candidate can end up **skipped** (`skipped`) with a reason, without being touched:
+`update::select` takes, without arguments, the LXCs with `auto_update` (by `[[ct]]` or by tag, [§5](#5-configuration-etcpxuconfigtoml)); with vmids or `--ct` it takes those. Each candidate can end up **skipped** (`skipped`) with a reason, without being touched:
 
 - VM, CT of another node, template, with a PVE `lock:`, or stopped without `stopped = "start_and_restore"`.
 - Never checked, or check older than `require_fresh_check_minutes`.
@@ -125,11 +125,11 @@ Code: `src/share/update/mod.rs`. It is the only command that writes.
 
 ### 3.2 Run flow
 
-1. **Global lock** `/run/lock/pxu-run.lock` (non-blocking): prevents two runs at the same time (timer and TUI). If it is taken, `RunError::Locked` → exit 3. The run log is created when it is taken (§6).
-2. If `[update] host_auto = true`, the "all" run starts with the **host** (§3.6); then the NVIDIA driver if `host_nvidia_auto` (§3.7). Only if the host finished well does it continue with the CTs.
-3. Each CT, by ascending vmid, goes through the steps in §3.3.
+1. **Global lock** `/run/lock/pxu-run.lock` (non-blocking): prevents two runs at the same time (timer and TUI). If it is taken, `RunError::Locked` → exit 3. The run log is created when it is taken ([§6](#6-cli-and-timer)).
+2. If `[update] host_auto = true`, the "all" run starts with the **host** ([§3.6](#36-proxmox-host-updatehostupdaters)); then the NVIDIA driver if `host_nvidia_auto` ([§3.7](#37-nvidia-driver-updatenvidiars)). Only if the host finished well does it continue with the CTs.
+3. Each CT, by ascending vmid, goes through the steps in [§3.3](#33-steps-per-ct).
 4. **Circuit breaker:** `max_consecutive_failures` failures in a row (2) stop the run (with `on_failure = "stop"`, the first failure). The remaining CTs are left `skipped`.
-5. At the end: report, final log and single notification (§4.4).
+5. At the end: report, final log and single notification ([§4.4](#44-notification-format)).
 
 Cancellation (Ctrl-C/SIGINT/SIGTERM/SIGHUP in the CLI, dialog in the TUI): the run finishes the CT in progress and stops; the following ones are left `cancelled` and the exit is 30. `dpkg`/`apt` are never killed by a cancellation. Exception: before the install (pre-checks/backup) the cancel is immediate: only `vzdump` is signalled (SIGTERM; SIGKILL of its group after 120 s), the partial file/snapshot/lock are cleaned up by vzdump itself (pxu verifies it) and the CT ends `cancelled`, untouched.
 
@@ -150,7 +150,7 @@ Lock → Preflight → Backup → Refresh+Simulate → Upgrade → Verify → (R
    - **If the backup fails, the CT is not touched** (failure in the `backup` step).
    - **Scope:** the backup and the rollback cover only the rootfs; bind mounts and `mpN` with `backup=0` are neither saved nor reverted (`BACKUP_SCOPE_NOTE`, written in each CT's log).
 4. **Refresh + Simulate.** Probe with refresh (always needed to update). With 0 packages the CT is left as `skipped: already up to date after refresh` and the backup is discarded.
-5. **Upgrade.** The command from §2.2, with `nice` and `ionice` from `[general]`. Timeout `[update] timeout_min` (30 min) **without killing the process** (`ExecOpts.no_kill_on_timeout`): when it expires, the CT is left failed with a `WARNING` in the log, the run stops and the backup is kept without rollback (the CT may be half-updated; the notification carries the manual command).
+5. **Upgrade.** The command from [§2.2](#22-by-package-manager), with `nice` and `ionice` from `[general]`. Timeout `[update] timeout_min` (30 min) **without killing the process** (`ExecOpts.no_kill_on_timeout`): when it expires, the CT is left failed with a `WARNING` in the log, the run stops and the backup is kept without rollback (the CT may be half-updated; the notification carries the manual command).
 6. **Verify.** On apt, `dpkg --audit` must come out empty. The failed units before and after are compared: **new failed units ⇒ failure**. The probe is repeated without refresh, saved in `state.json` and it is noted whether there is `reboot-required`. With a pending reboot: `reboot = "if-required"` runs `pct reboot`; with `"never"` the CT is left as `warn: reboot required`.
 7. **Settle** (`settle`), according to the result:
    - Success or `warn`: the backup becomes `kept` and is pruned to the newest `keep` for that CT (`keep = 0` ⇒ it is deleted).
@@ -168,7 +168,7 @@ Results per CT: `ok`, `warn`, `failed`, `skipped`, `cancelled`.
 ### 3.5 Process priority and output
 
 - Each child process carries `nice` and `ioprio` (`pre_exec`), `process_group(0)` and a single pipe for stdout+stderr (`host/real.rs::run`), so the order is preserved and a Ctrl-C from the terminal doesn't reach `apt`. `nice`/`ioprio` are inherited down to `apt`/`dpkg` inside the CT.
-- Read timeouts (probes) are implemented with a temporary thread that kills the group with SIGKILL; the upgrade's doesn't kill (§3.3).
+- Read timeouts (probes) are implemented with a temporary thread that kills the group with SIGKILL; the upgrade's doesn't kill ([§3.3](#33-steps-per-ct)).
 - Output goes line by line to the run log and to the TUI, which keeps a buffer of `LOG_RING = 2000` lines. The engine cuts at 20,000 lines per CT (`LOG_CAP`).
 
 ### 3.6 Proxmox host (`update/hostupdate.rs`)
@@ -195,7 +195,7 @@ Only with `[update] host_nvidia_auto = true` (host) and `[[ct]] nvidia_auto = tr
 | `cli` | the `apprise` CLI with the URLs in the `APPRISE_URLS` variable |
 | `none` | no notifications |
 
-`pxu` never installs Python or pip. Secrets go **outside argv**: `curl` is given its configuration and the body through stdin (`curl --config -`). Timeout `timeout_s` (10 s) and retries with the waits from `retry_delays_ms` (default 5 s, 30 s, 2 min and 5 min, ~7.5 min), only for transient errors (curl failure, HTTP 408/424/429/5xx); any other 4xx (bad key, bad request) is not retried. `pxu check --notify` only uses the first two waits so it does not hold up the update that follows. Error messages are cleaned of keys and URLs. `api_key` and `urls` are stored encrypted and only decrypted right before sending (§4.6).
+`pxu` never installs Python or pip. Secrets go **outside argv**: `curl` is given its configuration and the body through stdin (`curl --config -`). Timeout `timeout_s` (10 s) and retries with the waits from `retry_delays_ms` (default 5 s, 30 s, 2 min and 5 min, ~7.5 min), only for transient errors (curl failure, HTTP 408/424/429/5xx); any other 4xx (bad key, bad request) is not retried. `pxu check --notify` only uses the first two waits so it does not hold up the update that follows. Error messages are cleaned of keys and URLs. `api_key` and `urls` are stored encrypted and only decrypted right before sending ([§4.6](#46-secrets-encryption-with-systemd-creds)).
 
 ### 4.2 Events (`[apprise] on`)
 
@@ -222,7 +222,7 @@ Each update run (timer, `pxu update` or the TUI) ends with **a single notificati
 
 In the Config view (`g`) the "Notifications (Apprise)" section shows the status of `[apprise]` with secrets hidden: `api_url` with only scheme and host, `api_key` as `•••` with `(set, encrypted)` or `(set, plain text)` (plus a note to save it in `n` to encrypt), and each destination URL as `tgram://…`; it also shows `tag` (or `—`).
 
-- `n` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated), the `tag` (visible text, empty = the key is removed; letters, digits, `-_.,`; without a tag the Apprise API only notifies untagged targets) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots. On saving, the secret is written **encrypted** (§4.6).
+- `n` opens the dialog: API address, mode (key stored in Apprise API **or** direct URLs, comma-separated), the `tag` (visible text, empty = the key is removed; letters, digits, `-_.,`; without a tag the Apprise API only notifies untagged targets) and the events that notify (`updates_found`, `update_failed`, `run_summary`, `check_error`). The stored secret is not shown: with the field empty it is kept, and what you type is drawn as dots. On saving, the secret is written **encrypted** ([§4.6](#46-secrets-encryption-with-systemd-creds)).
 - With Enter it validates the entire resulting config with the same code as `pxu config check`; if it doesn't validate (or no usable transport remains) it writes nothing and says why. Then it asks for confirmation with "today → new" (secrets hidden): `y`/Enter saves, `b` goes back to editing, Esc cancels.
 - It saves only `[apprise]`: the rest of `config.toml` and its comments are preserved, the write is atomic (root, `0600`) and, if the file doesn't exist, it creates it. The key and the URLs are mutually exclusive: changing mode removes the other.
 - `t` sends a test notification, the same as `pxu notify-test` (shows "sending…", then OK or the error with code 5, without dumping secrets).
@@ -340,7 +340,7 @@ pxu --help | -h
 - `--json`: one document per execution with `"schema": 1`.
 - `pxu config check` validates TOML, values, unknown keys, mode `0600` and owner `root`; it doesn't print secrets, and notes an `[apprise]` secret stored in plain text.
 - `pxu config encrypt-secrets` encrypts a plain-text `[apprise]` `api_key` / `urls` with `systemd-creds` (same result as saving in `n`; needs root; nothing to do → exit 0).
-- `--mock CASE` or `PXU_MOCK=CASE` only exists in builds with the `mock` feature (§8); the production binary rejects it with exit 2.
+- `--mock CASE` or `PXU_MOCK=CASE` only exists in builds with the `mock` feature ([§8](#8-code-structure-and-testing)); the production binary rejects it with exit 2.
 
 **Exit codes**
 
@@ -392,7 +392,7 @@ Persistent=true
 
 `dist/systemd/pxu-notify-flush.service` (`pxu notify-flush`, `Nice=10`, `IOSchedulingClass=idle`, `TimeoutStartSec=5min`) and `pxu-notify-flush.timer` (`OnCalendar=*:0/15`, `Persistent=true`) resend the queued notices; they are installed and enabled together with the update timer.
 
-The TUI's `S` key saves another schedule as a `pxu-update.timer.d` drop-in that replaces `OnCalendar`; `install.sh --uninstall` deletes it. The log of each scheduled run and its retention: §7.
+The TUI's `S` key saves another schedule as a `pxu-update.timer.d` drop-in that replaces `OnCalendar`; `install.sh --uninstall` deletes it. The log of each scheduled run and its retention: [§7](#7-logs).
 
 You can edit the units before installing them:
 
@@ -424,7 +424,7 @@ One log per run: `/var/log/pxu/run-YYYYMMDD-HHMM[SS][-N].log` (UTC time in the n
 - When it ends it is rewritten entirely: full header (`duration`, `result`), the sections and the same summary as the notification (a single source, `update/report.rs`). A log without `result` (abrupt cut) is shown as `⛔ INCOMPLETE`.
 - Retention by days: `[general] log_retention_days` (30; `0` = don't delete). When each run ends, the oldest `run-*.log` are deleted; `prune_in` only touches names in pxu's format. Logs in the previous format (`host-*.log`, `nvidia-*.log`, per-CT folders) also expire by days, but the Logs page only lists `run-*.log`. Empty `<vmid>` folders of the old format are also removed; maximum 3650 days; only regular files with a pxu name are touched (symbolic links are not followed). `logs_per_ct` no longer exists: it is accepted and ignored (obsolete config warning).
 - The log masks URLs with user and password (`fmt::mask_url_creds`) and replaces control characters (`fmt::clean`).
-- The TUI lists and opens them with the `l` key (up to `LIST_MAX = 1000` logs and `VIEW_MAX_LINES = 100 000` lines); see DESIGN §5.
+- The TUI lists and opens them with the `l` key (up to `LIST_MAX = 1000` logs and `VIEW_MAX_LINES = 100 000` lines); see [DESIGN §5](DESIGN.md#5-screens).
 - TUI: `l` opens the **Logs** page (date, duration, result and size, from newest to oldest; ↑↓/jk, click to choose, double click or Enter to open). In the viewer: arrows, PgUp/PgDn and wheel to scroll, `g`/`G` start/end, `n`/`p` next/previous log, `q`/Esc returns to the list with the same log selected. `d` in the Config view edits `log_retention_days`.
 - Results shown in the Logs page: `✅ 5 ok`, `⚠️ 3 ok · 1 warn`, `❌` if something failed, `⛔ STOPPED` if the run was stopped, and `⛔ INCOMPLETE` if it was cut off abruptly (for example, the server shut down mid-run) or is still in progress. The list says "no run logs yet" until there has been a run.
 

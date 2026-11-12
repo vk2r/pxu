@@ -13,11 +13,11 @@ Código: `src/tui/` — `app.rs` (estado y teclas), `views.rs` (dibujo), `logs.r
 1. **Tabla densa, no tarjetas.** Una fila por guest, estilo `htop`/`k9s`: estado → recursos → updates.
 2. **Reducer puro.** `App::on_key` (`app.rs`) no hace IO: devuelve una `Action` que ejecuta el bucle (`mod.rs`); `views::draw` solo dibuja. Por eso cada pantalla se prueba con `TestBackend` contra los snapshots (`PXU_UPDATE_SNAPSHOTS=1` los regenera).
 3. **El color nunca es la única señal.** Estados en palabras (`run`, `stopped`), marcas en los pasos (`●` en curso, `✓` ok, `✗` fail, `»` skip, `·` pendiente), cursor con `>` además del video inverso. Funciona con `NO_COLOR`.
-4. **Teclado primero, ratón opcional.** Todo se hace con teclado; cada pantalla declara sus teclas en el pie. El ratón solo actúa en la vista de logs (§4.7).
+4. **Teclado primero, ratón opcional.** Todo se hace con teclado; cada pantalla declara sus teclas en el pie. El ratón solo actúa en la vista de logs ([§4.7](#47-logs-logsrs)).
 5. **Lo caro, bajo pedido.** La vista por defecto vive de archivos de `/etc/pve` y cgroups; el chequeo de paquetes solo corre con `c`/`C`.
 6. **Todo cambio pide confirmación.** `u`, `a`, `b`, `S`, `N`, `L` y la fila del host abren un diálogo antes de escribir o ejecutar nada.
 
-Mínimo cómodo: 80×24; el pie (`keybar`) y las columnas se adaptan al ancho (§3, §5.1).
+Mínimo cómodo: 80×24; el pie (`keybar`) y las columnas se adaptan al ancho ([§3](#3-paleta-símbolos-y-pie-de-teclas), [§5.1](#51-lista-principal)).
 
 ## 2. Redibujo y muestreo
 
@@ -52,7 +52,7 @@ Formato de datos: updates `n/s` (total/seguridad), tamaños `x/y GB`, edad del �
 
 Prioridad (`on_key`, `app.rs`): `Ctrl-C` → modales (actualización, columnas, host, NVIDIA, auto-update, backup, horario, Apprise, retención) → ayuda `?` → búsqueda → tecla de la vista. Un modal captura todas las teclas.
 
-`Ctrl-C` con una corrida de update activa abre el diálogo de cancelación (§7); sin corrida sale.
+`Ctrl-C` con una corrida de update activa abre el diálogo de cancelación ([§7](#7-cancelación)); sin corrida sale.
 
 ### 4.1 Lista (`list_key`, `app.rs`)
 
@@ -347,7 +347,7 @@ a check is already running
 
 ### 5.4 Corrida de update
 
-Cola con una marca por CT (`✓ ● · ✗ »`), contadores en la cabecera y log en vivo. Si hay un aviso, es **uno solo por corrida**: la línea `NOTE: the backup and the rollback cover only the CT's rootfs` del log y el `WARNING` del modal de confirmación (§5.5).
+Cola con una marca por CT (`✓ ● · ✗ »`), contadores en la cabecera y log en vivo. Si hay un aviso, es **uno solo por corrida**: la línea `NOTE: the backup and the rollback cover only the CT's rootfs` del log y el `WARNING` del modal de confirmación ([§5.5](#55-confirmación-antes-de-actualizar)).
 
 Toda corrida no interactiva de `pxu update` que llega al pre-chequeo (la programada incluida) deja su `/var/log/pxu/run-….log`, aunque no haya nada que actualizar: toma el lock global como cualquier corrida, lista cada CT omitido y el host con su motivo (`no updates pending`, check viejo…) y su cabecera dice `result: ✅ nothing to do`. La página Logs lo muestra con ese resultado (no INCOMPLETE ni fallo), la retención lo poda igual y no envía aviso. Con `host_auto` activo y el host sin actualizaciones, el log y la terminal dicen `host: skipped — no updates pending`; con `host_auto` apagado no se menciona el host. El resumen no lleva tabla vacía, solo `Nothing to do: no CT or host had pending updates.`, y la terminal cuenta como omitidos los CT con auto-update sin pendientes (una línea, no una por CT). `--json` incluye `log_path`.
 
@@ -409,7 +409,7 @@ step times update on log lines or state changes · log: /var/log/pxu/run-*.log
 
 ### 5.5 Confirmación antes de actualizar
 
-Lista los CT con updates incluidos por defecto (`Space` los excluye), muestra el plan por guest y el alcance del backup: backup y rollback cubren solo el rootfs; los bind mounts / `mp` con `backup=0` no se guardan ni se revierten (ARCHITECTURE §3).
+Lista los CT con updates incluidos por defecto (`Space` los excluye), muestra el plan por guest y el alcance del backup: backup y rollback cubren solo el rootfs; los bind mounts / `mp` con `backup=0` no se guardan ni se revierten ([ARCHITECTURE §3](ARCHITECTURE.es.md#3-actualización-pxu-update)).
 
 ```
 pxu [MOCK]                                       server · 2/3 up · 3 upd   00:16
@@ -591,7 +591,7 @@ node server · 4 storages · 37 guests
 
 ## 6. Errores
 
-Un solo lugar: la **línea de estado** (entre las dos reglas del pie), que se borra con la tecla siguiente. Los errores de config son persistentes y fuerzan modo solo lectura (§8). Mensajes reales (`app.rs`): `updates disabled in read-only mode (no valid config)`, `a run is already in progress`, `no CT with a positive check here: run [c] first`, `host not reviewed yet: press c`, `host update blocked: …`, `host: nothing to update`, `auto-update applies to local LXC and the host only`. Los errores no abren diálogos; solo las confirmaciones son modales.
+Un solo lugar: la **línea de estado** (entre las dos reglas del pie), que se borra con la tecla siguiente. Los errores de config son persistentes y fuerzan modo solo lectura ([§8](#8-modo-solo-lectura)). Mensajes reales (`app.rs`): `updates disabled in read-only mode (no valid config)`, `a run is already in progress`, `no CT with a positive check here: run [c] first`, `host not reviewed yet: press c`, `host update blocked: …`, `host: nothing to update`, `auto-update applies to local LXC and the host only`. Los errores no abren diálogos; solo las confirmaciones son modales.
 
 ## 7. Cancelación
 

@@ -26,7 +26,7 @@ mise run demo                             # TUI con 37 guests genéricos simulad
 mise run demo -- update-ok update --yes   # otro caso y comando
 ```
 
-Casos predefinidos y el builder de `World`: [ARCHITECTURE §8.3](docs/ARCHITECTURE.es.md).
+Casos predefinidos y el builder de `World`: [ARCHITECTURE §8.3](docs/ARCHITECTURE.es.md#83-builder-world-y-casos).
 
 `mise run demo` compila antes `target/mock/pxu` (`cargo build --profile mock --features mock`). El binario de producción rechaza `--mock` (sale con código 2), y `--release --features mock` no compila.
 
@@ -109,7 +109,7 @@ Dependencias (`Cargo.toml`, todas sin características por defecto salvo `lexopt
 
 ## Documentos técnicos
 
-- [ARCHITECTURE](docs/ARCHITECTURE.es.md): cómo funciona pxu. Actualización y backups (§3), notificaciones (§4), configuración con todas las claves y valores por defecto (§5), línea de comandos, códigos de salida y timer (§6), logs (§7), trait `Host` y pruebas (§8).
+- [ARCHITECTURE](docs/ARCHITECTURE.es.md): cómo funciona pxu. Actualización y backups ([§3](docs/ARCHITECTURE.es.md#3-actualización-pxu-update)), notificaciones ([§4](docs/ARCHITECTURE.es.md#4-avisos-apprise)), configuración con todas las claves y valores por defecto ([§5](docs/ARCHITECTURE.es.md#5-configuración-etcpxuconfigtoml)), línea de comandos, códigos de salida y timer ([§6](docs/ARCHITECTURE.es.md#6-cli-y-timer)), logs ([§7](docs/ARCHITECTURE.es.md#7-logs)), trait `Host` y pruebas ([§8](docs/ARCHITECTURE.es.md#8-estructura-del-código-y-pruebas)).
 - [DESIGN](docs/DESIGN.es.md): diseño de la TUI, con todas las teclas.
 - [SECURITY-REVIEW](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
 
