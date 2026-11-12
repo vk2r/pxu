@@ -150,6 +150,13 @@ pxu también puede actualizar el propio host Proxmox (selecciona la fila del hos
 En el servidor, como root:
 
 ```sh
+curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --uninstall           # quita el programa y la corrida diaria; conserva configuración y logs
+curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --uninstall --purge   # además borra tu configuración, el estado y los logs
+```
+
+Con el `install.sh` que ya tienes en el servidor (opción B):
+
+```sh
 ./install.sh --uninstall           # quita el programa y la corrida diaria; conserva configuración y logs
 ./install.sh --uninstall --purge   # además borra tu configuración, el estado y los logs
 ```
