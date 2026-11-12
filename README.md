@@ -14,7 +14,17 @@ You use it from a terminal screen (the "TUI"). It leaves nothing running in the 
 
 ## Contents
 
-[Requirements](#requirements) · [Install](#install-pxu) · [Try it read-only](#try-pxu-in-read-only-mode) · [Choose containers](#choose-which-containers-to-update) · [Safety and rollback](#safety-and-rollback) · [Automatic updates](#enable-automatic-updates) · [Notifications](#set-up-notifications) · [Proxmox host and NVIDIA](#proxmox-host-and-nvidia-driver-optional) · [Uninstall](#uninstall) · [Common problems](#common-problems) · [More documentation](#more-documentation)
+- [Requirements](#requirements)
+- [Install](#install-pxu)
+- [Try it read-only](#try-pxu-in-read-only-mode)
+- [Choose containers](#choose-which-containers-to-update)
+- [Safety and rollback](#safety-and-rollback)
+- [Automatic updates](#enable-automatic-updates)
+- [Notifications](#set-up-notifications)
+- [Proxmox host and NVIDIA](#proxmox-host-and-nvidia-driver-optional)
+- [Uninstall](#uninstall)
+- [Common problems](#common-problems)
+- [More documentation](#more-documentation)
 
 ## Requirements
 

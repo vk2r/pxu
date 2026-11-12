@@ -14,7 +14,17 @@ Se usa desde una pantalla en la terminal (la «TUI»). No deja nada corriendo en
 
 ## Contenido
 
-[Requisitos](#requisitos) · [Instalar](#instalar-pxu) · [Probar en solo lectura](#probar-pxu-en-modo-solo-lectura) · [Elegir contenedores](#elegir-qué-contenedores-actualizar) · [Seguridad y vuelta atrás](#seguridad-y-vuelta-atrás) · [Actualizaciones automáticas](#activar-las-actualizaciones-automáticas) · [Avisos](#configurar-los-avisos) · [Host Proxmox y NVIDIA](#host-proxmox-y-driver-nvidia-opcional) · [Desinstalar](#desinstalar) · [Problemas comunes](#problemas-comunes) · [Más documentación](#más-documentación)
+- [Requisitos](#requisitos)
+- [Instalar](#instalar-pxu)
+- [Probar en solo lectura](#probar-pxu-en-modo-solo-lectura)
+- [Elegir contenedores](#elegir-qué-contenedores-actualizar)
+- [Seguridad y vuelta atrás](#seguridad-y-vuelta-atrás)
+- [Actualizaciones automáticas](#activar-las-actualizaciones-automáticas)
+- [Avisos](#configurar-los-avisos)
+- [Host Proxmox y NVIDIA](#host-proxmox-y-driver-nvidia-opcional)
+- [Desinstalar](#desinstalar)
+- [Problemas comunes](#problemas-comunes)
+- [Más documentación](#más-documentación)
 
 ## Requisitos
 
