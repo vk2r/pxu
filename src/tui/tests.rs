@@ -68,6 +68,8 @@ fn help_popup(out: &str) -> String {
 }
 
 fn check_snapshot(name: &str, actual: &str) {
+    // la versión cambia en cada release: los snapshots llevan un marcador fijo
+    let actual = actual.replace(concat!(" pxu ", env!("CARGO_PKG_VERSION"), " "), " pxu X.Y.Z ");
     let path = format!("{}/tests/snapshots/{name}.txt", env!("CARGO_MANIFEST_DIR"));
     if std::env::var_os("PXU_UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&path, actual).unwrap();
@@ -157,6 +159,7 @@ fn help_overlay_and_back() {
     snap("help-list", &a);
     let (out, _) = render(&a, 120, 40, true);
     let pop = help_popup(&out);
+    assert!(pop.contains(concat!("pxu ", env!("CARGO_PKG_VERSION"))), "{out}");
     assert!(!pop.contains('…') && pop.contains("── Keys") && pop.contains("── Columns"), "{out}");
     a.on_key(key(KeyCode::Char('x')));
     assert!(!a.help);

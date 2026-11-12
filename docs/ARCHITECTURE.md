@@ -331,6 +331,8 @@ pxu config check
 pxu config encrypt-secrets
 pxu notify-test
 pxu notify-flush
+pxu --version | -v
+pxu --help | -h
 ```
 
 - `update` without arguments updates the CTs with `auto_update` that have a recent positive check. With `[update] host_auto`, it starts with the host. `--yes` / `-y` skips the confirmations (the timer uses it); `--no-notify` suppresses the notification.

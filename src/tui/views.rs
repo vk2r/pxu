@@ -1245,7 +1245,7 @@ fn draw_help(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let r = Rect { x: (area.width - w) / 2, y: (area.height.saturating_sub(h)) / 2, width: w, height: h.min(area.height) };
     f.render_widget(Clear, r);
     let title = if max_scroll > 0 { " help · ↑↓ scroll · any other key closes " } else { " help · any key closes " };
-    let blk = Block::default().borders(Borders::ALL).title(Span::styled(title, th.bold())).border_style(th.accent());
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(title, th.bold())).title_bottom(Line::styled(concat!(" pxu ", env!("CARGO_PKG_VERSION"), " "), th.muted()).alignment(Alignment::Right)).border_style(th.accent());
     let inner = blk.inner(r);
     f.render_widget(blk, r);
     let mut lines: Vec<Line> = body.into_iter().skip(scroll).take(shown).collect();

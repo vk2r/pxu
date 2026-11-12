@@ -21,4 +21,4 @@ px┌ help · ↑↓ scroll · any other key closes ─────────�
 > │ g / S      config view + timer state · S change schedule (asks first)    │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │ad
-[a└──────────────────────────────────────────────────────────────────────────┘
+[a└─────────────────────────────────────────────────────────────── pxu X.Y.Z ┘

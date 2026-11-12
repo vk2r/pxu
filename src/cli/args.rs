@@ -8,10 +8,10 @@ pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config chec
                            Backs up /etc (and snapshots a ZFS root) first. Same exit codes.\n                           With `[update] host_auto = true`, a plain `pxu update` (and the timer) updates the host FIRST, and with\n                           `host_nvidia_auto` also the NVIDIA .run driver (same branch); CTs only if the host ended well. Never reboots.
   pxu config check         validate /etc/pxu/config.toml (TOML, values, mode 0600, owner root)
   pxu config encrypt-secrets
-                           encrypt a plain-text [apprise] api_key / urls with systemd-creds (same as saving them in the TUI: Config → N)
+                           encrypt a plain-text [apprise] api_key / urls with systemd-creds (same as saving them in the TUI: Config → n)
   pxu notify-test          send a test notice via [apprise] (exit 5 if the send fails)
   pxu notify-flush         resend the queued notices (/var/lib/pxu/outbox) and exit; no network if the queue is empty
-                           (the pxu-notify-flush timer runs it every 15 min). exit: 0 queue empty · 5 notices still queued\n";
+                           (the pxu-notify-flush timer runs it every 15 min). exit: 0 queue empty · 5 notices still queued\n  pxu --version, -v        print the version and exit\n  pxu --help, -h           show this help\n";
 
 pub enum Cmd {
     Tui,
@@ -49,6 +49,10 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
                 for v in p.value()?.string()?.split(',') {
                     only.push(v.trim().parse().map_err(|_| lexopt::Error::from(format!("--ct: `{v}` is not a vmid")))?);
                 }
+            }
+            Short('v') | Long("version") => {
+                println!("pxu {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
             }
             Short('h') | Long("help") => {
                 print!("{USAGE}");
@@ -96,5 +100,6 @@ mod tests {
         assert!(matches!(args(&["notify-flush"]), Ok((Cmd::NotifyFlush, _))));
         assert!(args(&["notify-flush", "extra"]).is_err());
         assert!(USAGE.contains("notify-flush"));
+        assert!(USAGE.contains("--version"));
     }
 }
