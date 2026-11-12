@@ -41,11 +41,7 @@ On Proxmox, as root:
 curl -fsSL https://vk2r.github.io/pxu/install.sh | sh
 ```
 
-This installs only the program and leaves nothing running. For pxu to also check and update on its own every day, add `--timer`:
-
-```sh
-curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --timer
-```
+This installs only the program and leaves nothing running. The daily update is turned on later from the TUI (see [Enable automatic updates](#enable-automatic-updates)).
 
 The script downloads the latest [release](https://github.com/vk2r/pxu/releases) (a static binary that runs on Proxmox 8 and 9, plus `dist/`), checks its SHA-256 against the release's `SHA256SUMS` and installs it; it stops before installing anything if they don't match. To install a given version add `--release v1.2.3`. To update, run the same command: the script says which version is installed, stops if it is already the latest and otherwise replaces it, along with the timers if they were installed. To read the script before running it:
 
@@ -83,10 +79,9 @@ Build pxu on another machine (with Rust, via [mise](https://mise.jdx.dev)), then
 3. On Proxmox, as root:
 
    ```sh
-   cd /root/pxu-install && sh install.sh ./pxu --timer
+   cd /root/pxu-install && sh install.sh ./pxu
    ```
 
-`--timer` enables the daily run. Without it, only the program is installed.
 The installer is safe to rerun and never overwrites your configuration. To update pxu, repeat the steps of the option you used.
 
 ## Try pxu in read-only mode
@@ -123,9 +118,9 @@ For each container, one at a time: temporary backup → dry run → update → v
 
 ## Enable automatic updates
 
-With `--timer` at install time, pxu checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked as above. Stopped containers are skipped by default.
+The daily run is turned on from the TUI: press `g` for the **Config** screen, then `s`. pxu installs the systemd timers and from then on checks and updates every day at **04:30** (server time, with a random delay of up to 15 minutes). It updates the containers marked as above. Stopped containers are skipped by default.
 
-Press `g` for the **Config** screen. There, `s` changes the time or turns the daily run off, and `d` sets how many days of logs are kept (30 by default).
+On the same screen, `s` also changes the time or turns the daily run off, and `d` sets how many days of logs are kept (30 by default).
 
 ![Config screen: schedule, log retention and notifications](screenshots/08-config.png)
 

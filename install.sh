@@ -4,7 +4,7 @@
 # Without a local binary it downloads the release bundle from GitHub and checks it against the
 # release's SHA256SUMS before installing anything. If pxu is already installed it says which
 # version is there: the same version stops without changes, another one is replaced, together
-# with the systemd units if they were installed.
+# with the systemd units if they were installed. The timers are set up from the TUI (S key).
 set -eu
 
 # GitHub repository the releases are downloaded from (owner/name).
@@ -12,12 +12,10 @@ repo=${PXU_REPO:-vk2r/pxu}
 
 usage() {
     cat <<'USAGE'
-Usage: ./install.sh [--timer] [--force] [--release vX.Y.Z] [--uninstall [--purge]] [path-to-binary]
+Usage: ./install.sh [--force] [--release vX.Y.Z] [--uninstall [--purge]] [path-to-binary]
   path-to-binary   defaults to ./pxu next to the script, else target/release/pxu; if neither
                    exists, the release bundle is downloaded from GitHub and its SHA-256 checked
   --release TAG    download that release instead of the latest one (implies downloading)
-  --timer          install and enable pxu-update.timer and pxu-notify-flush.timer (systemd);
-                   on an update, units installed earlier are refreshed even without it
   --force          do not require the machine to be Proxmox
   --uninstall      remove the binary and units; keep /etc/pxu and /var/lib/pxu
   --purge          with --uninstall, also delete /etc/pxu, /var/lib/pxu and /var/log/pxu
@@ -29,13 +27,12 @@ die() { echo "error: $*" >&2; exit 1; }
 say() { echo "pxu: $*"; }
 
 here=$(cd "$(dirname "$0")" && pwd)
-timer=0 force=0 uninstall=0 purge=0 bin="" release="" want_release=0
+force=0 uninstall=0 purge=0 bin="" release="" want_release=0
 for a in "$@"; do
     if [ "$want_release" = 1 ]; then release=$a; want_release=0; continue; fi
     case $a in
         --release) want_release=1 ;;
         --release=*) release=${a#--release=} ;;
-        --timer) timer=1 ;;
         --force) force=1 ;;
         --uninstall) uninstall=1 ;;
         --purge) purge=1 ;;
@@ -95,16 +92,12 @@ if [ -x "$bindir/pxu" ]; then
     installed=$("$bindir/pxu" --version 2>/dev/null | awk '{print $2}') || installed=""
     [ -n "$installed" ] || installed=unknown
 fi
-# Units installed by an earlier --timer: an update refreshes them.
+# Units installed earlier from the TUI (S key): an update refreshes them.
 [ -f "$unitdir/pxu-update.timer" ] && had_units=1 || had_units=0
 
-# Stops when version $1 is the one installed, unless --timer still has units to install.
+# Stops when version $1 is the one installed.
 stop_if_current() {
     [ "$installed" = "$1" ] || return 0
-    if [ "$timer" = 1 ] && [ "$had_units" = 0 ]; then
-        say "pxu $1 is already installed; installing the timers"
-        return 0
-    fi
     say "pxu $1 is already installed and up to date; nothing to do"
     exit 0
 }
@@ -159,8 +152,6 @@ new=$("$bin" --version 2>/dev/null | awk '{print $2}') || new=""
 stop_if_current "$new"
 if [ -z "$installed" ]; then
     say "installing pxu $new"
-elif [ "$installed" = "$new" ]; then
-    say "pxu $new stays as it is"
 elif [ "$installed" = unknown ]; then
     say "a pxu of unknown version is installed; replacing it with $new"
 elif [ "$(printf '%s\n%s\n' "$installed" "$new" | sort -V | tail -n 1)" = "$new" ]; then
@@ -168,11 +159,10 @@ elif [ "$(printf '%s\n%s\n' "$installed" "$new" | sort -V | tail -n 1)" = "$new"
 else
     say "pxu $installed is installed, newer than $new; going back to $new"
 fi
-# An update refreshes the units an earlier --timer installed, without enabling them again.
-refresh_units=0
-[ "$timer" = 1 ] || [ "$had_units" = 0 ] || [ "$installed" = "$new" ] || refresh_units=1
+# An update refreshes the units installed earlier, without enabling them again.
+refresh_units=$had_units
 
-if [ "$timer" = 1 ] || [ "$refresh_units" = 1 ]; then
+if [ "$refresh_units" = 1 ]; then
     src=${PXU_UNITS:-$here/dist/systemd}
     for u in $units; do [ -f "$src/$u" ] || die "missing unit $src/$u"; done
 fi
@@ -191,14 +181,7 @@ else
     say "no config.toml: pxu stays read-only (see README)"
 fi
 
-if [ "$timer" = 1 ]; then
-    install -d -m 0755 "$unitdir"
-    for u in $units; do install -m 0644 "$src/$u" "$unitdir/$u"; done
-    systemctl_do daemon-reload
-    systemctl_do enable --now pxu-update.timer
-    systemctl_do enable --now pxu-notify-flush.timer
-    say "pxu-update and pxu-notify-flush timers enabled"
-elif [ "$refresh_units" = 1 ]; then
+if [ "$refresh_units" = 1 ]; then
     install -d -m 0755 "$unitdir"
     for u in $units; do install -m 0644 "$src/$u" "$unitdir/$u"; done
     systemctl_do daemon-reload

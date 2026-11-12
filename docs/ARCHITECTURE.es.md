@@ -209,7 +209,7 @@ Nunca se mandan dos avisos por la misma corrida. Con todos los eventos en `on` (
 
 ### 4.3 Cola
 
-Si el envío falla, el mensaje se guarda en `/var/lib/pxu/outbox/` (un JSON por mensaje) y se reintenta al final de la corrida siguiente y cada 15 minutos con `pxu notify-flush` (unidades `pxu-notify-flush.service` + `.timer`, `OnCalendar=*:0/15`, `Persistent=true`, instaladas por `install.sh --timer` y por la tecla `S` de la TUI). `pxu notify-flush` solo escribe en la cola: imprime `outbox: N sent, M still queued`, sale 0 si la cola queda vacía y 5 si queda algo, y con la cola vacía no toca la red. Máximo 50 mensajes y 7 días.
+Si el envío falla, el mensaje se guarda en `/var/lib/pxu/outbox/` (un JSON por mensaje) y se reintenta al final de la corrida siguiente y cada 15 minutos con `pxu notify-flush` (unidades `pxu-notify-flush.service` + `.timer`, `OnCalendar=*:0/15`, `Persistent=true`, instaladas por la tecla `S` de la TUI). `pxu notify-flush` solo escribe en la cola: imprime `outbox: N sent, M still queued`, sale 0 si la cola queda vacía y 5 si queda algo, y con la cola vacía no toca la red. Máximo 50 mensajes y 7 días.
 
 ### 4.4 Formato del aviso
 
@@ -358,10 +358,9 @@ pxu --help | -h
 
 ### Instalador (`install.sh`)
 
-`install.sh [--timer] [--force] [--uninstall [--purge]] [ruta-al-binario]`. Hay que ejecutarlo como root; sin `--force` exige que parezca un Proxmox (`pct` y `/etc/pve`). Se puede repetir sin problema.
+`install.sh [--force] [--release vX.Y.Z] [--uninstall [--purge]] [ruta-al-binario]`. Hay que ejecutarlo como root; sin `--force` exige que parezca un Proxmox (`pct` y `/etc/pve`). Se puede repetir sin problema.
 
 - **Instala** el binario en `/usr/local/bin/pxu` (reemplazo atómico) y crea `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu` con modo `0700`. **Nunca toca** un `/etc/pxu/config.toml` existente; si no hay, avisa de que pxu queda en solo lectura.
-- **`--timer`** copia las cuatro unidades de `dist/systemd/` a `/etc/systemd/system`, recarga systemd y habilita `pxu-update.timer` y `pxu-notify-flush.timer`. Sin él solo se instala el binario.
 - **`--uninstall`** deshabilita los timers, borra las unidades, el drop-in `pxu-update.timer.d` (el horario que guarda la TUI) y el binario; conserva `/etc/pxu`, `/var/lib/pxu` y `/var/log/pxu`. Con `--purge` borra también esos tres directorios.
 - Variables para pruebas: `DESTDIR` (instala bajo otra raíz, sin root, sin systemctl) y `PXU_UNITS` (carpeta de las unidades).
 - Para **actualizar** pxu basta con repetir la instalación: el binario se reemplaza y la configuración se conserva.
@@ -370,7 +369,7 @@ pxu --help | -h
 
 ### Timer de systemd
 
-Las unidades están en `dist/systemd/` (la misma fuente que embebe `share/schedule.rs` y que copia `install.sh --timer`):
+Las unidades están en `dist/systemd/` (la misma fuente que embebe `share/schedule.rs` y que copia `install.sh` al actualizar):
 
 ```ini
 # pxu-update.service

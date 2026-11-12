@@ -41,11 +41,7 @@ En Proxmox, como root:
 curl -fsSL https://vk2r.github.io/pxu/install.sh | sh
 ```
 
-Así se instala solo el programa y no queda nada corriendo. Para que pxu además compruebe y actualice solo cada día, agrega `--timer`:
-
-```sh
-curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --timer
-```
+Así se instala solo el programa y no queda nada corriendo. La actualización diaria se activa después desde la TUI (ver [Activar las actualizaciones automáticas](#activar-las-actualizaciones-automáticas)).
 
 El script descarga la última [release](https://github.com/vk2r/pxu/releases) (un binario estático que corre en Proxmox 8 y 9, más `dist/`), compara su SHA-256 con el `SHA256SUMS` de la release y la instala; si no coinciden, se detiene sin instalar nada. Para instalar una versión concreta agrega `--release v1.2.3`. Para actualizar, corre el mismo comando: el script dice qué versión hay instalada, se detiene si ya es la última y si no la reemplaza, junto con los timers si estaban instalados. Para leer el script antes de correrlo:
 
@@ -83,10 +79,9 @@ Compila pxu en otro equipo (con Rust, vía [mise](https://mise.jdx.dev)) e inst�
 3. En Proxmox, como root:
 
    ```sh
-   cd /root/pxu-install && sh install.sh ./pxu --timer
+   cd /root/pxu-install && sh install.sh ./pxu
    ```
 
-`--timer` activa la corrida diaria. Sin él, se instala solo el programa.
 El instalador se puede repetir sin problema y nunca sobrescribe tu configuración. Para actualizar pxu, repite los pasos de la opción que usaste.
 
 ## Probar pxu en modo solo lectura
@@ -123,9 +118,9 @@ Con cada contenedor, de uno en uno: copia temporal → simulación → actualiza
 
 ## Activar las actualizaciones automáticas
 
-Con `--timer` en la instalación, pxu comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados como arriba. Los contenedores apagados se omiten por defecto.
+La corrida diaria se activa desde la TUI: pulsa `g` para abrir la pantalla **Config** y luego `s`. pxu instala los timers de systemd y desde ahí comprueba y actualiza cada día a las **04:30** (hora del servidor, con un retraso aleatorio de hasta 15 minutos). Actualiza los contenedores marcados como arriba. Los contenedores apagados se omiten por defecto.
 
-Pulsa `g` para abrir la pantalla **Config**. Ahí, `s` cambia la hora o desactiva la corrida diaria, y `d` define cuántos días se guardan los logs (30 por defecto).
+En la misma pantalla, `s` también cambia la hora o desactiva la corrida diaria, y `d` define cuántos días se guardan los logs (30 por defecto).
 
 ![Pantalla Config: horario, logs y avisos](screenshots/08-config.png)
 
