@@ -1,6 +1,6 @@
-[English](README.md) | Español
+# Proxmox Updater (**pxu**)
 
-# pxu
+[English](README.md) | Español
 
 pxu mantiene al día los contenedores (LXC) de tu servidor Proxmox. Muestra qué contenedores tienen actualizaciones, los actualiza de uno en uno y, si algo sale mal, **vuelve atrás solo** al estado anterior. Puede ejecutarse cada día y avisarte por cualquier servicio compatible con Apprise.
 
@@ -38,6 +38,12 @@ Pxu se instala en Proxmox desde un binario hecho en otro lado. Puedes descargar 
 En Proxmox, como root:
 
 ```sh
+curl -fsSL https://vk2r.github.io/pxu/install.sh | sh
+```
+
+Así se instala solo el programa y no queda nada corriendo. Para que pxu además compruebe y actualice solo cada día, agrega `--timer`:
+
+```sh
 curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --timer
 ```
 
@@ -46,7 +52,7 @@ El script descarga la última [release](https://github.com/vk2r/pxu/releases) (u
 ```sh
 curl -fsSLo install.sh https://vk2r.github.io/pxu/install.sh
 less install.sh
-sh install.sh --timer
+sh install.sh
 ```
 
 GitHub compila y firma cada release desde su tag. Para comprobar también quién la compiló, verifica la atestación de GitHub en tu equipo (requiere la [CLI de GitHub](https://cli.github.com)): descarga de la release `pxu-<versión>-x86_64-linux.tar.gz` y `provenance.sigstore.json` y ejecuta

@@ -1,8 +1,8 @@
+# Proxmox Updater (**pxu**)
+
 English | [Español](README.es.md)
 
-# pxu
-
-pxu keeps the containers (LXC) on your Proxmox server up to date. It shows which containers have updates, updates them one at a time and, if something goes wrong, **rolls back by itself** to the previous state. It can run every day and notify you through any Apprise-compatible service.
+Proxmox Updater keeps the containers (LXC) on your Proxmox server up to date. It shows which containers have updates, updates them one at a time and, if something goes wrong, **rolls back by itself** to the previous state. It can run every day and notify you through any Apprise-compatible service.
 
 ![Container list with updates, backup and auto-update columns](screenshots/01-list.png)
 
@@ -38,6 +38,12 @@ Pxu is installed on Proxmox from a binary made elsewhere. You can download the s
 On Proxmox, as root:
 
 ```sh
+curl -fsSL https://vk2r.github.io/pxu/install.sh | sh
+```
+
+This installs only the program and leaves nothing running. For pxu to also check and update on its own every day, add `--timer`:
+
+```sh
 curl -fsSL https://vk2r.github.io/pxu/install.sh | sh -s -- --timer
 ```
 
@@ -46,7 +52,7 @@ The script downloads the latest [release](https://github.com/vk2r/pxu/releases) 
 ```sh
 curl -fsSLo install.sh https://vk2r.github.io/pxu/install.sh
 less install.sh
-sh install.sh --timer
+sh install.sh
 ```
 
 Each release is built and signed by GitHub from its tag. To also check who built it, verify GitHub's build attestation on your machine (needs the [GitHub CLI](https://cli.github.com)): download `pxu-<version>-x86_64-linux.tar.gz` and `provenance.sigstore.json` from the release and run
