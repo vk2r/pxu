@@ -93,8 +93,7 @@ En el servidor, como root:
 pxu
 ```
 
-Sin archivo de configuración, pxu está en **solo lectura**: puedes ver tus contenedores y comprobar actualizaciones, pero no actualiza nada.
-Usa `↑↓` para moverte, `c` para comprobar, `a` para marcar un contenedor, `u` para actualizar y `q` para salir. Pulsa `?` para ver todas las teclas. Con `d` abres la página Storage (espacio por storage y por contenedor, con alertas).
+pxu corre como root, pero sin archivo de configuración (`/etc/pxu/config.toml`) arranca en **modo solo lectura**, un modo propio de pxu para probarlo sin riesgo: puedes ver tus contenedores y comprobar actualizaciones, pero `u` no actualiza nada. Usa `↑↓` para moverte, `c` para comprobar y `q` para salir. Pulsa `?` para ver todas las teclas. Con `d` abres la página Storage (espacio por storage y por contenedor, con alertas). Para salir del modo solo lectura, cambia cualquier ajuste desde la TUI, por ejemplo marca un contenedor con `a`: pxu crea la configuración y desde ahí `u` actualiza.
 
 ![Página Storage: espacio por storage y por contenedor, con alertas](screenshots/06-storage.png)
 

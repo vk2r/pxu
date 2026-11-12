@@ -93,8 +93,7 @@ On the server, as root:
 pxu
 ```
 
-Without a configuration file, pxu is **read-only**: you can see your containers and check for updates, but nothing is updated.
-Use `↑↓` to move, `c` to check, `a` to mark a container, `u` to update and `q` to quit. Press `?` for all keys. Press `d` for the Storage page (space per storage and container, with alerts).
+pxu runs as root, but without a configuration file (`/etc/pxu/config.toml`) it starts in **read-only mode**, a mode of pxu itself so you can try it safely: you can see your containers and check for updates, but `u` updates nothing. Use `↑↓` to move, `c` to check and `q` to quit. Press `?` for all keys. Press `d` for the Storage page (space per storage and container, with alerts). To leave read-only mode, change any setting from the TUI, for example mark a container with `a`: pxu creates the configuration and from then on `u` updates.
 
 ![Storage page: space per storage and per container, with alerts](screenshots/06-storage.png)
 
