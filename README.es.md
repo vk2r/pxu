@@ -175,9 +175,9 @@ Con el `install.sh` que ya tienes en el servidor (opción B):
 ## Más documentación
 
 - [DEVELOPMENT.es.md](DEVELOPMENT.es.md): compilar, probar, capturas y contribuir.
-- [docs/ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona **pxu**, instalador, configuración, línea de comandos, logs.
-- [docs/DESIGN.es.md](docs/DESIGN.es.md): la TUI, pantalla por pantalla, con todas las teclas.
-- [docs/SECURITY-REVIEW.es.md](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
+- [ARCHITECTURE.es.md](docs/ARCHITECTURE.es.md): cómo funciona **pxu**, instalador, configuración, línea de comandos, logs.
+- [DESIGN.es.md](docs/DESIGN.es.md): la TUI, pantalla por pantalla, con todas las teclas.
+- [SECURITY-REVIEW.es.md](docs/SECURITY-REVIEW.es.md): revisión de seguridad.
 
 ## Licencia
 
