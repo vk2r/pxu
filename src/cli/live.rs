@@ -9,7 +9,7 @@ use pxu::share::update::{self, nvidia, Event, Outcome, RunReport, Step};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -594,9 +594,15 @@ fn badge(st: St, at: Duration) -> (String, Style) {
 
 pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
     let area = f.area();
-    let show_dl = m.dl.is_some() && m.rows.iter().any(|r| r.key == Key::Download);
+    // la barra solo se ve mientras se descarga: al llegar al 100 % (o al pasar al paso siguiente) desaparece
+    let show_dl = m.end.is_none()
+        && m.cur.is_some_and(|i| m.rows[i].key == Key::Download)
+        && m.dl.as_ref().is_some_and(|d| d.fraction().is_none_or(|x| x < 1.0));
     let steps_h = (m.rows.len() as u16 + 2).min(area.height.saturating_sub(10).max(4));
-    let now_h = if m.end.is_some() { (m.end.as_ref().map_or(0, |s| s.lines.len()) as u16 + 4).min(10) } else { 4 };
+    // «Right now»: 1 columna de margen a cada lado y el texto centrado en vertical (una fila libre arriba y otra abajo)
+    let doing_w = area.width.saturating_sub(4).max(1) as usize;
+    let doing_lines = (m.doing.chars().count().div_ceil(doing_w)).max(1) as u16;
+    let now_h = if m.end.is_some() { (m.end.as_ref().map_or(0, |s| s.lines.len()) as u16 + 4).min(10) } else { doing_lines + 4 };
     // el aviso de cancelación es largo: el pie crece con las líneas que ocupa (nunca se corta lo que va a pasar)
     let foot_h = match (&m.notice, &m.end) {
         (Some(n), None) => (((n.chars().count() + 2) as u16).div_ceil(area.width.max(1)) + 1).clamp(2, 8), // +1: el ajuste por palabras gasta algo más que la división
@@ -651,7 +657,11 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
 
     // ahora / resumen
     match &m.end {
-        None => f.render_widget(Paragraph::new(m.doing.as_str()).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::ALL).title(" Right now ")), now),
+        None => {
+            let top = now.height.saturating_sub(2 + doing_lines) / 2;
+            let block = Block::default().borders(Borders::ALL).title(" Right now ").padding(Padding::new(1, 1, top, 0));
+            f.render_widget(Paragraph::new(m.doing.as_str()).wrap(Wrap { trim: true }).block(block), now)
+        }
         Some(s) => {
             let (head, color) = match s.outcome {
                 Outcome::Ok => (format!("✓ Finished OK in {}", fmt_dur(s.took)), Color::Green),
@@ -680,16 +690,14 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
         if let Some(d) = &m.dl {
             let speed = d.speed().map_or("– MB/s".into(), |v| format!("{}/s", fmt_bytes(v as u64)));
             let eta = d.eta().map_or("ETA –".into(), |e| format!("ETA {}", fmt_dur(e)));
-            let done = m.end.is_some() || m.cur.is_some_and(|i| m.rows[i].key != Key::Download);
-            let got = if done { d.total.unwrap_or(d.got) } else { d.got };
-            let of = d.total.map_or(fmt_bytes(got), |t| format!("{} / {}", fmt_bytes(got), fmt_bytes(t)));
+            let of = d.total.map_or(fmt_bytes(d.got), |t| format!("{} / {}", fmt_bytes(d.got), fmt_bytes(t)));
             let pct = d.fraction().map_or(String::new(), |x| format!("{:>3.0}% · ", x * 100.0));
-            let label = if done { format!("{of} · downloaded") } else { format!("{pct}{of} · {speed} · {eta}") };
+            let label = format!("{pct}{of} · {speed} · {eta}");
             let frame = Block::default().borders(Borders::ALL).title(" Download ");
             let inner = frame.inner(dl).inner(ratatui::layout::Margin { horizontal: 1, vertical: 0 });
             f.render_widget(frame, dl);
             // sin glifos de bloque: cada celda es un espacio con color de fondo, así la barra mide lo mismo en toda su longitud
-            let ratio = if done { 1.0 } else { d.fraction().unwrap_or(0.0) }.clamp(0.0, 1.0);
+            let ratio = d.fraction().unwrap_or(0.0).clamp(0.0, 1.0);
             let w = inner.width as usize;
             let filled = (w as f64 * ratio).round() as usize;
             let chars: Vec<char> = label.chars().take(w).collect();
@@ -1055,6 +1063,19 @@ mod tests {
         }
         assert_eq!(m.states()[..3], [St::Ok, St::Running, St::Pending]);
         assert!(!m.critical());
+    }
+
+    #[test]
+    fn the_download_bar_disappears_at_100_percent_and_after_the_download_step() {
+        let mut m = Live::nvidia();
+        start_download(&mut m);
+        m.observe_download(s(4), 0);
+        m.observe_download(s(9), 200_000_000);
+        assert!(render(&m, 9).contains("Download ─"), "the bar is visible while downloading");
+        m.observe_download(s(14), 423_000_000);
+        assert!(!render(&m, 14).contains("Download ─"), "no bar at 100 %");
+        line(&mut m, 200, 0, "$ sha256sum /var/lib/pxu-nvidia/NVIDIA-Linux-x86_64-595.112.07.run");
+        assert!(!render(&m, 200).contains("Download ─"), "no bar after the download step");
     }
 
     #[test]
