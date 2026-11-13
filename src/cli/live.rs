@@ -1,4 +1,4 @@
-//! Mini TUI de `pxu update --host` (y de `--nvidia`, «Host Driver Update»): pasos con estado y tiempo, una línea que dice qué pasa AHORA, barra de descarga real,
+//! Mini TUI de `pxu update --host` (y de `--nvidia`, «Host Updates»): pasos con estado y tiempo, una línea que dice qué pasa AHORA, barra de descarga real,
 //! las últimas líneas de salida y un resumen final. Pantalla alterna: el instalador del driver tarda minutos y escribe cientos de líneas, y así el
 //! terminal queda intacto al salir (el resumen en texto se imprime después, y queda en el historial).
 //!
@@ -188,11 +188,11 @@ impl Live {
     }
     /// `pxu update --host --nvidia`: la lista de pasos llega con el `Plan` del motor.
     pub fn nvidia() -> Live {
-        Live::new("pxu · Host Driver Update", true)
+        Live::new("pxu · Host Updates · With NVIDIA Driver", true)
     }
     /// `pxu update --host`: los pasos son los del motor del apt.
     pub fn apt() -> Live {
-        let mut l = Live::new("pxu · update the Proxmox host", false);
+        let mut l = Live::new("pxu · Host Updates", false);
         for s in [Step::Preflight, Step::Backup, Step::Refresh, Step::Upgrade, Step::Verify] {
             l.push(Key::Host(s), apt_label(s));
         }
@@ -205,12 +205,8 @@ impl Live {
     }
 
     fn set_plan(&mut self, p: nvidia::Plan) {
-        self.title = if p.host && p.fresh {
-            format!("pxu · Host Driver Update · install the NVIDIA driver {}", p.to)
-        } else if p.host && p.from == p.to {
-            format!("pxu · Host Driver Update · reinstall the NVIDIA driver {} (same version, forced)", p.to)
-        } else if p.host {
-            format!("pxu · Host Driver Update · NVIDIA driver {} → {}", p.from, p.to)
+        self.title = if p.host {
+            "pxu · Host Updates · With NVIDIA Driver".to_string()
         } else {
             format!("pxu · NVIDIA driver {} libraries in CT", p.to)
         };
@@ -617,7 +613,9 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
     .areas(area);
 
     let total = m.end.as_ref().map_or(at, |s| s.took);
-    f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!(" {}", m.title), Style::new().add_modifier(Modifier::BOLD)), Span::raw(format!("   elapsed {}", fmt_dur(total)))])), head);
+    f.render_widget(Paragraph::new(Line::from(Span::styled(format!(" {}", m.title), Style::new().add_modifier(Modifier::BOLD)))), head);
+    // el tiempo transcurrido va en la esquina derecha, con el mismo margen de 1 columna que el título
+    f.render_widget(Paragraph::new(Line::from(format!("elapsed {} ", fmt_dur(total))).right_aligned()), head);
 
     // pasos
     let items: Vec<ListItem> = m
@@ -1048,7 +1046,7 @@ mod tests {
         assert_eq!(m.download_file().as_deref(), Some("/var/lib/pxu-nvidia/NVIDIA-Linux-x86_64-595.112.07.run"));
         let t = render(&m, 14);
         println!("--- mid-download\n{t}");
-        for want in ["NVIDIA driver 595.58.03 → 595.112.07", "Download driver 595.112.07", "20.0 MB / 423.0 MB", "2.0 MB/s", "ETA 3:21", "  5%", "Downloading the NVIDIA driver 595.112.07 from download.nvidia.com (423.0 MB)", "Ctrl+C cancels safely", "$ curl -fsSL"] {
+        for want in ["Host Updates · With NVIDIA Driver", "Download driver 595.112.07", "20.0 MB / 423.0 MB", "2.0 MB/s", "ETA 3:21", "  5%", "Downloading the NVIDIA driver 595.112.07 from download.nvidia.com (423.0 MB)", "Ctrl+C cancels safely", "$ curl -fsSL"] {
             assert!(t.contains(want), "missing {want:?} in:\n{t}");
         }
         assert_eq!(m.states()[..3], [St::Ok, St::Running, St::Pending]);
