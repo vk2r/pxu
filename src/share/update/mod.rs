@@ -631,7 +631,7 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     Ok(report)
 }
 
-/// Solo el driver NVIDIA, a mano: `pxu update --host --nvidia-reinstall` (`Mode::Reinstall`) o la opción del menú `u` de la TUI (`Mode::CtLibs`).
+/// Solo el driver NVIDIA, a mano: `pxu update --host --nvidia` (`Mode::Nvidia`) o la opción del menú `u` de la TUI (`Mode::CtLibs`).
 /// Mismo lock global y mismo log que una corrida normal; nunca reinicia el host. El informe lleva solo la entrada `nvidia` (host y cada CT aparte).
 pub fn run_nvidia(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: nvidia::Mode, cancel: &AtomicBool, ev_out: &mut dyn FnMut(Event)) -> Result<RunReport, RunError> {
     let started_at = now_s(host);
@@ -651,6 +651,7 @@ pub fn run_nvidia(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: nvidia::
     rec.borrow_mut().begin("NVIDIA driver");
     let reboot = host.exists(Path::new("/var/run/reboot-required")) || inv.host.as_ref().is_some_and(|h| h.reboot_pending());
     let gpu_cts = inv.guests.iter().filter(|g| g.gpu.nvidia).count() as u64;
+    // la instalación desde cero (solo manual, `--nvidia`) añade sondeos, apt e initramfs, cada uno con su propio plazo; el de la corrida (16 h) no los cuenta
     let step = if !fits(host, started_at, nvidia::worst_s(cfg, gpu_cts)) {
         let why = "skipped: not started: run time limit (its worst case does not fit in the time left)";
         ev(Event::Line(0, format!("NVIDIA driver: {why}")));

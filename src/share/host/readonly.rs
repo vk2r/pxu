@@ -72,6 +72,8 @@ pub fn host_cmd_is_read_only(argv: &[&str]) -> bool {
         a if a == crate::share::proxmox::guests::PVE_VERSION => true,
         // índice oficial de NVIDIA (solo lectura): decide si la TUI ofrece actualizar el driver
         a if a == nvidia::INDEX_CURL => true,
+        // lista de GPU de una versión (lectura a stdout, forma exacta): elige el driver de una instalación desde cero
+        a if nvidia::is_chips_curl(a) => true,
         ["apprise", "--config", "/dev/stdin", "-t", _, "-b", _, "-n", _] => true,
         // ¿admite el CT snapshots? Consulta pura de PVE (sin efectos): `{"hasFeature":0|1}`
         ["pvesh", "get", path, "--feature", "snapshot", "--output-format", "json"] => feature_path(path),
@@ -205,7 +207,7 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         self.inner.host_cmd(argv, o, s)
     }
     fn write_file(&self, p: &Path, data: &[u8]) -> io::Result<()> {
-        if !own_state_path(p, "/var/lib/pxu") && !(self.update_on() && own_state_path(p, "/var/log/pxu")) && !((self.update_on() || self.host_update_on() || self.nvidia_allows(|_| true)) && runlog::is_run_log_path(p)) {
+        if !own_state_path(p, "/var/lib/pxu") && !(self.update_on() && own_state_path(p, "/var/log/pxu")) && !((self.update_on() || self.host_update_on() || self.nvidia_allows(|_| true)) && runlog::is_run_log_path(p)) && !self.nvidia_allows(|g| g.allows_write(p, data)) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("read-only mode: refused write to {}", p.display())));
         }
         self.inner.write_file(p, data)
@@ -675,6 +677,28 @@ mod tests {
         }
         assert!(cmds.iter().all(|c| !run(&h, c)), "the guard closes it again");
         assert!(!crate::share::update::hostupdate::is_write_argv(&["sh", "/var/lib/pxu-nvidia/x.run", "--dkms"]));
+    }
+
+    #[test]
+    fn nvidia_fresh_install_commands_and_the_nouveau_blacklist_need_the_fresh_grant() {
+        use crate::share::host::NvidiaOptIn;
+        use crate::share::update::nvidia::{Grant, NOUVEAU_BODY, NOUVEAU_CONF};
+        let h = ro();
+        let plain = Grant::new("595.120.01", "6.17.13-2-pve", "open", vec![], vec![]).unwrap();
+        let fresh = Grant::fresh("595.120.01", "6.17.13-2-pve", "open", vec![], vec![]).unwrap();
+        let cmds = [fresh.apt_headers().unwrap(), fresh.initramfs()];
+        let run = |c: &Vec<String>| h.host_cmd(&c.iter().map(String::as_str).collect::<Vec<_>>(), &Default::default(), &mut Vec::<String>::new()).is_ok();
+        let write = |p: &str, d: &[u8]| h.write_file(Path::new(p), d).is_ok();
+        assert!(cmds.iter().all(|c| !run(c)) && !write(NOUVEAU_CONF, NOUVEAU_BODY.as_bytes()), "denied without the opt-in");
+        {
+            let _o = NvidiaOptIn::new(&h, plain);
+            assert!(cmds.iter().all(|c| !run(c)) && !write(NOUVEAU_CONF, NOUVEAU_BODY.as_bytes()), "denied with a reinstall grant");
+        }
+        let _o = NvidiaOptIn::new(&h, fresh);
+        assert!(cmds.iter().all(run), "allowed under the fresh grant");
+        assert!(write(NOUVEAU_CONF, NOUVEAU_BODY.as_bytes()));
+        assert!(!write(NOUVEAU_CONF, b"blacklist everything\n") && !write("/etc/modprobe.d/other.conf", NOUVEAU_BODY.as_bytes()), "only that file with that content");
+        assert!(!run(&vec!["apt-get".into(), "-y".into(), "install".into(), "proxmox-headers-6.1-pve".into()]) && !run(&vec!["update-initramfs".into(), "-u".into(), "-k".into(), "all".into()]));
     }
 
     #[test]

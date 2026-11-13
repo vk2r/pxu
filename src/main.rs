@@ -57,7 +57,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Cmd::Check { only, refresh, json, notify } => ExitCode::from(cli::cmd_check(host.as_ref(), &only, refresh, json, notify) as u8),
-        Cmd::Update { only, json, yes, notify, host: true, nvidia_reinstall } => ExitCode::from(cli::cmd_update_host(host.as_ref(), &only, json, yes, notify, nvidia_reinstall) as u8),
+        Cmd::Update { only, json, yes, notify, host: true, nvidia } => ExitCode::from(cli::cmd_update_host(host.as_ref(), &only, json, yes, notify, nvidia) as u8),
         Cmd::Update { only, json, yes, notify, host: false, .. } => ExitCode::from(cli::cmd_update(host.as_ref(), &only, json, yes, notify) as u8),
         Cmd::ConfigCheck => ExitCode::from(cli::cmd_config_check(host.as_ref()) as u8),
         Cmd::ConfigEncryptSecrets => ExitCode::from(cli::cmd_config_encrypt_secrets(host.as_ref()) as u8),

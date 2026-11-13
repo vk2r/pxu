@@ -207,9 +207,11 @@ impl MockHost {
                 // sin `nvidia-chips.out` no hay red (la revisión avisa y sigue)
                 match file("nvidia-chips.out") {
                     Some(t) if code("nvidia-chips") == 0 => {
-                        // como el real (`-o`): la página va a un archivo, no a la salida
+                        // como el real (`-o`): la página va a un archivo, no a la salida (sin `-o`, a la salida)
                         if let ["curl", .., "-o", dst, _] = argv {
                             let _ = self.write_file(Path::new(dst), t.as_bytes());
+                        } else {
+                            say(s, &t);
                         }
                         done(0)
                     }
@@ -259,6 +261,20 @@ impl MockHost {
                 }
                 s.line(if rc == 0 { "Installation of the NVIDIA Accelerated Graphics Driver is now complete." } else { "ERROR: Unable to build the NVIDIA kernel module." });
                 done(rc)
+            }
+            ["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", pkg] if pkg.starts_with("proxmox-headers-") => {
+                let rc = code("nvidia-headers");
+                if rc == 0 {
+                    let k = pkg.trim_start_matches("proxmox-headers-");
+                    let _ = self.write_file(Path::new(&format!("/lib/modules/{k}/build/.keep")), b"");
+                    let _ = self.write_file(Path::new(&format!("/lib/modules/{k}/build")), b"");
+                }
+                s.line(&format!("mock: apt-get install {pkg}"));
+                done(rc)
+            }
+            ["update-initramfs", "-u"] => {
+                s.line("update-initramfs: Generating /boot/initrd.img (mock)");
+                done(code("nvidia-initramfs"))
             }
             ["modprobe", "-r", ..] => done(code("nvidia-unload")),
             ["modprobe", "nvidia"] => done(code("nvidia-modprobe")),

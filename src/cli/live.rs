@@ -1,4 +1,4 @@
-//! Mini TUI de `pxu update --host` (y de `--nvidia-reinstall`): pasos con estado y tiempo, una línea que dice qué pasa AHORA, barra de descarga real,
+//! Mini TUI de `pxu update --host` (y de `--nvidia`, «Host Driver Update»): pasos con estado y tiempo, una línea que dice qué pasa AHORA, barra de descarga real,
 //! las últimas líneas de salida y un resumen final. Pantalla alterna: el instalador del driver tarda minutos y escribe cientos de líneas, y así el
 //! terminal queda intacto al salir (el resumen en texto se imprime después, y queda en el historial).
 //!
@@ -35,6 +35,7 @@ pub enum St {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Key {
     Prepare,
+    Setup,
     Download,
     Verify,
     Build,
@@ -117,13 +118,16 @@ pub fn summarize(rep: &RunReport) -> Summary {
     };
     if let Some(n) = &rep.nvidia {
         note(n.outcome);
-        lines.push(format!("NVIDIA driver {} → {}: {}", n.from.as_deref().unwrap_or("?"), n.to.as_deref().unwrap_or("?"), n.detail));
+        match &n.from {
+            Some(f) => lines.push(format!("NVIDIA driver {f} → {}: {}", n.to.as_deref().unwrap_or("?"), n.detail)),
+            None => lines.push(format!("NVIDIA driver install {}: {}", n.to.as_deref().unwrap_or("?"), n.detail)),
+        }
         for c in &n.cts {
             note(c.outcome);
             lines.push(format!("CT {} {}: {:?} — {}", c.vmid, c.name, c.outcome, c.detail));
         }
         if n.reboot_needed {
-            lines.push("REBOOT the host: nvidia-smi does not confirm the new driver yet (pxu never reboots it).".into());
+            lines.push("REBOOT the host (see above) and run the command again if it asks for it, or when nvidia-smi does not confirm the driver yet (pxu never reboots it).".into());
         }
     }
     for r in &rep.results {
@@ -182,9 +186,9 @@ impl Live {
     fn new(title: &str, nv: bool) -> Live {
         Live { title: title.into(), rows: vec![], cur: None, doing: "Starting…".into(), tail: VecDeque::new(), top: None, view: std::cell::Cell::new(10), origin: "HOST".into(), dl: None, plan: None, why: None, notice: None, end: None, nv }
     }
-    /// `pxu update --host --nvidia-reinstall`: la lista de pasos llega con el `Plan` del motor.
+    /// `pxu update --host --nvidia`: la lista de pasos llega con el `Plan` del motor.
     pub fn nvidia() -> Live {
-        Live::new("pxu · reinstall the NVIDIA driver", true)
+        Live::new("pxu · Host Driver Update", true)
     }
     /// `pxu update --host`: los pasos son los del motor del apt.
     pub fn apt() -> Live {
@@ -201,15 +205,20 @@ impl Live {
     }
 
     fn set_plan(&mut self, p: nvidia::Plan) {
-        self.title = if p.host && p.from == p.to {
-            format!("pxu · reinstall the NVIDIA driver {} (same version, forced)", p.to)
+        self.title = if p.host && p.fresh {
+            format!("pxu · Host Driver Update · install the NVIDIA driver {}", p.to)
+        } else if p.host && p.from == p.to {
+            format!("pxu · Host Driver Update · reinstall the NVIDIA driver {} (same version, forced)", p.to)
         } else if p.host {
-            format!("pxu · NVIDIA driver {} → {}", p.from, p.to)
+            format!("pxu · Host Driver Update · NVIDIA driver {} → {}", p.from, p.to)
         } else {
             format!("pxu · NVIDIA driver {} libraries in CT", p.to)
         };
         self.rows.clear();
         self.push(Key::Prepare, "Check disk space and NVIDIA's checksum");
+        if p.host && p.fresh {
+            self.push(Key::Setup, "Install kernel headers and block nouveau");
+        }
         self.push(Key::Download, format!("Download driver {}", p.to));
         self.push(Key::Verify, "Verify the download (SHA-256 and installer check)");
         if p.host {
@@ -262,6 +271,7 @@ impl Live {
         let to = self.plan.as_ref().map_or("?".into(), |p| p.to.clone());
         match key {
             Key::Prepare => format!("Checking that {} has enough free space and fetching NVIDIA's SHA-256 checksum for {}…", nvidia::WORK_DIR, nvidia::run_file(&to)),
+            Key::Setup => "Installing the kernel headers the driver build needs (if missing) and blocking nouveau for the next boot. If nouveau is loaded now, it stops here and asks you to reboot.".into(),
             Key::Download => format!("Downloading the NVIDIA driver {to} from download.nvidia.com{}. Nothing on the system has been touched yet.", self.dl.as_ref().and_then(|d| d.total).map_or(String::new(), |t| format!(" ({})", fmt_bytes(t)))),
             Key::Verify => "Verifying the download: its SHA-256 against NVIDIA's checksum, then the installer's own integrity check.".into(),
             Key::Build => "Unpacking the installer and test-compiling the kernel module for the running kernel. The current driver is still untouched.".into(),
@@ -387,6 +397,8 @@ impl Live {
         let has = |s: &str| t.iter().any(|x| *x == s || x.starts_with(s));
         match t.first().copied()? {
             _ if cmd.starts_with("rm -rf -- /var/lib/pxu-nvidia") && !cmd.starts_with("rm -rf -- /var/lib/pxu-nvidia.") => Some(Key::Cleanup),
+            "env" if vmid == 0 && has("apt-get") => Some(Key::Setup),
+            "update-initramfs" if vmid == 0 => Some(Key::Setup),
             "install" | "df" if vmid == 0 => Some(Key::Prepare),
             "curl" if has("-o") => Some(Key::Download),
             "curl" if has("-fsSIL") => Some(Key::Download),
@@ -426,7 +438,7 @@ impl Live {
         self.end.is_none()
             && self.cur.is_some_and(|i| match self.rows[i].key {
                 Key::Host(s) => !s.before_install(),
-                Key::Prepare | Key::Download | Key::Verify | Key::Build => false,
+                Key::Prepare | Key::Setup | Key::Download | Key::Verify | Key::Build => false,
                 _ => true,
             })
     }
@@ -774,6 +786,24 @@ impl Ui {
     }
 }
 
+/// Espera hasta `ms` a que el terminal tenga algo que leer. Con el terminal cerrado `event::poll` de crossterm gira sin respetar el plazo (HUP permanente en el epoll), así que la espera la hace poll(2) y el HUP se ve aquí.
+fn wait_tty(ms: i32) -> std::io::Result<bool> {
+    let mut p = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+    // SAFETY: `p` es un único pollfd válido que vive durante la llamada.
+    let r = unsafe { libc::poll(&mut p, 1, ms) };
+    if r < 0 {
+        let e = std::io::Error::last_os_error();
+        return if e.kind() == std::io::ErrorKind::Interrupted { Ok(false) } else { Err(e) };
+    }
+    if r == 0 {
+        return Ok(false);
+    }
+    if p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+    }
+    Ok(true)
+}
+
 fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>, cancel: &AtomicBool) {
     use crossterm::event::{self, Event as Ct, KeyCode, KeyEventKind, KeyModifiers};
     let t0 = Instant::now();
@@ -814,9 +844,13 @@ fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>,
         // un terminal roto no frena nada: el dibujo falla y se sigue
         let _ = term.draw(|f| draw(f, m, at));
         // sondeo corto: da el giro del spinner y deja pasar los eventos del motor
-        match event::poll(Duration::from_millis(100)) {
-            Ok(true) => {
-                if let Ok(Ct::Key(k)) = event::read() {
+        let polled = match wait_tty(100) {
+            Ok(true) => event::poll(Duration::ZERO),
+            other => other,
+        };
+        match polled {
+            Ok(true) => match event::read() {
+                Ok(Ct::Key(k)) => {
                     if k.kind != KeyEventKind::Press {
                         continue;
                     }
@@ -836,7 +870,15 @@ fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>,
                         return;
                     }
                 }
-            }
+                Ok(_) => {}
+                // poll dijo que había evento y leerlo falla (terminal cerrado): igual que un poll fallido
+                Err(_) => {
+                    if m.end.is_some() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            },
             Ok(false) => {}
             // el terminal falló (cerrado): sin tecla que esperar si la corrida ya acabó; si no, no girar en vacío
             Err(_) => {
@@ -878,7 +920,7 @@ mod tests {
     }
 
     fn plan() -> Plan {
-        Plan { from: "595.58.03".into(), to: "595.112.07".into(), host: true, stop: vec![(101, "plex".into()), (102, "ollama".into())], libs: vec![(101, "plex".into()), (103, "comfy".into())] }
+        Plan { from: "595.58.03".into(), to: "595.112.07".into(), host: true, stop: vec![(101, "plex".into()), (102, "ollama".into())], libs: vec![(101, "plex".into()), (103, "comfy".into())], fresh: false }
     }
 
     /// El motor, tal como habla en `nvidia::body` (mismos `$ …`, `== …` y avisos), hasta el inicio de la descarga.

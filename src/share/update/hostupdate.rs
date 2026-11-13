@@ -1386,7 +1386,7 @@ mod tests {
         assert!(c.iter().any(|a| a.starts_with("ct134 rm -rf -- /var/lib/pxu-nvidia.")), "the temp dir is removed: {c:#?}");
     }
 
-    /// Entrada manual (`--nvidia-reinstall` o la opción del menú `u`): mismo opt-in de escritura que la corrida de CT, sin `host_nvidia_auto`.
+    /// Entrada manual (`--nvidia` o la opción del menú `u`): mismo opt-in de escritura que la corrida de CT, sin `host_nvidia_auto`.
     fn manual_run(h: &ReadOnlyHost<MockHost>, mode: crate::share::update::nvidia::Mode) -> RunReport {
         let _ct_optin = UpdateOptIn::new(h);
         let cfg = Config::load(h).unwrap();
@@ -1395,14 +1395,14 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_reinstall_reinstalls_the_host_even_when_the_version_matches_and_the_timer_does_not() {
+    fn nvidia_reinstalls_the_host_even_when_the_version_matches_and_the_timer_does_not() {
         // el índice solo llega a la versión cargada (595.112.07): el timer no hace nada, el modo manual reinstala
         let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["auto_update = true", "nvidia_auto = true"]));
         let n0 = h.inner().recorded().len();
         assert!(timer_run(&h).nvidia.is_none(), "without host_nvidia_auto and with the same version the timer leaves the driver alone");
         assert!(!argvs(&h, n0).iter().any(|a| a.contains("--dkms")), "{:?}", argvs(&h, n0));
         let n1 = h.inner().recorded().len();
-        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
         let nv = rep.nvidia.as_ref().expect("entry");
         assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
         assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (Some("595.112.07"), Some("595.112.07")));
@@ -1412,6 +1412,65 @@ mod tests {
         assert!(!nv.reboot_needed && !c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "{c:?}");
     }
 
+    /// Host con GPU, sin driver NVIDIA y sin cabeceras del kernel en marcha (el caso de `--nvidia` que instala desde cero).
+    fn fresh_world(f: impl FnOnce(World) -> World) -> ReadOnlyHost<MockHost> {
+        gpu_world(|w| f(w.nvidia_run_driver(&["595.112.07", "595.120.01"]).without_file("/usr/bin/nvidia-uninstall").without_file("/proc/driver/nvidia/version").without_file("/lib/modules/6.17.13-2-pve/build/.keep").file("/exec/0/nvidia-chips.out", b"<tr id=\"devid24B0\"><td>RTX A4000</td></tr>\n")))
+    }
+
+    #[test]
+    fn nvidia_installs_the_driver_from_scratch_when_the_host_has_none() {
+        let h = fresh_world(|w| w);
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (None, Some("595.120.01")), "the newest in the index that lists the GPU");
+        let c = all_cmds(&h, n0);
+        let pos = |p: &str| c.iter().position(|a| a.contains(p)).unwrap_or_else(|| panic!("{p} missing in {c:#?}"));
+        assert!(pos("apt-get -y install proxmox-headers-6.17.13-2-pve") < pos("update-initramfs -u") && pos("update-initramfs -u") < pos("--dkms"), "{c:#?}");
+        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "the GPU CTs get their libs: {c:#?}");
+        assert!(c.iter().any(|a| a.contains("--kernel-module-type=open")), "an Ampere GPU takes the open module: {c:#?}");
+        assert!(h.inner().exists(std::path::Path::new(crate::share::update::nvidia::NOUVEAU_CONF)), "nouveau is blocked for the next boot");
+        assert!(!nv.reboot_needed, "{}", nv.detail);
+    }
+
+    #[test]
+    fn nvidia_with_nouveau_loaded_blocks_it_and_asks_for_a_reboot_without_installing() {
+        let h = fresh_world(|w| w.file("/sys/module/nouveau/.keep", b""));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Warn, "{}", nv.detail);
+        assert!(nv.reboot_needed && nv.detail.contains("reboot the host and run `pxu update --host --nvidia` again"), "{}", nv.detail);
+        let c = all_cmds(&h, n0);
+        assert!(c.iter().any(|a| a.contains("update-initramfs -u")), "{c:#?}");
+        assert!(!c.iter().any(|a| a.contains("--dkms") || a.contains("-o /var/lib/pxu-nvidia") || a.starts_with("ct")), "nothing is downloaded or installed: {c:#?}");
+        assert!(!c.iter().any(|a| a.contains("reboot")), "pxu never reboots: {c:#?}");
+    }
+
+    #[test]
+    fn nvidia_without_an_nvidia_gpu_fails_and_touches_nothing() {
+        let h = fresh_world(|w| w.host_out("lspci", "c5:00.0 Display controller [0380]: Advanced Micro Devices, Inc. [AMD/ATI] Phoenix3 [1002:1900] (rev c1)\n"));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Failed, "{}", nv.detail);
+        assert!(nv.detail.to_lowercase().contains("nvidia gpu"), "{}", nv.detail);
+        let c = all_cmds(&h, n0);
+        assert!(!c.iter().any(|a| a.contains("apt-get") || a.contains("update-initramfs") || a.contains("--dkms")), "{c:#?}");
+        assert!(!h.inner().exists(std::path::Path::new(crate::share::update::nvidia::NOUVEAU_CONF)));
+    }
+
+    #[test]
+    fn nvidia_with_an_apt_driver_still_skips() {
+        // módulo cargado pero sin `nvidia-uninstall`: lo gestiona apt
+        let h = gpu_world(|w| w.without_file("/usr/bin/nvidia-uninstall"));
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Skipped, "{}", nv.detail);
+        assert!(nv.detail.contains("apt-managed drivers are updated with the host"), "{}", nv.detail);
+    }
+
     #[test]
     fn reinstall_puts_libs_in_every_gpu_ct_without_any_per_ct_opt_in_and_a_stopped_one_is_started_and_stopped_again() {
         use crate::share::proxmox::guests::lxc_running;
@@ -1419,7 +1478,7 @@ mod tests {
         let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["nvidia_auto = false"]));
         assert!(!lxc_running(&h, 135));
         let n0 = h.inner().recorded().len();
-        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
         let nv = rep.nvidia.as_ref().expect("entry");
         assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
         let by = |id: u32| nv.cts.iter().find(|c| c.vmid == id).unwrap_or_else(|| panic!("CT {id} missing: {:?}", nv.cts));
@@ -1439,7 +1498,7 @@ mod tests {
     fn a_failing_stopped_ct_is_left_stopped_and_reported_as_failed() {
         use crate::share::proxmox::guests::lxc_running;
         let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file("/exec/135/nvidia-ct-sha.out", b"deadbeef  x\n"));
-        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
         let nv = rep.nvidia.as_ref().expect("entry");
         assert_eq!(nv.outcome, Outcome::Ok, "the host result does not depend on the CTs: {}", nv.detail);
         let ct = nv.cts.iter().find(|c| c.vmid == 135).expect("ct entry");
@@ -1459,7 +1518,7 @@ mod tests {
         let inv = guests::load(&h);
         let mut notes: Vec<Note> = vec![];
         let mut order: Vec<String> = vec![];
-        let rep = update::run_nvidia(&h, &inv, &cfg, crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| match e {
+        let rep = update::run_nvidia(&h, &inv, &cfg, crate::share::update::nvidia::Mode::Nvidia, &AtomicBool::new(false), &mut |e| match e {
             Event::Nv(n) => {
                 order.push(format!("{n:?}").chars().take(8).collect());
                 notes.push(n)
@@ -1480,7 +1539,7 @@ mod tests {
         let h2 = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file("/exec/0/nvidia-head.exit", b"22"));
         let _o = UpdateOptIn::new(&h2);
         let mut n2 = 0;
-        let r2 = update::run_nvidia(&h2, &guests::load(&h2), &Config::load(&h2).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| n2 += matches!(e, Event::Nv(Note::Size(_))) as u32).unwrap();
+        let r2 = update::run_nvidia(&h2, &guests::load(&h2), &Config::load(&h2).unwrap(), crate::share::update::nvidia::Mode::Nvidia, &AtomicBool::new(false), &mut |e| n2 += matches!(e, Event::Nv(Note::Size(_))) as u32).unwrap();
         assert_eq!((n2, r2.nvidia.unwrap().outcome), (0, Outcome::Ok));
     }
 
@@ -1495,7 +1554,7 @@ mod tests {
         let _o = UpdateOptIn::new(&h);
         let n0 = h.inner().recorded().len();
         let mut lines = vec![];
-        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| if let Event::Line(_, l) = e { lines.push(l) }).unwrap();
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Nvidia, &AtomicBool::new(false), &mut |e| if let Event::Line(_, l) = e { lines.push(l) }).unwrap();
         (rep.nvidia.unwrap(), lines, argvs(&h, n0))
     }
 
@@ -1552,7 +1611,7 @@ mod tests {
         let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]));
         let _ct_optin = UpdateOptIn::new(&h);
         let n0 = h.inner().recorded().len();
-        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(true), &mut |_| {}).unwrap();
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Nvidia, &AtomicBool::new(true), &mut |_| {}).unwrap();
         // el mock no corta curl (ignora `cancel`): la corrida igual se cancela antes de tocar el driver
         let nv = rep.nvidia.unwrap();
         assert_eq!(nv.outcome, Outcome::Cancelled, "{}", nv.detail);
@@ -1567,7 +1626,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut evs: Vec<Event> = vec![];
         let t = std::time::Instant::now();
-        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &cancel, &mut |e| {
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Nvidia, &cancel, &mut |e| {
             if matches!(&e, Event::Line(_, l) if l.starts_with("mock: ") && l.ends_with("running…")) {
                 cancel.store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -1600,7 +1659,7 @@ mod tests {
         let _ct_optin = UpdateOptIn::new(&h);
         let cancel = AtomicBool::new(false);
         let mut lines: Vec<String> = vec![];
-        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &cancel, &mut |e| {
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Nvidia, &cancel, &mut |e| {
             if let Event::Step(_, Step::Upgrade) = &e {
                 cancel.store(true, std::sync::atomic::Ordering::SeqCst);
             }

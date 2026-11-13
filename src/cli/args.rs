@@ -3,13 +3,14 @@ pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config chec
                            upgrade CTs one at a time (temporary backup, simulate, upgrade, verify; automatic rollback\n                           to the backup if it fails, then the backup is deleted). Only CTs with a
                            positive recent `pxu check`; default: CTs with auto_update. The only command that writes.
                            exit: 0 ok · 20 a CT failed · 30 stopped (2 failures in a row / Ctrl-C) · 3 busy · 2 usage
-  pxu update --host [--yes] [--nvidia-reinstall] install the Proxmox HOST updates (apt full-upgrade) after a confirmation (the manual way).
+  pxu update --host [--yes] [--nvidia] install the Proxmox HOST updates (apt full-upgrade) after a confirmation (the manual way).
                            Needs a terminal (never unattended, --yes included: exit 2 without one); --yes skips the question.
                            Backs up /etc (and snapshots a ZFS root) first. Same exit codes.\n                           With `[update] host_auto = true`, a plain `pxu update` (and the timer) updates the host FIRST, and with\n                           `host_nvidia_auto` also the NVIDIA .run driver (same branch); CTs only if the host ended well. Never reboots.
-                           --nvidia-reinstall (manual only, the timer never uses it): instead of the apt update, REINSTALL the NVIDIA .run driver
-                           of the host even if the version already matches (stops the GPU CTs, reloads the module, then updates the libs of the CTs
-                           of ALL the GPU CTs, the stopped ones are started and stopped again). Does nothing without --yes. Host and each CT are reported separately; a reboot is asked only if
-                           nvidia-smi does not confirm the new version.
+                           --nvidia (manual only, the timer never uses it): instead of the apt update, INSTALL the NVIDIA .run driver if the host
+                           has none (newest version that lists your GPU, kernel headers, nouveau blocked: if nouveau is loaded it stops and asks you to
+                           reboot, then run it again) or REINSTALL it, even if the version already matches (stops the GPU CTs, reloads the module, then updates
+                           the libs of ALL the GPU CTs, the stopped ones are started and stopped again). Does nothing without --yes. Host and each CT are reported
+                           separately; a reboot is asked only if nvidia-smi does not confirm the new version.
   pxu config check         validate /etc/pxu/config.toml (TOML, values, mode 0600, owner root)
   pxu config encrypt-secrets
                            encrypt a plain-text [apprise] api_key / urls with systemd-creds (same as saving them in the TUI: Config → n)
@@ -21,7 +22,7 @@ pub enum Cmd {
     Tui,
     List { json: bool, all_nodes: bool },
     Check { only: Vec<u32>, refresh: Option<bool>, json: bool, notify: bool },
-    Update { only: Vec<u32>, json: bool, yes: bool, notify: bool, host: bool, nvidia_reinstall: bool },
+    Update { only: Vec<u32>, json: bool, yes: bool, notify: bool, host: bool, nvidia: bool },
     ConfigCheck,
     ConfigEncryptSecrets,
     ConfigDisableApprise,
@@ -39,7 +40,7 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
     let (mut json, mut all_nodes, mut cmd) = (false, false, None::<&'static str>);
     let (mut refresh, mut notify, mut only) = (None::<bool>, false, Vec::<u32>::new());
     let (mut yes, mut no_notify, mut want_check, mut want_encrypt, mut want_disable, mut host_flag) = (false, false, false, false, false, false);
-    let mut nvidia_reinstall = false;
+    let mut nvidia = false;
     while let Some(a) = p.next()? {
         match a {
             Long("mock") => mock = Some(p.value()?.string()?),
@@ -51,7 +52,7 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
             Long("yes") | Short('y') => yes = true,
             Long("no-notify") => no_notify = true,
             Long("host") => host_flag = true,
-            Long("nvidia-reinstall") => nvidia_reinstall = true,
+            Long("nvidia") => nvidia = true,
             Long("ct") => {
                 for v in p.value()?.string()?.split(',') {
                     only.push(v.trim().parse().map_err(|_| lexopt::Error::from(format!("--ct: `{v}` is not a vmid")))?);
@@ -84,8 +85,8 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
     let c = match cmd {
         Some("list") => Cmd::List { json, all_nodes },
         Some("check") => Cmd::Check { only, refresh, json, notify },
-        Some("update") if nvidia_reinstall && !host_flag => return Err(lexopt::Error::from("--nvidia-reinstall only works with --host".to_string())),
-        Some("update") => Cmd::Update { only, json, yes, notify: !no_notify, host: host_flag, nvidia_reinstall },
+        Some("update") if nvidia && !host_flag => return Err(lexopt::Error::from("--nvidia only works with --host".to_string())),
+        Some("update") => Cmd::Update { only, json, yes, notify: !no_notify, host: host_flag, nvidia },
         Some("config") if want_check => Cmd::ConfigCheck,
         Some("config") if want_encrypt => Cmd::ConfigEncryptSecrets,
         Some("config") if want_disable => Cmd::ConfigDisableApprise,
@@ -106,11 +107,12 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_reinstall_needs_host_and_is_in_the_help() {
-        assert!(matches!(args(&["update", "--host", "--nvidia-reinstall", "--yes"]), Ok((Cmd::Update { host: true, nvidia_reinstall: true, yes: true, .. }, _))));
-        assert!(matches!(args(&["update", "--host"]), Ok((Cmd::Update { nvidia_reinstall: false, .. }, _))));
-        assert!(args(&["update", "--nvidia-reinstall"]).is_err(), "without --host it is refused");
-        assert!(USAGE.contains("--nvidia-reinstall") && USAGE.contains("the timer never uses it"));
+    fn nvidia_needs_host_and_is_in_the_help() {
+        assert!(matches!(args(&["update", "--host", "--nvidia", "--yes"]), Ok((Cmd::Update { host: true, nvidia: true, yes: true, .. }, _))));
+        assert!(matches!(args(&["update", "--host"]), Ok((Cmd::Update { nvidia: false, .. }, _))));
+        assert!(args(&["update", "--nvidia"]).is_err(), "without --host it is refused");
+        assert!(args(&["update", "--host", "--nvidia-reinstall", "--yes"]).is_err(), "the old name is gone");
+        assert!(USAGE.contains("--nvidia") && USAGE.contains("the timer never uses it"));
     }
 
     #[test]

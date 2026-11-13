@@ -1,6 +1,8 @@
 //! Actualización del driver NVIDIA del host (instalado con el `.run` oficial) y de las librerías de los CT, como paso OPCIONAL de la corrida
 //! programada: `[update] host_nvidia_auto`. Sin ese opt-in el timer no toca nada de NVIDIA. No hay opt-in por CT: cada vez que se instala o reinstala el
 //! driver del host, TODOS los CT LXC con GPU NVIDIA reciben las librerías de esa versión (si no, fallarían al usar la GPU).
+//! A mano (`pxu update --host --nvidia --yes`), sin driver cargado en el host, INSTALA uno desde cero: elige la versión más nueva del índice cuyo
+//! `supportedchips` lista la GPU, instala las cabeceras del kernel, bloquea `nouveau` (si está cargado para y pide reiniciar) y sigue como una reinstalación.
 //!
 //! Fuente única (NVIDIA, sin intermediarios): índice `https://download.nvidia.com/XFree86/Linux-x86_64/` (una línea `href='<versión>/'` por
 //! versión); por versión, `NVIDIA-Linux-x86_64-<v>.run` y `.run.sha256sum` (`<hash>  <archivo>`). Solo se sube dentro de la MISMA rama mayor
@@ -31,6 +33,15 @@ pub const WORK_DIR: &str = "/var/lib/pxu-nvidia";
 /// Dentro de cada CT el instalador va a un directorio nuevo (`mktemp -d`, 0700, del root del CT) bajo `/var/lib` (no `/var/tmp`, sticky y de escritura pública).
 pub const CT_DIR_PREFIX: &str = "/var/lib/pxu-nvidia.";
 const CT_RUN_NAME: &str = "nvidia.run";
+/// Instalación desde cero: archivo que bloquea `nouveau` (lo único que pxu escribe fuera de sus carpetas; solo con ese permiso y con ESTE contenido exacto).
+pub const NOUVEAU_CONF: &str = "/etc/modprobe.d/pxu-blacklist-nouveau.conf";
+pub const NOUVEAU_BODY: &str = "# written by pxu: the NVIDIA driver needs nouveau out of the way\nblacklist nouveau\noptions nouveau modeset=0\n";
+const NOUVEAU_SYS: &str = "/sys/module/nouveau";
+/// Versiones (de la más nueva hacia atrás) cuyo `supportedchips` se mira para elegir la de una instalación desde cero.
+const CHIPS_PROBES: usize = 12;
+const CHIPS_PROBE_S: u64 = 45;
+/// Cabeceras del kernel (apt) e `update-initramfs`: se esperan de verdad.
+const SETUP_S: u64 = 600;
 /// Instalador que deja el `.run`: su presencia = el driver NO viene de apt.
 pub const UNINSTALL: &str = "/usr/bin/nvidia-uninstall";
 const NVRM: &str = "/proc/driver/nvidia/version";
@@ -129,6 +140,15 @@ pub fn sha_url(v: &str) -> String {
 pub fn chips_url(v: &str) -> String {
     format!("{INDEX_URL}{v}/README/supportedchips.html")
 }
+/// Lectura de esa misma página a la salida, sin opt-in y sin escribir nada (la instalación desde cero la usa para ELEGIR la versión): solo la forma exacta.
+pub fn chips_curl(v: &str) -> Argv {
+    a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", &chips_url(v)])
+}
+pub fn is_chips_curl(argv: &[&str]) -> bool {
+    let [c, f, p, h, m, t, url] = argv else { return false };
+    [*c, *f, *p, *h, *m, *t] == ["curl", "-fsS", "--proto", "=https", "--max-time", "30"]
+        && url.strip_prefix(INDEX_URL).and_then(|r| r.strip_suffix("/README/supportedchips.html")).is_some_and(|v| parse_version(v).is_some())
+}
 /// Dónde se guarda esa página: a un archivo, para no volcar sus ~11.000 líneas en el panel ni en el log.
 pub fn chips_path(v: &str) -> String {
     format!("{WORK_DIR}/supportedchips-{v}.html")
@@ -161,6 +181,10 @@ pub fn host_nvidia_ids(lspci: &str) -> Vec<String> {
     }
     v
 }
+/// `open` si TODAS las GPUs son Turing o más nuevas (ID PCI ≥ 0x1E00: el módulo abierto de NVIDIA no soporta Pascal ni anteriores); si no, `proprietary`.
+pub fn flavor_for_ids(ids: &[String]) -> &'static str {
+    if !ids.is_empty() && ids.iter().all(|i| u32::from_str_radix(i, 16).is_ok_and(|n| n >= 0x1E00)) { "open" } else { "proprietary" }
+}
 fn extract_dir(v: &str) -> String {
     format!("{WORK_DIR}/extract-{v}")
 }
@@ -185,11 +209,25 @@ pub struct Grant {
     pub stop_cts: Vec<u32>,
     /// CT LXC con GPU NVIDIA: reciben las librerías de `version` (los apagados se arrancan y se vuelven a apagar).
     pub libs_cts: Vec<u32>,
+    /// Instalación desde cero (sin driver en el host): además deja pasar las cabeceras del kernel, `update-initramfs` y el bloqueo de `nouveau`.
+    pub fresh: bool,
 }
 
 impl Grant {
     pub fn new(version: &str, kernel: &str, flavor: &str, stop_cts: Vec<u32>, libs_cts: Vec<u32>) -> Option<Grant> {
-        (parse_version(version).is_some() && kernel_ok(kernel) && matches!(flavor, "open" | "proprietary")).then(|| Grant { version: version.into(), kernel: kernel.into(), flavor: flavor.into(), stop_cts, libs_cts })
+        (parse_version(version).is_some() && kernel_ok(kernel) && matches!(flavor, "open" | "proprietary")).then(|| Grant { version: version.into(), kernel: kernel.into(), flavor: flavor.into(), stop_cts, libs_cts, fresh: false })
+    }
+    pub fn fresh(version: &str, kernel: &str, flavor: &str, stop_cts: Vec<u32>, libs_cts: Vec<u32>) -> Option<Grant> {
+        Grant::new(version, kernel, flavor, stop_cts, libs_cts).map(|g| Grant { fresh: true, ..g })
+    }
+    /// `apt-get install proxmox-headers-<kernel>`: solo para kernels `…-pve` (el nombre del paquete sale del kernel ya validado).
+    pub fn apt_headers(&self) -> Option<Argv> {
+        self.kernel.ends_with("-pve").then(|| a(&["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", &format!("proxmox-headers-{}", self.kernel)]))
+    }
+    pub fn initramfs(&self) -> Argv { a(&["update-initramfs", "-u"]) }
+    /// La única escritura fuera de las carpetas de pxu: el bloqueo de `nouveau`, con ese contenido y solo en una instalación desde cero.
+    pub fn allows_write(&self, p: &Path, data: &[u8]) -> bool {
+        self.fresh && p == Path::new(NOUVEAU_CONF) && data == NOUVEAU_BODY.as_bytes()
     }
     pub fn mkdir(&self) -> Argv { a(&["install", "-d", "-m", "0700", "-o", "root", "-g", "root", WORK_DIR]) }
     pub fn df(&self) -> Argv { a(&["df", "-Pk", WORK_DIR]) }
@@ -221,10 +259,15 @@ impl Grant {
     }
 
     fn fixed(&self) -> Vec<Argv> {
-        vec![
+        let mut v = vec![
             self.mkdir(), self.df(), self.head(), self.fetch_chips(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
             self.unload(), self.load(), self.install(), self.cleanup(), self.smi(), a(hostcheck::DKMS),
-        ]
+        ];
+        if self.fresh {
+            v.push(self.initramfs());
+            v.extend(self.apt_headers());
+        }
+        v
     }
 }
 
@@ -341,6 +384,8 @@ pub struct Plan {
     pub stop: Vec<(u32, String)>,
     /// CT que reciben las librerías.
     pub libs: Vec<(u32, String)>,
+    /// Instalación desde cero: el host no tenía driver (`from` va vacío).
+    pub fresh: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -427,8 +472,9 @@ fn finish(c: &mut Cx, outcome: Outcome, detail: String) -> NvidiaRun {
 pub enum Mode {
     /// Corrida programada o `pxu update` «de todos»: solo con `host_nvidia_auto`; el host solo si hay una versión más nueva en su rama.
     Scheduled,
-    /// `pxu update --host --nvidia-reinstall` (solo a mano): reinstala el driver del host aunque la versión ya coincida, sin exigir `host_nvidia_auto`.
-    Reinstall,
+    /// `pxu update --host --nvidia` (solo a mano), sin exigir `host_nvidia_auto`: con el driver `.run` cargado lo reinstala aunque la versión ya coincida;
+    /// sin driver en el host lo instala desde cero.
+    Nvidia,
     /// Menú `u` de la TUI: reinstala las librerías del driver, con la versión del host, en ESTE CT. El host y los demás CT no se tocan.
     CtLibs(u32),
 }
@@ -449,13 +495,26 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     if reboot_pending && !matches!(mode, Mode::CtLibs(_)) {
         return skip("skipped: a host reboot is pending (new kernel installed, not running); reboot first, pxu never reboots the host");
     }
-    let Some((cur, flavor)) = host_driver(host) else { return skip("skipped: no NVIDIA driver is loaded in the host") };
-    if !host.exists(Path::new(UNINSTALL)) {
+    let loaded = host_driver(host);
+    // sin driver cargado, solo `--nvidia` a mano instala uno desde cero; la corrida programada y las librerías de un CT no tienen nada que hacer
+    let fresh = loaded.is_none() && mode == Mode::Nvidia;
+    if loaded.is_none() && !fresh {
+        return skip("skipped: no NVIDIA driver is loaded in the host");
+    }
+    if loaded.is_some() && !host.exists(Path::new(UNINSTALL)) {
         return skip("skipped: the host driver was not installed with the NVIDIA .run (no nvidia-uninstall): apt-managed drivers are updated with the host");
     }
     let kernel = crate::share::host::read_string(host, "/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_string();
-    // las librerías de un CT usan la versión que el host YA tiene cargada: no hace falta mirar el índice
-    let newest = if matches!(mode, Mode::CtLibs(_)) {
+    let (cur, mut flavor) = loaded.unwrap_or_else(|| (String::new(), "proprietary"));
+    let mut picked: Option<String> = None;
+    if fresh {
+        match pick_fresh(host, cfg) {
+            Ok((v, f)) => (picked, flavor) = (Some(v), f),
+            Err(why) => return Some((NvidiaRun { outcome: Outcome::Failed, ..NvidiaRun::skipped(&why) }, None)),
+        }
+    }
+    // las librerías de un CT usan la versión que el host YA tiene cargada (y una instalación desde cero ya eligió la suya): no hace falta mirar el índice
+    let newest = if matches!(mode, Mode::CtLibs(_)) || fresh {
         None
     } else {
         let mut probe: Vec<String> = Vec::new();
@@ -469,10 +528,10 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     };
     let host_needs = match mode {
         Mode::Scheduled => newest.is_some(),
-        Mode::Reinstall => true,
+        Mode::Nvidia => true,
         Mode::CtLibs(_) => false,
     };
-    let target = newest.clone().unwrap_or_else(|| cur.clone());
+    let target = picked.or_else(|| newest.clone()).unwrap_or_else(|| cur.clone());
     // CT con GPU NVIDIA: en marcha → se paran con el módulo; TODOS reciben las librerías (los apagados se arrancan y se vuelven a apagar)
     let gpu_cts: Vec<&crate::share::model::Guest> = inv.guests.iter().filter(|g| g.kind == GuestKind::Lxc && !g.template && g.gpu.nvidia).collect();
     let stop_cts: Vec<u32> = if host_needs { gpu_cts.iter().filter(|g| lxc_running(host, g.vmid)).map(|g| g.vmid).collect() } else { vec![] };
@@ -489,11 +548,11 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
         return None;
     }
     let libs_cts: Vec<u32> = libs.iter().map(|g| g.vmid).collect();
-    let Some(grant) = Grant::new(&target, &kernel, flavor, stop_cts.clone(), libs_cts.clone()) else { return skip("skipped: could not build a safe command set (unexpected version or kernel name)") };
+    let Some(grant) = (if fresh { Grant::fresh } else { Grant::new })(&target, &kernel, flavor, stop_cts.clone(), libs_cts.clone()) else { return skip("skipped: could not build a safe command set (unexpected version or kernel name)") };
     let mut c = Cx {
         cx: Ctx { host, vmid: 0, log: vec![], dropped: 0, capture: vec![], abort: None, hold: false, no_prune: false, ev, security: 0, cancel: None, interrupted: false, root_used_kb: None },
         started_at,
-        from: Some(cur.clone()),
+        from: (!fresh).then(|| cur.clone()),
         to: Some(target.clone()),
         cts: vec![],
         reboot_needed: false,
@@ -501,7 +560,8 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     };
     let what = match mode {
         Mode::CtLibs(id) => format!("driver libs in CT {id} only (host {cur} stays untouched)"),
-        Mode::Reinstall if newest.is_none() => format!("host {cur} ({flavor}) reinstalled (same version, forced)"),
+        _ if fresh => format!("no NVIDIA driver in the host: installing {target} ({flavor}) from scratch"),
+        Mode::Nvidia if newest.is_none() => format!("host {cur} ({flavor}) reinstalled (same version, forced)"),
         _ if host_needs => format!("host {cur} ({flavor}) → {target}"),
         _ => format!("host {cur} ({flavor}) → {target} (libs only: host already current)"),
     };
@@ -513,7 +573,7 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
         }
     }
     let named = |ids: &[u32]| -> Vec<(u32, String)> { ids.iter().map(|&id| (id, inv.guests.iter().find(|g| g.vmid == id).map(|g| g.name.clone()).unwrap_or_default())).collect() };
-    (c.cx.ev)(Event::Nv(Note::Plan(Plan { from: cur.clone(), to: target.clone(), host: host_needs, stop: named(&stop_cts), libs: named(&libs_cts) })));
+    (c.cx.ev)(Event::Nv(Note::Plan(Plan { from: cur.clone(), to: target.clone(), host: host_needs, stop: named(&stop_cts), libs: named(&libs_cts), fresh })));
     // El permiso se deriva de las opciones del usuario y vale solo mientras dura este paso.
     let _optin = NvidiaOptIn::new(host, grant.clone());
     let (res, stop) = body(&mut c, cfg, &grant, mode, host_needs, &libs, cancel);
@@ -521,6 +581,48 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     let (outcome, detail) = res;
     let run = finish(&mut c, outcome, detail);
     Some((run, stop))
+}
+
+/// Instalación desde cero: la GPU NVIDIA del host (`lspci`) y la versión MÁS NUEVA del índice cuyo `supportedchips` la lista. Solo lecturas (sin opt-in).
+/// Devuelve la versión y el sabor del módulo; `Err` = por qué no se puede, sin haber tocado nada.
+fn pick_fresh(host: &dyn Host, cfg: &Config) -> Result<(String, &'static str), String> {
+    let o = quick(cfg);
+    let mut out: Vec<String> = Vec::new();
+    let ids = match host.host_cmd(hostcheck::LSPCI, &o, &mut out) {
+        Ok(e) if e.code == 0 => host_nvidia_ids(&out.join("\n")),
+        Ok(e) => return Err(format!("cannot read the GPU list (lspci exit {}); nothing was installed", e.code)),
+        Err(e) => return Err(format!("cannot read the GPU list (lspci: {e}); nothing was installed")),
+    };
+    if ids.is_empty() {
+        return Err("no NVIDIA GPU found in lspci (no 10de video or 3D controller): there is no driver to install; nothing was changed".into());
+    }
+    let mut idx: Vec<String> = Vec::new();
+    let versions = match host.host_cmd(INDEX_CURL, &o, &mut idx) {
+        Ok(e) if e.code == 0 => parse_index(&idx.join("\n")),
+        Ok(e) => return Err(format!("cannot read the NVIDIA index (curl exit {}); nothing was installed", e.code)),
+        Err(e) => return Err(format!("cannot read the NVIDIA index: {e}; nothing was installed")),
+    };
+    let po = ExecOpts { timeout_s: Some(CHIPS_PROBE_S), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() };
+    let mut last = String::new();
+    for v in versions.iter().rev().take(CHIPS_PROBES) {
+        let mut page: Vec<String> = Vec::new();
+        match host.host_cmd(&argv(&chips_curl(v)), &po, &mut page) {
+            Ok(e) if e.code == 0 => {
+                let ok = parse_supported_ids(&page.join("\n"));
+                if !ok.is_empty() && ids.iter().all(|i| ok.contains(i)) {
+                    return Ok((v.clone(), flavor_for_ids(&ids)));
+                }
+            }
+            Ok(e) => last = format!("curl exit {}", e.code),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    let list = ids.iter().map(|i| format!("10de:{}", i.to_ascii_lowercase())).collect::<Vec<_>>().join(", ");
+    Err(if last.is_empty() {
+        format!("GPU {list} is not listed in the supportedchips of the newest {CHIPS_PROBES} NVIDIA releases; nothing was installed")
+    } else {
+        format!("cannot read NVIDIA's supportedchips ({last}); nothing was installed")
+    })
 }
 
 /// `CT 129 (llama-swap): no libraries (already at the target version)`: por qué un CT con GPU no recibe las librerías del driver
@@ -563,7 +665,8 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
         r => return fail(c, format!("cannot check free space: {}", describe(&r))),
     }
     // ---- ¿la versión nueva soporta TODAS las GPUs del host? Antes de bajar el `.run`; si la lista no está disponible se avisa y se sigue
-    if host_needs {
+    // (una instalación desde cero ya eligió la versión por esa lista)
+    if host_needs && !g.fresh {
         if let Err(why) = check_gpu_support(c, g, &q) {
             return fail(c, why);
         }
@@ -574,6 +677,11 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
         r => return fail(c, format!("cannot download the checksum: {}", describe(&r))),
     };
     let Some(want) = want else { return fail(c, "the NVIDIA .sha256sum file is malformed".into()) };
+    if g.fresh {
+        if let Some(r) = fresh_setup(c, g) {
+            return r;
+        }
+    }
     c.cx.step(super::Step::Refresh);
     if let Ok(0) = c.cx.host_cmd(&argv(&g.head()), &q) {
         if let Some(n) = parse_content_length(&c.cx.capture) {
@@ -654,7 +762,10 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
     let n_bad = c.cts.iter().filter(|r| r.outcome == Outcome::Failed).count();
     let what = match mode {
         Mode::CtLibs(_) => format!("host untouched (driver {})", g.version),
-        _ if host_needs => format!("host driver {} → {}", c.from.as_deref().unwrap_or("?"), g.version),
+        _ if host_needs => match c.from.as_deref() {
+            Some(f) => format!("host driver {f} → {}", g.version),
+            None => format!("host driver {} installed (there was none)", g.version),
+        },
         _ => format!("host driver already {}", g.version),
     };
     let ok_ids: Vec<String> = c.cts.iter().filter(|r| r.outcome == Outcome::Ok).map(|r| r.vmid.to_string()).collect();
@@ -662,6 +773,49 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
     let detail = format!("{what}; CT updated: {updated}{}", if n_bad > 0 { format!(" ({n_bad} failed: see each CT)") } else { String::new() });
     // en `CtLibs` el host no se tocó: no hay resultado del host que dar
     ((if matches!(mode, Mode::CtLibs(_)) { Outcome::Skipped } else { Outcome::Ok }, detail), None)
+}
+
+fn failed(c: &mut Cx, why: String) -> Res {
+    c.cx.say(&format!("!! {why}"));
+    ((Outcome::Failed, why), None)
+}
+
+/// Las dos escrituras de la instalación desde cero (apt y `update-initramfs`): no se matan a mitad.
+fn uninterrupted(s: u64) -> ExecOpts<'static> {
+    ExecOpts { timeout_s: Some(s), no_kill_on_timeout: true, env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
+}
+
+/// Instalación desde cero, antes de descargar nada grande: cabeceras del kernel (apt) y bloqueo de `nouveau`. `Some` = el paso termina aquí
+/// (falló, o `nouveau` está cargado y hay que reiniciar el host antes de instalar).
+fn fresh_setup(c: &mut Cx, g: &Grant) -> Option<Res> {
+    let build = format!("/lib/modules/{}/build", g.kernel);
+    if !c.cx.host.exists(Path::new(&build)) {
+        let Some(cmd) = g.apt_headers() else {
+            return Some(failed(c, format!("kernel headers for {} are missing and it is not a Proxmox (-pve) kernel: install them by hand and run this again", g.kernel)));
+        };
+        match c.cx.host_cmd(&argv(&cmd), &uninterrupted(SETUP_S)) {
+            Ok(0) if c.cx.host.exists(Path::new(&build)) => {}
+            r => return Some(failed(c, format!("cannot install the kernel headers (proxmox-headers-{}): {}; nothing else was changed", g.kernel, describe(&r)))),
+        }
+    }
+    let blocked = matches!(c.cx.host.read_file(Path::new(NOUVEAU_CONF)), Ok(b) if b == NOUVEAU_BODY.as_bytes());
+    if !blocked {
+        c.cx.say(&format!("writing {NOUVEAU_CONF} (blacklist nouveau)"));
+        if let Err(e) = c.cx.host.write_file(Path::new(NOUVEAU_CONF), NOUVEAU_BODY.as_bytes()) {
+            return Some(failed(c, format!("cannot write {NOUVEAU_CONF}: {e}")));
+        }
+        match c.cx.host_cmd(&argv(&g.initramfs()), &uninterrupted(SETUP_S)) {
+            Ok(0) => {}
+            r => return Some(failed(c, format!("update-initramfs failed ({}) after blocking nouveau; nothing was installed", describe(&r)))),
+        }
+    }
+    if c.cx.host.exists(Path::new(NOUVEAU_SYS)) {
+        c.reboot_needed = true;
+        let why = "nouveau is loaded (now blocked for the next boot): reboot the host and run `pxu update --host --nvidia` again (pxu never reboots it); nothing was installed";
+        c.cx.say(&format!("!! {why}"));
+        return Some(((Outcome::Warn, why.into()), None));
+    }
+    None
 }
 
 /// `Err` solo si una GPU NVIDIA de video del host NO está en la lista de `version`; sin lista legible o sin GPUs que comprobar, avisa y sigue.
@@ -901,6 +1055,27 @@ fn ct_libs_work(c: &mut Cx, g: &Grant, vmid: u32, want: &str) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fresh_install_helpers_pick_the_flavor_and_accept_only_exact_forms() {
+        let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(flavor_for_ids(&ids(&["24B0"])), "open");
+        assert_eq!(flavor_for_ids(&ids(&["24B0", "1B80"])), "proprietary", "one pre-Turing GPU makes it proprietary");
+        assert_eq!(flavor_for_ids(&[]), "proprietary");
+        let c = chips_curl("595.120.01");
+        assert!(is_chips_curl(&c.iter().map(String::as_str).collect::<Vec<_>>()));
+        let mut bad = c.clone();
+        bad[6] = "https://evil.example/README/supportedchips.html".into();
+        assert!(!is_chips_curl(&bad.iter().map(String::as_str).collect::<Vec<_>>()));
+        let mut with_o = c.clone();
+        with_o.insert(6, "-o".into());
+        assert!(!is_chips_curl(&with_o.iter().map(String::as_str).collect::<Vec<_>>()));
+        assert!(Grant::new("595.120.01", "6.17.13-2-pve", "open", vec![], vec![]).unwrap().apt_headers().unwrap().last().unwrap() == "proxmox-headers-6.17.13-2-pve");
+        assert!(Grant::new("595.120.01", "6.12.0-generic", "open", vec![], vec![]).unwrap().apt_headers().is_none(), "only -pve kernels");
+        let plain = Grant::new("595.120.01", "6.17.13-2-pve", "open", vec![], vec![]).unwrap();
+        assert!(!plain.allows_write(Path::new(NOUVEAU_CONF), NOUVEAU_BODY.as_bytes()));
+        assert!(Grant::fresh("595.120.01", "6.17.13-2-pve", "open", vec![], vec![]).unwrap().allows_write(Path::new(NOUVEAU_CONF), NOUVEAU_BODY.as_bytes()));
+    }
 
     const HTML: &str = "<html><body><a href='../'>../</a>\n<span class='dir'><a href='590.48.01/'>590.48.01/</a></span>\n<span class='dir'><a href='595.58.03/'>595.58.03/</a></span>\n<span class='dir'><a href='595.80/'>595.80/</a></span>\n<span class='dir'><a href='595.112.07/'>595.112.07/</a></span>\n<span class='dir'><a href='596.10.01/'>596.10.01/</a></span>\n<a href='latest.txt'>latest.txt</a>\n<a href='1.0-9746/'>x</a>\n<a href=\"595.112.07/\">dup double quotes</a></body></html>";
 
