@@ -174,11 +174,8 @@ pub(super) fn read_bounded<R: BufRead>(mut r: R, max_line: usize, max_bytes: usi
         if total >= max_bytes || lines >= max_lines {
             truncated = true;
             // solo drenar: el hijo no debe bloquearse en un pipe lleno
-            loop {
-                let n = match r.fill_buf() {
-                    Ok(b) => b.len(),
-                    Err(_) => break,
-                };
+            while let Ok(b) = r.fill_buf() {
+                let n = b.len();
                 if n == 0 {
                     break;
                 }
