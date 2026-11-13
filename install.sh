@@ -2,8 +2,8 @@
 # Installs or updates pxu on a Proxmox host (run as root on the host).
 # Usage: ./install.sh [options] [path-to-binary]
 # Without a local binary it downloads the release bundle from GitHub and checks it against the
-# release's SHA256SUMS and verifies its GitHub build attestation (needs the GitHub CLI `gh`) before
-# extracting or installing anything. If pxu is already installed it says which
+# release's SHA256SUMS and verifies its GitHub build attestation with `cosign` (installed through apt
+# if missing, as are curl and tar) before extracting or installing anything. If pxu is already installed it says which
 # version is there: the same version stops without changes, another one is replaced, together
 # with the systemd units if they were installed. The timers are set up from the TUI (S key).
 set -eu
@@ -16,14 +16,16 @@ usage() {
 Usage: ./install.sh [--force] [--release vX.Y.Z] [--uninstall [--purge]] [path-to-binary]
   path-to-binary   defaults to ./pxu next to the script, else target/release/pxu; if neither
                    exists, the release bundle is downloaded from GitHub; its SHA-256 and its
-                   GitHub build attestation (needs `gh`) are checked before it is extracted
+                   GitHub build attestation (checked with `cosign`, installed through apt if
+                   missing) are checked before it is extracted
   --release TAG    download that release instead of the latest one (implies downloading)
   --force          do not require the machine to be Proxmox
   --uninstall      remove the binary and units; keep /etc/pxu and /var/lib/pxu
   --purge          with --uninstall, also delete /etc/pxu, /var/lib/pxu and /var/log/pxu
 Variable DESTDIR: install under another root (testing); requires no root or Proxmox and skips systemctl.
 Variable PXU_SKIP_ATTESTATION=1: download without verifying the attestation (SHA-256 only, which cannot
-detect a replaced release); it prints a warning. Without it, a missing `gh` stops the install.
+detect a replaced release); it prints a warning. Without it, a missing cosign is installed through apt;
+if that is not possible the install stops.
 USAGE
 }
 
@@ -115,10 +117,53 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' INT TERM
 
+# Installs apt package $1 (needed for $2) as root, or stops with the command to run by hand.
+apt_install() {
+    say "installing $1 (needed $2)"
+    if [ "$(id -u)" != 0 ] || ! command -v apt-get >/dev/null 2>&1; then
+        die "$1 is needed $2 but cannot be installed here (needs root and apt-get); install it yourself (apt-get install -y $1)${3:-}"
+    fi
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y "$1" >&2 || { apt-get update >&2 && apt-get install -y "$1" >&2; } || die "apt could not install $1; run: apt-get update && apt-get install -y $1${3:-}"
+}
+
+# Installs apt package $2 if command $1 is missing; $3 says what it is for.
+need_tool() {
+    command -v "$1" >/dev/null 2>&1 || apt_install "$2" "$3"
+    command -v "$1" >/dev/null 2>&1 || die "$1 is still missing after installing $2"
+}
+
+# cosign >= 2.4.0 reads GitHub's attestation bundles; succeeds if the one on PATH is that new.
+# Debian's package reports GitVersion "devel": then the package version (e.g. 2.5.0-2+b4) decides, and
+# with no version at all cosign is not rejected (the verification itself will tell).
+cosign_ok() {
+    command -v cosign >/dev/null 2>&1 || return 1
+    v=$(cosign version 2>&1 | sed -n 's/^GitVersion: *v\{0,1\}\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | head -n 1)
+    if [ -z "$v" ] && command -v dpkg-query >/dev/null 2>&1; then
+        v=$(dpkg-query -W -f='${Version}' cosign 2>/dev/null | sed -n 's/^\([0-9]*:\)\{0,1\}\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2 \3/p' | head -n 1)
+    fi
+    [ -n "$v" ] || return 0
+    set -- $v
+    [ "$1" -gt 2 ] || { [ "$1" -eq 2 ] && [ "$2" -ge 4 ]; }
+}
+
+# Makes sure cosign >= 2.4.0 is there, installing or upgrading it through apt.
+ensure_cosign() {
+    cosign_ok && return 0
+    skiphint="; or set PXU_SKIP_ATTESTATION=1 to skip the check knowingly (SHA-256 only)"
+    if command -v cosign >/dev/null 2>&1; then
+        say "cosign is older than 2.4.0; upgrading it"
+    fi
+    apt_install cosign "to verify the build attestation" "$skiphint"
+    cosign_ok || die "cosign 2.4.0 or newer is needed to verify the build attestation, and apt provides an older one; install it from https://github.com/sigstore/cosign/releases$skiphint"
+}
+
 # Downloads the release bundle into $work, checks it against SHA256SUMS and its GitHub build
-# attestation, and points $here and $bin at its contents.
+# attestation (cosign), and points $here and $bin at its contents.
 download() {
-    command -v curl >/dev/null 2>&1 || die "curl is needed to download pxu"
+    need_tool curl curl "to download pxu"
+    need_tool tar tar "to extract pxu"
+    need_tool sha256sum coreutils "to check the SHA-256 of the download"
     base=https://github.com/$repo/releases
     # HTTPS only, also across redirects
     dl() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$@"; }
@@ -145,9 +190,14 @@ download() {
     if [ "${PXU_SKIP_ATTESTATION:-0}" = 1 ]; then
         say "WARNING: PXU_SKIP_ATTESTATION=1: the build attestation was NOT verified (SHA-256 only)"
     else
-        command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is needed to verify the build attestation of $name.tar.gz; install it, or set PXU_SKIP_ATTESTATION=1 to skip the check knowingly"
+        ensure_cosign
         dl -o "$work/provenance.sigstore.json" "$base/download/$release/provenance.sigstore.json" || die "cannot download provenance.sigstore.json of $release"
-        gh attestation verify "$work/$name.tar.gz" --repo "$repo" --bundle "$work/provenance.sigstore.json" >/dev/null || die "the build attestation of $name.tar.gz is not valid for $repo; nothing was installed"
+        # Identity required: GitHub Actions' issuer and this repository's release workflow on a tag.
+        # --new-bundle-format is what cosign 2.x needs for GitHub's bundles (3.x accepts it, deprecated).
+        cosign verify-blob-attestation --new-bundle-format --type slsaprovenance1 --bundle "$work/provenance.sigstore.json" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github.com/$repo/\\.github/workflows/release\\.yml@refs/tags/v" \
+            "$work/$name.tar.gz" >"$work/cosign.out" 2>&1 || { tail -n 15 "$work/cosign.out" >&2; die "the build attestation of $name.tar.gz is not valid for $repo; nothing was installed"; }
         say "build attestation verified"
     fi
     tar -xzf "$work/$name.tar.gz" -C "$work"

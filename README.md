@@ -51,10 +51,14 @@ less install.sh
 sh install.sh
 ```
 
-Each release is built and signed by GitHub from its tag. To also check who built it, verify GitHub's build attestation on your machine (needs the [GitHub CLI](https://cli.github.com)): download `pxu-<version>-x86_64-linux.tar.gz` and `provenance.sigstore.json` from the release and run
+Each release is built and signed by GitHub from its tag. To also check who built it, verify GitHub's build attestation on your machine (needs [cosign](https://github.com/sigstore/cosign) 2.4.0 or newer; `install.sh` installs it with apt if missing): download `pxu-<version>-x86_64-linux.tar.gz` and `provenance.sigstore.json` from the release and run
 
 ```sh
-gh attestation verify pxu-<version>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
+cosign verify-blob-attestation --new-bundle-format --type slsaprovenance1 \
+  --bundle provenance.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/vk2r/pxu/\.github/workflows/release\.yml@refs/tags/v' \
+  pxu-<version>-x86_64-linux.tar.gz
 ```
 
 ### Option B: build it yourself

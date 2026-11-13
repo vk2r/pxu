@@ -51,10 +51,14 @@ less install.sh
 sh install.sh
 ```
 
-GitHub compila y firma cada release desde su tag. Para comprobar también quién la compiló, verifica la atestación de GitHub en tu equipo (requiere la [CLI de GitHub](https://cli.github.com)): descarga de la release `pxu-<versión>-x86_64-linux.tar.gz` y `provenance.sigstore.json` y ejecuta
+GitHub compila y firma cada release desde su tag. Para comprobar también quién la compiló, verifica la atestación de GitHub en tu equipo (requiere [cosign](https://github.com/sigstore/cosign) 2.4.0 o superior; `install.sh` lo instala con apt si falta): descarga de la release `pxu-<versión>-x86_64-linux.tar.gz` y `provenance.sigstore.json` y ejecuta
 
 ```sh
-gh attestation verify pxu-<versión>-x86_64-linux.tar.gz --repo vk2r/pxu --bundle provenance.sigstore.json
+cosign verify-blob-attestation --new-bundle-format --type slsaprovenance1 \
+  --bundle provenance.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/vk2r/pxu/\.github/workflows/release\.yml@refs/tags/v' \
+  pxu-<versión>-x86_64-linux.tar.gz
 ```
 
 ### Opción B: compilarlo tú
