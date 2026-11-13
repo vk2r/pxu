@@ -2,6 +2,8 @@
 //! Compilado solo en debug/tests o con `--features mock` (nunca en el release por defecto).
 pub mod scenario;
 pub mod storage;
+/// Bytes simulados de la descarga NVIDIA (`nvidia-download.slow`); 0 = la mini TUI lee el archivo real.
+pub static MOCK_DL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use crate::share::host::*;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -224,6 +226,13 @@ impl MockHost {
             }
             ["curl", .., "-o", dst, _] => {
                 let rc = code("nvidia-download");
+                // `nvidia-download.slow` (bytes totales): la descarga avanza poco a poco, para las capturas
+                if let Some(total) = file("nvidia-download.slow").and_then(|t| t.trim().parse::<u64>().ok()) {
+                    for i in 1..=40u64 {
+                        MOCK_DL.store(total * i / 40, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(150));
+                    }
+                }
                 if rc == 0 {
                     let _ = self.write_file(Path::new(dst), b"mock .run");
                 }

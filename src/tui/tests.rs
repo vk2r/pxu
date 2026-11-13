@@ -67,9 +67,34 @@ fn help_popup(out: &str) -> String {
         .join("\n")
 }
 
+/// Cambia ` pxu <versión> ` por ` pxu X.Y.Z `. En un borde (`─` justo antes) agrega o quita
+/// `─` para que la línea mida lo mismo con cualquier largo de versión.
+fn normalize_version(s: &str) -> String {
+    let from = concat!(" pxu ", env!("CARGO_PKG_VERSION"), " ");
+    let to = " pxu X.Y.Z ";
+    let diff = from.chars().count() as isize - to.chars().count() as isize;
+    s.split_inclusive('\n')
+        .map(|l| {
+            let Some(i) = l.find(from) else { return l.to_string() };
+            let (head, tail) = (&l[..i], &l[i + from.len()..]);
+            if !head.ends_with('─') {
+                return format!("{head}{to}{tail}");
+            }
+            let head = if diff >= 0 {
+                format!("{head}{}", "─".repeat(diff as usize))
+            } else {
+                let keep = head.trim_end_matches('─');
+                let dashes = head[keep.len()..].chars().count().saturating_sub(diff.unsigned_abs());
+                format!("{keep}{}", "─".repeat(dashes))
+            };
+            format!("{head}{to}{tail}")
+        })
+        .collect()
+}
+
 fn check_snapshot(name: &str, actual: &str) {
     // la versión cambia en cada release: los snapshots llevan un marcador fijo
-    let actual = actual.replace(concat!(" pxu ", env!("CARGO_PKG_VERSION"), " "), " pxu X.Y.Z ");
+    let actual = normalize_version(actual);
     let path = format!("{}/tests/snapshots/{name}.txt", env!("CARGO_MANIFEST_DIR"));
     if std::env::var_os("PXU_UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&path, actual).unwrap();

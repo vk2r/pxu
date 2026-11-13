@@ -37,3 +37,5 @@ run demo-scheduled; keys g; shot 08-config
 keys n; keys Tab; keys Tab; keys Tab; keys -l system; shot 09-notifications
 keys Enter; shot 10-notifications-confirm
 run demo-scheduled; keys S; shot 11-schedule
+# 12: `pxu update --host --nvidia-reinstall --yes` (mini TUI «Live output» a media descarga, con la barra de progreso; caso mock host-nvidia)
+run "host-nvidia update --host --nvidia-reinstall --yes"; sleep 2; shot 12-nvidia-reinstall

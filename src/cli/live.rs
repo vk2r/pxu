@@ -9,7 +9,7 @@ use pxu::share::update::{self, nvidia, Event, Outcome, RunReport, Step};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -577,7 +577,7 @@ fn badge(st: St, at: Duration) -> (String, Style) {
     match st {
         St::Pending => ("○".into(), Style::new().fg(Color::DarkGray)),
         St::Running => (SPIN[(at.as_millis() / 100 % 10) as usize].into(), Style::new().fg(Color::Cyan)),
-        St::Ok => ("✔".into(), Style::new().fg(Color::Green)),
+        St::Ok => ("✓".into(), Style::new().fg(Color::Green)),
         St::Warn => ("!".into(), Style::new().fg(Color::Yellow)),
         St::Failed => ("✘".into(), Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)),
         St::Skipped => ("–".into(), Style::new().fg(Color::DarkGray)),
@@ -644,7 +644,7 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
         None => f.render_widget(Paragraph::new(m.doing.as_str()).wrap(Wrap { trim: true }).block(Block::default().borders(Borders::ALL).title(" Right now ")), now),
         Some(s) => {
             let (head, color) = match s.outcome {
-                Outcome::Ok => (format!("✔ Finished OK in {}", fmt_dur(s.took)), Color::Green),
+                Outcome::Ok => (format!("✓ Finished OK in {}", fmt_dur(s.took)), Color::Green),
                 Outcome::Warn => (format!("! Finished with warnings in {}", fmt_dur(s.took)), Color::Yellow),
                 Outcome::Cancelled => (format!("– Cancelled after {}", fmt_dur(s.took)), Color::Yellow),
                 Outcome::Skipped => (format!("– Nothing was done ({})", fmt_dur(s.took)), Color::Gray),
@@ -675,10 +675,23 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
             let of = d.total.map_or(fmt_bytes(got), |t| format!("{} / {}", fmt_bytes(got), fmt_bytes(t)));
             let pct = d.fraction().map_or(String::new(), |x| format!("{:>3.0}% · ", x * 100.0));
             let label = if done { format!("{of} · downloaded") } else { format!("{pct}{of} · {speed} · {eta}") };
-            f.render_widget(
-                Gauge::default().block(Block::default().borders(Borders::ALL).padding(Padding::horizontal(1)).title(" Download ")).gauge_style(Style::new().fg(Color::Cyan)).ratio(if done { 1.0 } else { d.fraction().unwrap_or(0.0) }).label(label),
-                dl,
-            );
+            let frame = Block::default().borders(Borders::ALL).title(" Download ");
+            let inner = frame.inner(dl).inner(ratatui::layout::Margin { horizontal: 1, vertical: 0 });
+            f.render_widget(frame, dl);
+            // sin glifos de bloque: cada celda es un espacio con color de fondo, así la barra mide lo mismo en toda su longitud
+            let ratio = if done { 1.0 } else { d.fraction().unwrap_or(0.0) }.clamp(0.0, 1.0);
+            let w = inner.width as usize;
+            let filled = (w as f64 * ratio).round() as usize;
+            let chars: Vec<char> = label.chars().take(w).collect();
+            let start = (w - chars.len()) / 2;
+            let spans: Vec<Span> = (0..w)
+                .map(|i| {
+                    let ch = if i >= start && i < start + chars.len() { chars[i - start] } else { ' ' };
+                    let style = if i < filled { Style::new().fg(Color::Black).bg(Color::Cyan) } else { Style::new().fg(Color::White).bg(Color::DarkGray) };
+                    Span::styled(ch.to_string(), style.add_modifier(Modifier::BOLD))
+                })
+                .collect();
+            f.render_widget(Paragraph::new(Line::from(spans)), inner);
         }
     }
 
@@ -791,7 +804,10 @@ fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>,
             return;
         }
         if let Some(p) = m.download_file() {
-            if let Ok(md) = std::fs::symlink_metadata(&p) {
+            let fake = pxu::share::mock::MOCK_DL.load(Ordering::SeqCst);
+            if fake > 0 {
+                m.observe_download(at, fake);
+            } else if let Ok(md) = std::fs::symlink_metadata(&p) {
                 m.observe_download(at, md.len());
             }
         }
@@ -1110,7 +1126,7 @@ mod tests {
         m.finish(s(342), ok_summary());
         let t = render(&m, 400);
         println!("--- finished ok\n{t}");
-        assert!(t.contains("✔ Finished OK in 5:42"), "{t}");
+        assert!(t.contains("✓ Finished OK in 5:42"), "{t}");
         assert!(t.contains("Log: /var/log/pxu/run-20261112-224500.log"), "{t}");
         assert!(t.contains("Press Enter, q or Ctrl+C to close"), "{t}");
         assert!(m.states().iter().all(|s| matches!(s, St::Ok | St::Skipped)), "{:?}", m.states());
@@ -1147,7 +1163,7 @@ mod tests {
             let t = render_w(&m, 300, w);
             println!("--- failed {w} cols\n{t}");
             let row = |mark: char| t.lines().find(|l| l.contains(mark) && l.starts_with('│')).unwrap().to_string();
-            let (bad, ok) = (row('✘'), row('✔'));
+            let (bad, ok) = (row('✘'), row('✓'));
             assert!(bad.contains('…'), "the step name is truncated:\n{t}");
             assert!(bad.ends_with("0:01│"), "the time stays complete:\n{t}");
             assert_eq!(bad.chars().count(), ok.chars().count(), "aligned with the other rows:\n{t}");
