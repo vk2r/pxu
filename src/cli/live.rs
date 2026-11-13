@@ -1005,7 +1005,7 @@ mod tests {
     }
 
     fn ok_summary() -> Summary {
-        Summary { outcome: Outcome::Ok, lines: vec!["NVIDIA driver 595.58.03 → 595.112.07: host driver 595.58.03 → 595.112.07; CT libs: 2/2 updated".into()], took: s(342), log: Some("/var/log/pxu/run-20261112-224500.log".into()) }
+        Summary { outcome: Outcome::Ok, lines: vec!["NVIDIA driver 595.58.03 → 595.112.07: host driver 595.58.03 → 595.112.07; CT updated: 129, 130".into()], took: s(342), log: Some("/var/log/pxu/run-20261112-224500.log".into()) }
     }
 
     #[test]

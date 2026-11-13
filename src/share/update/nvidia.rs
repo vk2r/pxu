@@ -18,6 +18,7 @@ use crate::share::proxmox::guests::{lxc_running, Inventory};
 use crate::share::proxmox::hostcheck;
 use serde::Serialize;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
@@ -123,6 +124,42 @@ pub fn run_url(v: &str) -> String {
 pub fn sha_url(v: &str) -> String {
     format!("{}.sha256sum", run_url(v))
 }
+/// Lista de GPUs que soporta ESA versión (unos 200 KB, contra ~400 MB del `.run`): se mira antes de descargar nada.
+pub fn chips_url(v: &str) -> String {
+    format!("{INDEX_URL}{v}/README/supportedchips.html")
+}
+/// Dónde se guarda esa página: a un archivo, para no volcar sus ~11.000 líneas en el panel ni en el log.
+pub fn chips_path(v: &str) -> String {
+    format!("{WORK_DIR}/supportedchips-{v}.html")
+}
+
+/// IDs PCI (4 hex en mayúsculas) de las filas `<tr id="devidXXXX">` / `devidXXXX_SSSS_SSSS` (con subsistema cuenta el primero) de la página
+/// de GPUs soportadas. La lectura termina en la sección de GPUs «legacy» («no longer supported»): lo que lista ya NO lo soporta la rama.
+pub fn parse_supported_ids(html: &str) -> BTreeSet<String> {
+    let lower = html.to_ascii_lowercase();
+    let end = lower.find("no longer supported").unwrap_or(lower.len());
+    let (mut ids, mut rest) = (BTreeSet::new(), &lower[..end]);
+    while let Some(i) = rest.find("id=") {
+        rest = &rest[i + 3..];
+        let Some(r) = rest.strip_prefix('"').or_else(|| rest.strip_prefix('\'')).and_then(|r| r.strip_prefix("devid")) else { continue };
+        let id = r.get(..4).filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()) && r[4..].starts_with(['_', '"', '\'']));
+        ids.extend(id.map(str::to_ascii_uppercase));
+    }
+    ids
+}
+
+/// IDs `10de:XXXX` (en mayúsculas) de las controladoras de video NVIDIA de `lspci -nn` (clases 0300 VGA y 0302 3D; el audio HDMI no cuenta).
+pub fn host_nvidia_ids(lspci: &str) -> Vec<String> {
+    let mut v = Vec::new();
+    for l in lspci.lines() {
+        let mut br = l.split('[').skip(1).filter_map(|t| t.split_once(']').map(|(x, _)| x));
+        let (Some(_), Some(ids)) = (br.next().filter(|c| matches!(*c, "0300" | "0302")), br.last()) else { continue };
+        if let Some(id) = ids.strip_prefix("10de:").filter(|d| d.len() == 4 && d.bytes().all(|b| b.is_ascii_hexdigit())) {
+            v.push(id.to_ascii_uppercase());
+        }
+    }
+    v
+}
 fn extract_dir(v: &str) -> String {
     format!("{WORK_DIR}/extract-{v}")
 }
@@ -157,6 +194,7 @@ impl Grant {
     pub fn df(&self) -> Argv { a(&["df", "-Pk", WORK_DIR]) }
     /// Solo cabeceras: de ahí sale el tamaño de la descarga para la barra de progreso (si falla, la barra no tiene total y la descarga sigue igual).
     pub fn head(&self) -> Argv { a(&["curl", "-fsSIL", "--proto", "=https", "--max-time", "30", &run_url(&self.version)]) }
+    pub fn fetch_chips(&self) -> Argv { a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", "-o", &chips_path(&self.version), &chips_url(&self.version)]) }
     pub fn fetch_sha(&self) -> Argv { a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", &sha_url(&self.version)]) }
     pub fn download(&self) -> Argv { a(&["curl", "-fsSL", "--proto", "=https", "--retry", "3", "--max-time", "3600", "-o", &run_path(&self.version), &run_url(&self.version)]) }
     pub fn sha256sum(&self) -> Argv { a(&["sha256sum", &run_path(&self.version)]) }
@@ -183,7 +221,7 @@ impl Grant {
 
     fn fixed(&self) -> Vec<Argv> {
         vec![
-            self.mkdir(), self.df(), self.head(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
+            self.mkdir(), self.df(), self.head(), self.fetch_chips(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
             self.unload(), self.load(), self.install(), self.cleanup(), self.smi(), a(hostcheck::DKMS),
         ]
     }
@@ -521,6 +559,12 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
         Ok(0) => return fail(c, format!("not enough free space in {WORK_DIR}: {} MB needed", MIN_FREE_HOST_KB / 1024)),
         r => return fail(c, format!("cannot check free space: {}", describe(&r))),
     }
+    // ---- ¿la versión nueva soporta TODAS las GPUs del host? Antes de bajar el `.run`; si la lista no está disponible se avisa y se sigue
+    if host_needs {
+        if let Err(why) = check_gpu_support(c, g, &q) {
+            return fail(c, why);
+        }
+    }
     let file = run_file(&g.version);
     let want = match c.cx.host_cmd(&argv(&g.fetch_sha()), &q) {
         Ok(0) => parse_sha(&c.cx.capture.join("\n"), &file),
@@ -610,9 +654,56 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
         _ if host_needs => format!("host driver {} → {}", c.from.as_deref().unwrap_or("?"), g.version),
         _ => format!("host driver already {}", g.version),
     };
-    let detail = format!("{what}; CT libs: {n_ok}/{} updated{}", libs.len(), if n_bad > 0 { format!(" ({n_bad} failed: see each CT)") } else { String::new() });
+    let ok_ids: Vec<String> = c.cts.iter().filter(|r| r.outcome == Outcome::Ok).map(|r| r.vmid.to_string()).collect();
+    let updated = if n_ok == 0 { "none".to_string() } else { ok_ids.join(", ") };
+    let detail = format!("{what}; CT updated: {updated}{}", if n_bad > 0 { format!(" ({n_bad} failed: see each CT)") } else { String::new() });
     // en `CtLibs` el host no se tocó: no hay resultado del host que dar
     ((if matches!(mode, Mode::CtLibs(_)) { Outcome::Skipped } else { Outcome::Ok }, detail), None)
+}
+
+/// `Err` solo si una GPU NVIDIA de video del host NO está en la lista de `version`; sin lista legible o sin GPUs que comprobar, avisa y sigue.
+fn check_gpu_support(c: &mut Cx, g: &Grant, q: &ExecOpts) -> Result<(), String> {
+    let ids = match c.cx.host_cmd(hostcheck::LSPCI, q) {
+        Ok(0) => host_nvidia_ids(&c.cx.capture.join("\n")),
+        r => {
+            c.cx.say(&format!("warning: cannot read the GPU list (lspci: {}); the supported-GPU check was skipped", describe(&r)));
+            return Ok(());
+        }
+    };
+    if ids.is_empty() {
+        c.cx.say("warning: no NVIDIA video GPU found in lspci; the supported-GPU check was skipped");
+        return Ok(());
+    }
+    let (version, url) = (g.version.as_str(), chips_url(&g.version));
+    let path = chips_path(version);
+    let html = match c.cx.host_cmd(&argv(&g.fetch_chips()), q) {
+        Ok(0) => match c.cx.host.read_file(Path::new(&path)) {
+            Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+            Err(e) => {
+                c.cx.say(&format!("warning: cannot read the downloaded {url} ({e}); the supported-GPU check was skipped"));
+                String::new()
+            }
+        },
+        r => {
+            c.cx.say(&format!("warning: cannot download {url} ({}); the supported-GPU check was skipped", describe(&r)));
+            return Ok(());
+        }
+    };
+    let _ = c.cx.host.remove_file(Path::new(&path));
+    let supported = parse_supported_ids(&html);
+    if supported.is_empty() {
+        c.cx.say(&format!("warning: {url} has no GPU rows; the supported-GPU check was skipped"));
+        return Ok(());
+    }
+    let missing: Vec<&String> = ids.iter().filter(|i| !supported.contains(*i)).collect();
+    if !missing.is_empty() {
+        let list = missing.iter().map(|i| format!("10de:{}", i.to_ascii_lowercase())).collect::<Vec<_>>().join(", ");
+        return Err(format!("GPU {list} is not listed in supportedchips for {version}; nothing was downloaded or installed"));
+    }
+    for i in &ids {
+        c.cx.say(&format!("GPU 10de:{} listed in supportedchips for {version}", i.to_ascii_lowercase()));
+    }
+    Ok(())
 }
 
 /// `WORK_DIR` debe ser un directorio real (no symlink), de root y 0700. Ausente vale solo antes de crearlo (`may_be_missing`).
@@ -877,5 +968,32 @@ mod tests {
         assert!(Grant::new("../../x", "6.1", "open", vec![], vec![]).is_none());
         assert!(Grant::new("595.1.2", "6.1/../x", "open", vec![], vec![]).is_none());
         assert!(Grant::new("595.1.2", "6.1", "weird", vec![], vec![]).is_none());
+    }
+
+    /// Fragmento con la forma de la página real: filas `devidXXXX`, con subsistema y la sección legacy.
+    const CHIPS: &str = "<table><tr id=\"devid24B0\"><td>RTX A4000</td><td>24B0</td></tr>\n<tr id=\"devid1FF2_10DE_18FF\"><td>T400</td></tr>\n<tr id='devid24b0_1028_14ad'><td>A4000</td></tr></table>\n<h3>Legacy GPUs that are no longer supported</h3>\n<tr id=\"devid1CB1\"><td>Quadro P1000</td></tr>";
+
+    #[test]
+    fn supportedchips_rows_with_and_without_subsystem_are_read_up_to_the_legacy_section() {
+        let ids = parse_supported_ids(CHIPS);
+        assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), ["1FF2", "24B0"]);
+        assert!(!ids.contains("1CB1"), "a GPU only in the legacy section is not supported");
+        assert!(parse_supported_ids("").is_empty() && parse_supported_ids("<html>404</html>").is_empty());
+    }
+
+    #[test]
+    fn host_ids_are_the_video_controllers_only() {
+        let l = "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104GL [RTX A4000] [10de:24b0] (rev a1)\n01:00.1 Audio device [0403]: NVIDIA Corporation GA104 High Definition Audio Controller [10de:228b] (rev a1)\n02:00.0 3D controller [0302]: NVIDIA Corporation GA100 [10de:20B5]\nc5:00.0 Display controller [0380]: Advanced Micro Devices, Inc. [AMD/ATI] Phoenix3 [1002:1900]\n";
+        assert_eq!(host_nvidia_ids(l), ["24B0", "20B5"]);
+        assert!(host_nvidia_ids("").is_empty());
+    }
+
+    #[test]
+    fn the_chips_page_is_fetched_for_the_exact_version_and_is_on_the_allow_list() {
+        let g = Grant::new("595.112.07", "6.17.13-2-pve", "open", vec![], vec![]).unwrap();
+        assert_eq!(chips_url("595.112.07"), "https://download.nvidia.com/XFree86/Linux-x86_64/595.112.07/README/supportedchips.html");
+        let c = g.fetch_chips();
+        assert!(is_host_argv(&c.iter().map(String::as_str).collect::<Vec<_>>(), &g));
+        assert_eq!(c.last().map(String::as_str), Some(chips_url("595.112.07").as_str()));
     }
 }

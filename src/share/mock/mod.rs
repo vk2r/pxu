@@ -169,7 +169,7 @@ impl MockHost {
         let done = |c: i32| Some(Ok(ExitInfo { code: c }));
         // `/exec/0/nvidia-<paso>.hang`: el paso queda «largo» hasta que lo cancelen (como curl/make reales tras el SIGTERM al grupo); sin `cancel`, TimedOut
         let step = match argv {
-            ["curl", .., "-o", _, _] => Some("download"),
+            ["curl", .., "-o", _, url] if !url.ends_with("/supportedchips.html") => Some("download"),
             ["sha256sum", _] => Some("sha256sum"),
             ["sh", _, "--check"] => Some("check"),
             ["sh", _, "--extract-only", ..] => Some("extract"),
@@ -200,6 +200,22 @@ impl MockHost {
                 // `nvidia-head.out` pone las cabeceras; sin él, un tamaño de mentira
                 say(s, &file("nvidia-head.out").unwrap_or_else(|| "HTTP/1.1 200 OK\nContent-Length: 9\n".into()));
                 done(code("nvidia-head"))
+            }
+            ["curl", .., url] if url.ends_with("/supportedchips.html") => {
+                // sin `nvidia-chips.out` no hay red (la revisión avisa y sigue)
+                match file("nvidia-chips.out") {
+                    Some(t) if code("nvidia-chips") == 0 => {
+                        // como el real (`-o`): la página va a un archivo, no a la salida
+                        if let ["curl", .., "-o", dst, _] = argv {
+                            let _ = self.write_file(Path::new(dst), t.as_bytes());
+                        }
+                        done(0)
+                    }
+                    _ => {
+                        s.line("curl: (6) Could not resolve host: download.nvidia.com");
+                        done(6)
+                    }
+                }
             }
             ["curl", .., url] if url.ends_with(".run.sha256sum") => {
                 let name = url.rsplit('/').next().unwrap_or("").trim_end_matches(".sha256sum");

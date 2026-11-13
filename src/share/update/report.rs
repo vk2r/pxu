@@ -115,9 +115,18 @@ fn gpu_host(n: &NvidiaRun) -> String {
 
 fn gpu_details(n: &NvidiaRun) -> Option<String> {
     match n.outcome {
-        // «host driver A → B; CT libs: n/m updated»: lo de la versión ya está en su columna.
-        Outcome::Ok => n.detail.split_once("; ").map(|(_, t)| t.to_string()).filter(|t| !t.contains(" 0/0 ")),
+        // «host driver A → B; CT updated: ids»: lo de la versión ya está en su columna.
+        Outcome::Ok => n.detail.split_once("; ").map(|(_, t)| t.to_string()).filter(|t| !t.starts_with("CT updated: none")),
         _ => Some(format!("NVIDIA: {}", n.detail)),
+    }
+}
+
+fn gpu_ct(c: &super::nvidia::NvidiaCt, ver: &str) -> String {
+    match c.outcome {
+        Outcome::Ok => format!("✅ libs {ver}"),
+        Outcome::Warn => format!("⚠️ libs {ver}"),
+        Outcome::Failed => "❌ libs".into(),
+        _ => "—".into(),
     }
 }
 
@@ -163,13 +172,7 @@ pub fn rows(rep: &RunReport) -> Vec<Row> {
         let mut manual: Vec<String> = Vec::new();
         let mut gpu = "—".to_string();
         if let Some(c) = nv.and_then(|n| n.cts.iter().find(|c| c.vmid == r.vmid)) {
-            let ver = nv.and_then(|n| n.to.clone()).unwrap_or_default();
-            gpu = match c.outcome {
-                Outcome::Ok => format!("✅ libs {ver}"),
-                Outcome::Warn => format!("⚠️ libs {ver}"),
-                Outcome::Failed => "❌ libs".into(),
-                _ => "—".into(),
-            };
+            gpu = gpu_ct(c, nv.and_then(|n| n.to.as_deref()).unwrap_or_default());
             if matches!(c.outcome, Outcome::Failed | Outcome::Warn) {
                 d.push(format!("NVIDIA libs: {}", c.detail));
             }
@@ -201,6 +204,14 @@ pub fn rows(rep: &RunReport) -> Vec<Row> {
             details: d.iter().map(|x| cell(x)).collect::<Vec<_>>().join(" · "),
             manual: manual.join(" · "),
         });
+    }
+    // CT con librerías NVIDIA pero sin paquetes actualizados en esta corrida (p. ej. corrida solo del host): su propia fila.
+    if let Some(n) = nv {
+        let ver = n.to.as_deref().unwrap_or_default();
+        for c in n.cts.iter().filter(|c| !rep.results.iter().any(|r| r.vmid == c.vmid)) {
+            let manual = if c.outcome == Outcome::Failed { format!("NVIDIA libs failed in CT {}: see the log", c.vmid) } else { String::new() };
+            out.push(Row { outcome: c.outcome, upgrades: cell(&format!("{} {}", c.vmid, c.name)), result: result_text(c.outcome).into(), packages: "—".into(), gpu: gpu_ct(c, ver), time: "—".into(), details: cell(&c.detail), manual });
+        }
     }
     out
 }
@@ -351,7 +362,7 @@ mod tests {
         RunReport { node: "server".into(), started_at: 1_794_000_000, finished_at: 1_794_001_122, results, aborted: None, cancelled: false, nvidia: None, log_path: Some("/var/log/pxu/run-20261110-0612.log".into()) }
     }
     fn nv(outcome: Outcome) -> NvidiaRun {
-        NvidiaRun { outcome, from: Some("595.112.07".into()), to: Some("595.120.01".into()), detail: "host driver 595.112.07 → 595.120.01; CT libs: 1/1 updated".into(), log_path: None, took_s: 120, reboot_needed: false, cts: vec![] }
+        NvidiaRun { outcome, from: Some("595.112.07".into()), to: Some("595.120.01".into()), detail: "host driver 595.112.07 → 595.120.01; CT updated: 129".into(), log_path: None, took_s: 120, reboot_needed: false, cts: vec![] }
     }
     fn row_of<'a>(b: &'a str, key: &str) -> &'a str {
         b.lines().find(|l| l.starts_with(&format!("| {key} "))).unwrap_or_else(|| panic!("no row {key}:\n{b}"))
@@ -456,8 +467,37 @@ mod tests {
         r.nvidia = Some(nv(Outcome::Ok));
         let b = body(&r);
         let first = b.lines().find(|l| l.starts_with("| ") && !l.starts_with("| Upgrades")).unwrap();
-        assert_eq!(first, "| host | ✅ ok | 6 (2 security) | ✅ 595.112.07 → 595.120.01 | 11m 10s | reboot required · CT libs: 1/1 updated | reboot the host |");
+        assert_eq!(first, "| host | ✅ ok | 6 (2 security) | ✅ 595.112.07 → 595.120.01 | 11m 10s | reboot required · CT updated: 129 | reboot the host |");
         assert!(b.contains("⚠️ The host needs a REBOOT"), "{b}");
+    }
+
+    #[test]
+    fn host_only_run_gives_each_libs_ct_its_own_row() {
+        let mut h = ct(0, "host", Outcome::Ok);
+        h.took_s = 100;
+        let mut r = rep(vec![h]);
+        let mut n = nv(Outcome::Ok);
+        n.to = Some("595.112.07".into());
+        n.cts = vec![
+            NvidiaCt { vmid: 129, name: "llama-swap".into(), outcome: Outcome::Ok, detail: "libs 595.112.07 installed, CT restarted".into() },
+            NvidiaCt { vmid: 130, name: "bad".into(), outcome: Outcome::Failed, detail: "nvidia-smi failed".into() },
+            NvidiaCt { vmid: 131, name: "wait".into(), outcome: Outcome::Skipped, detail: "libs not installed: reboot the host first".into() },
+        ];
+        r.nvidia = Some(n);
+        let b = body(&r);
+        assert!(row_of(&b, "129 llama-swap").contains("| ✅ ok | — | ✅ libs 595.112.07 | — | libs 595.112.07 installed, CT restarted |"), "{b}");
+        assert!(row_of(&b, "130 bad").contains("| ❌ failed | — | ❌ libs | — | nvidia-smi failed |") && row_of(&b, "130 bad").contains("NVIDIA libs failed in CT 130"), "{b}");
+        assert!(row_of(&b, "131 wait").contains("| ⏭️ skipped | — | — | — | libs not installed: reboot the host first |"), "{b}");
+        assert!(row_of(&b, "host").contains("CT updated: 129"), "{b}");
+    }
+
+    #[test]
+    fn ct_with_package_row_is_not_duplicated_by_its_libs_row() {
+        let mut r = rep(vec![ct(129, "llama-swap", Outcome::Ok)]);
+        let mut n = nv(Outcome::Ok);
+        n.cts = vec![NvidiaCt { vmid: 129, name: "llama-swap".into(), outcome: Outcome::Ok, detail: "libs installed".into() }];
+        r.nvidia = Some(n);
+        assert_eq!(body(&r).matches("| 129 llama-swap |").count(), 1);
     }
 
     #[test]

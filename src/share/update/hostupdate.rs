@@ -1446,6 +1446,69 @@ mod tests {
         assert_eq!((n2, r2.nvidia.unwrap().outcome), (0, Outcome::Ok));
     }
 
+    const A4000: &str = "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104GL [RTX A4000] [10de:24b0] (rev a1)\n01:00.1 Audio device [0403]: NVIDIA Corporation GA104 High Definition Audio Controller [10de:228b] (rev a1)\n";
+
+    /// Reinstala con la lista de GPUs `chips` (None = sin red) y devuelve (resultado, líneas, comandos del host).
+    fn chips_run(lspci: &str, chips: Option<&str>) -> (crate::share::update::nvidia::NvidiaRun, Vec<String>, Vec<String>) {
+        let h = gpu_world(|w| {
+            let w = w.nvidia_run_driver(&["595.112.07"]).host_out("lspci", lspci);
+            match chips { Some(t) => w.host_out("nvidia-chips", t), None => w }
+        });
+        let _o = UpdateOptIn::new(&h);
+        let n0 = h.inner().recorded().len();
+        let mut lines = vec![];
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| if let Event::Line(_, l) = e { lines.push(l) }).unwrap();
+        (rep.nvidia.unwrap(), lines, argvs(&h, n0))
+    }
+
+    #[test]
+    fn a_missing_gpu_stops_before_the_run_is_downloaded() {
+        let (nv, lines, cmds) = chips_run(A4000, Some("<tr id=\"devid1FF2\"></tr>"));
+        assert_eq!(nv.outcome, Outcome::Failed);
+        assert!(nv.detail.contains("10de:24b0") && nv.detail.contains("595.112.07"), "{}", nv.detail);
+        assert!(lines.iter().any(|l| l.contains("10de:24b0") && l.contains("not listed")), "{lines:?}");
+        assert!(cmds.iter().any(|c| c.ends_with("/README/supportedchips.html")), "{cmds:?}");
+        assert!(!cmds.iter().any(|c| c.contains(".run") && c.contains("curl")), "no .run curl (head, sha, download) after the check: {cmds:?}");
+        assert!(!cmds.iter().any(|c| c.contains("--dkms") || c.contains("modprobe")), "{cmds:?}");
+    }
+
+    #[test]
+    fn a_listed_gpu_continues_and_says_so_and_the_hdmi_audio_does_not_count() {
+        // el audio 10de:228b no está en la lista y no importa
+        let (nv, lines, cmds) = chips_run(A4000, Some("<tr id=\"devid24B0_1028_14AD\"></tr>"));
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        assert!(lines.iter().any(|l| l == "GPU 10de:24b0 listed in supportedchips for 595.112.07"), "{lines:?}");
+        let (chips, dl) = (cmds.iter().position(|c| c.ends_with("supportedchips.html")).unwrap(), cmds.iter().position(|c| c.starts_with("curl") && c.contains(" -o ") && c.contains(".run")).unwrap());
+        assert!(chips < dl, "the check comes before the download: {cmds:?}");
+    }
+
+    #[test]
+    fn a_gpu_only_in_the_legacy_section_or_one_of_several_missing_stops_the_run() {
+        let page = "<tr id=\"devid24B0\"></tr><h3>no longer supported</h3><tr id=\"devid1CB1\"></tr>";
+        let two = format!("{A4000}02:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP107GL [Quadro P1000] [10de:1cb1]\n");
+        let (nv, _, _) = chips_run(&two, Some(page));
+        assert_eq!(nv.outcome, Outcome::Failed);
+        assert!(nv.detail.contains("10de:1cb1") && !nv.detail.contains("10de:24b0"), "{}", nv.detail);
+    }
+
+    #[test]
+    fn the_chips_page_never_reaches_the_log_or_the_panel() {
+        let page = format!("<html>SECRET-PAGE-BODY-LINE\n<tr id=\"devid24B0_1028_14AD\"></tr>\n{}</html>", "<p>filler row</p>\n".repeat(500));
+        let (nv, lines, cmds) = chips_run(A4000, Some(&page));
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        assert!(!lines.iter().any(|l| l.contains("SECRET-PAGE-BODY-LINE") || l.contains("filler row") || l.contains("devid24B0")), "{} lines, page leaked", lines.len());
+        assert!(cmds.iter().any(|c| c.contains("supportedchips-595.112.07.html")), "{cmds:?}");
+    }
+
+    #[test]
+    fn an_unavailable_or_empty_page_warns_and_goes_on() {
+        for chips in [None, Some("<html>no rows</html>")] {
+            let (nv, lines, _) = chips_run(A4000, chips);
+            assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+            assert!(lines.iter().any(|l| l.starts_with("warning:") && l.contains("supported-GPU check was skipped")), "{lines:?}");
+        }
+    }
+
     #[test]
     fn a_cancel_before_touching_the_driver_installs_nothing() {
         let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]));
@@ -1533,7 +1596,7 @@ mod tests {
         assert_eq!(nv.outcome, Outcome::Ok, "host ok: {}", nv.detail);
         let ct = nv.cts.iter().find(|c| c.vmid == 134).expect("ct entry");
         assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
-        assert!(nv.detail.contains("0/1") && nv.detail.contains("1 failed"), "{}", nv.detail);
+        assert!(nv.detail.contains("CT updated: none") && nv.detail.contains("1 failed"), "{}", nv.detail);
         assert_eq!(rep.exit_code(), update::EXIT_PARTIAL, "a failed CT still fails the run");
         let b = update::report::body(&rep);
         let host_row = b.lines().find(|l| l.starts_with("| host")).expect("host row");
