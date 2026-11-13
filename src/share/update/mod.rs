@@ -19,8 +19,50 @@ use crate::share::state::{self, CheckInfo};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::UNIX_EPOCH;
+
+/// Primera señal que pidió cancelar (SIGINT/SIGTERM/SIGHUP; 0 = ninguna). La escribe el manejador de señales de la CLI o la TUI (Ctrl+C como tecla).
+pub static CANCEL_SIGNAL: AtomicI32 = AtomicI32::new(0);
+/// ¿Se está cambiando el sistema (desde parar CT / instalar)? Ahí cancelar no corta: el aviso dice que se espera.
+pub static CRITICAL: AtomicBool = AtomicBool::new(false);
+
+/// Anota la señal que pidió cancelar; solo cuenta la primera. Seguro desde un manejador de señales.
+pub fn note_signal(sig: i32) {
+    let _ = CANCEL_SIGNAL.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+fn signal_label(sig: i32) -> &'static str {
+    match sig {
+        libc::SIGINT => "SIGINT: Ctrl+C",
+        libc::SIGHUP => "SIGHUP: the terminal or SSH session closed",
+        libc::SIGTERM => "SIGTERM: kill / systemctl stop",
+        _ => "unknown signal",
+    }
+}
+
+/// Motivo que queda en el log y en el resumen: "cancelled by user (SIGINT: Ctrl+C)".
+pub fn cancel_reason_for(sig: i32) -> String {
+    if sig == 0 {
+        "cancelled by user".into()
+    } else {
+        format!("cancelled by user ({})", signal_label(sig))
+    }
+}
+
+pub fn cancel_reason() -> String {
+    cancel_reason_for(CANCEL_SIGNAL.load(Ordering::SeqCst))
+}
+
+/// El aviso inmediato al pedir cancelar: qué señal llegó y qué va a pasar. `critical` = ya se está cambiando el sistema.
+pub fn cancel_requested(sig: i32, critical: bool, driver: bool) -> String {
+    let by = if sig == 0 { "cancel requested".to_string() } else { format!("cancel requested ({})", signal_label(sig)) };
+    if !critical {
+        return format!("{by}: stopping now; nothing on the system has been changed.");
+    }
+    let until = if driver { "the whole change finishes (driver install, CT restarts and CT libs)" } else { "the package install finishes" };
+    format!("{by}: the system is being changed (CTs stopped, modules unloaded, packages half-configured), so stopping now would leave it broken. pxu waits until {until} and then stops; your request is recorded.")
+}
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_USAGE: i32 = 2;
@@ -135,6 +177,8 @@ pub enum Event {
     Step(u32, Step),
     Line(u32, String),
     Done(CtRun),
+    /// Avisos estructurados del paso NVIDIA para la mini TUI de `pxu update --host`; el log y la salida plana siguen usando solo `Line`.
+    Nv(nvidia::Note),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,6 +340,7 @@ impl Ctx<'_> {
         (self.ev)(Event::Line(self.vmid, l.to_string()));
     }
     fn step(&mut self, s: Step) {
+        CRITICAL.store(!s.before_install(), Ordering::SeqCst);
         self.say(&format!("== {}", s.label()));
         (self.ev)(Event::Step(self.vmid, s));
     }
@@ -540,7 +585,7 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
         };
         if cancel.load(Ordering::SeqCst) && !cancelled {
             cancelled = true;
-            aborted = Some("cancelled by user".into());
+            aborted = Some(cancel_reason());
         }
         if cancelled {
             finish(bare(Outcome::Cancelled, "cancelled before start"), ev, &mut results);
@@ -579,7 +624,7 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     // Se pidió parar mientras el último CT (o el único) terminaba su upgrade, que no se interrumpe: la corrida estuvo detenida aunque nada quedó "cancelled".
     if cancel.load(Ordering::SeqCst) && aborted.is_none() {
         cancelled = true;
-        aborted = Some("cancelled by user".into());
+        aborted = Some(cancel_reason());
     }
     let mut report = RunReport { node: inv.node.clone(), started_at, finished_at: now_s(host), results, aborted, cancelled, nvidia, log_path: None };
     runlog::finalize(host, cfg.general.log_retention_days, live.borrow_mut().take(), &rec.borrow(), &mut report);
@@ -611,7 +656,13 @@ pub fn run_nvidia(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: nvidia::
         ev(Event::Line(0, format!("NVIDIA driver: {why}")));
         Some((nvidia::NvidiaRun::skipped(why), None))
     } else {
-        nvidia::run_mode(host, inv, cfg, mode, reboot, cancel, ev)
+        CRITICAL.store(false, Ordering::SeqCst);
+        let r = nvidia::run_mode(host, inv, cfg, mode, reboot, cancel, ev);
+        if cancel.load(Ordering::SeqCst) && r.as_ref().is_some_and(|(n, _)| n.outcome != Outcome::Cancelled) {
+            // la señal llegó con el sistema a medio cambiar: queda dicho en el log que se esperó y no se cortó
+            ev(Event::Line(0, format!("{}: ignored while the system was being changed; the run finished normally", cancel_requested(CANCEL_SIGNAL.load(Ordering::SeqCst), true, true))));
+        }
+        r
     };
     let (nv, stop) = step.unwrap_or_else(|| (nvidia::NvidiaRun::skipped("skipped: nothing to do"), None));
     let cancelled = nv.outcome == Outcome::Cancelled;
@@ -645,7 +696,7 @@ fn run_host(host: &dyn Host, inv: &Inventory, cfg: &Config, plan: &hostupdate::P
     if cancel.load(Ordering::SeqCst) {
         let r = bare(Outcome::Cancelled, Step::Pending, "cancelled before start");
         ev(Event::Done(r.clone()));
-        return (r, Some("cancelled by user".into()));
+        return (r, Some(cancel_reason()));
     }
     ev(Event::Start(0));
     // Opt-in de escritura del host derivado de `host_auto` (el plan solo es `Run` con él) y limitado a este paso.
@@ -657,7 +708,7 @@ fn run_host(host: &dyn Host, inv: &Inventory, cfg: &Config, plan: &hostupdate::P
             let r = rep.results.remove(0);
             match r.outcome {
                 Outcome::Ok | Outcome::Warn => (r, None),
-                Outcome::Cancelled => (r, Some("cancelled by user".into())),
+                Outcome::Cancelled => (r, Some(cancel_reason())),
                 _ => (r, Some("host update failed".into())),
             }
         }
@@ -720,7 +771,7 @@ fn run_ct(host: &dyn Host, g: &Guest, cfg: &Config, cancel: &AtomicBool, ev: &mu
     run.step = d.step;
     run.detail = d.detail;
     if run.outcome == Outcome::Cancelled {
-        cx.abort = Some("cancelled by user".into());
+        cx.abort = Some(cancel_reason());
     }
     if started_by_us && cx.hold {
         run.detail += &format!("; CT left RUNNING (it was stopped before): dpkg may still be working inside, shut it down manually: pct shutdown {}", g.vmid);

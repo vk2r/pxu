@@ -159,7 +159,7 @@ impl MockHost {
         Ok(ExitInfo { code: rc })
     }
     /// Paso NVIDIA simulado (`update::nvidia`): salidas y códigos salen de `/exec/0/nvidia-*.out|.exit`; `install` cambia `/proc/driver/nvidia/version`.
-    fn nvidia_cmd(&self, argv: &[&str], s: &mut dyn LineSink) -> Option<io::Result<ExitInfo>> {
+    fn nvidia_cmd(&self, argv: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> Option<io::Result<ExitInfo>> {
         use crate::share::update::nvidia as nv;
         let file = |n: &str| self.exec_file(0, n);
         let code = |n: &str| file(&format!("{n}.exit")).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
@@ -167,6 +167,26 @@ impl MockHost {
         let proc_text = || crate::share::host::read_string(self, "/proc/driver/nvidia/version").unwrap_or_default();
         let hash = "a".repeat(64);
         let done = |c: i32| Some(Ok(ExitInfo { code: c }));
+        // `/exec/0/nvidia-<paso>.hang`: el paso queda «largo» hasta que lo cancelen (como curl/make reales tras el SIGTERM al grupo); sin `cancel`, TimedOut
+        let step = match argv {
+            ["curl", .., "-o", _, _] => Some("download"),
+            ["sha256sum", _] => Some("sha256sum"),
+            ["sh", _, "--check"] => Some("check"),
+            ["sh", _, "--extract-only", ..] => Some("extract"),
+            ["make", ..] => Some("make"),
+            _ => None,
+        };
+        if step.is_some_and(|n| file(&format!("nvidia-{n}.hang")).is_some()) {
+            s.line(&format!("mock: {} running…", argv[0]));
+            let Some(c) = o.cancel else { return Some(Err(io::Error::new(io::ErrorKind::TimedOut, "mock: step hung"))) };
+            for _ in 0..500 {
+                if c.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Some(Err(io::Error::new(io::ErrorKind::Interrupted, crate::share::host::CANCELLED_MSG)));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            return Some(Err(io::Error::new(io::ErrorKind::TimedOut, "mock: step never cancelled")));
+        }
         match argv {
             a if a == nv::INDEX_CURL => {
                 let rc = if file("nvidia-index.out").is_some() { code("nvidia-index") } else { 6 };
@@ -175,6 +195,11 @@ impl MockHost {
                     _ => s.line("curl: (6) Could not resolve host: download.nvidia.com"),
                 }
                 done(rc)
+            }
+            ["curl", "-fsSIL", .., url] if url.ends_with(".run") => {
+                // `nvidia-head.out` pone las cabeceras; sin él, un tamaño de mentira
+                say(s, &file("nvidia-head.out").unwrap_or_else(|| "HTTP/1.1 200 OK\nContent-Length: 9\n".into()));
+                done(code("nvidia-head"))
             }
             ["curl", .., url] if url.ends_with(".run.sha256sum") => {
                 let name = url.rsplit('/').next().unwrap_or("").trim_end_matches(".sha256sum");
@@ -446,7 +471,7 @@ impl Host for MockHost {
     fn host_cmd(&self, argv: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<ExitInfo> {
         self.budget(o);
         self.log.lock().unwrap().push(Recorded::Host(argv.iter().map(|s| s.to_string()).collect()));
-        if let Some(r) = self.nvidia_cmd(argv, s) {
+        if let Some(r) = self.nvidia_cmd(argv, o, s) {
             return r;
         }
         // systemd-creds simulado: «cifra» con un prefijo reversible (solo para tests); descifrar falla si no es de este mock

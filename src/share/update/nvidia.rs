@@ -52,7 +52,7 @@ const CUT_S: u64 = 30;
 pub fn worst_s(cfg: &Config, gpu_cts: u64) -> u64 {
     let q = cfg.check.timeout_s + CUT_S;
     let kill = super::NO_KILL_TAIL_S;
-    let host = 3 * (FETCH_S + CUT_S) + 2 * (VERIFY_S + CUT_S) + (LONG_S + kill) + 16 * q;
+    let host = 3 * (FETCH_S + CUT_S) + 2 * (VERIFY_S + CUT_S) + (LONG_S + kill) + 17 * q;
     let ct = (FETCH_S + CUT_S) + (LONG_S + kill) + 6 * (PCT_S + CUT_S) + 8 * q;
     host + gpu_cts * ct
 }
@@ -155,6 +155,8 @@ impl Grant {
     }
     pub fn mkdir(&self) -> Argv { a(&["install", "-d", "-m", "0700", "-o", "root", "-g", "root", WORK_DIR]) }
     pub fn df(&self) -> Argv { a(&["df", "-Pk", WORK_DIR]) }
+    /// Solo cabeceras: de ahí sale el tamaño de la descarga para la barra de progreso (si falla, la barra no tiene total y la descarga sigue igual).
+    pub fn head(&self) -> Argv { a(&["curl", "-fsSIL", "--proto", "=https", "--max-time", "30", &run_url(&self.version)]) }
     pub fn fetch_sha(&self) -> Argv { a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", &sha_url(&self.version)]) }
     pub fn download(&self) -> Argv { a(&["curl", "-fsSL", "--proto", "=https", "--retry", "3", "--max-time", "3600", "-o", &run_path(&self.version), &run_url(&self.version)]) }
     pub fn sha256sum(&self) -> Argv { a(&["sha256sum", &run_path(&self.version)]) }
@@ -181,7 +183,7 @@ impl Grant {
 
     fn fixed(&self) -> Vec<Argv> {
         vec![
-            self.mkdir(), self.df(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
+            self.mkdir(), self.df(), self.head(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
             self.unload(), self.load(), self.install(), self.cleanup(), self.smi(), a(hostcheck::DKMS),
         ]
     }
@@ -285,6 +287,38 @@ pub fn offer_why(host: &dyn Host, inv: &Inventory, vmid: u32, timeout_s: u64) ->
         Err(_) => Newest::Unknown,
     };
     Ok(Offer { current, newest })
+}
+
+// ---------------------------------------------------------------- avisos para la mini TUI
+
+/// Lo que el paso va a hacer, dicho al empezar (para pintar la lista de pasos entera desde el principio).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    pub from: String,
+    pub to: String,
+    /// ¿Se reinstala el driver del host (y no solo las librerías de un CT)?
+    pub host: bool,
+    /// CT con GPU que se paran y se vuelven a arrancar.
+    pub stop: Vec<(u32, String)>,
+    /// CT que reciben las librerías.
+    pub libs: Vec<(u32, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Note {
+    Plan(Plan),
+    /// Bytes totales del `.run` (de `Content-Length`).
+    Size(u64),
+    /// Un CT terminó sus librerías.
+    Ct { vmid: u32, outcome: Outcome, detail: String },
+}
+
+/// `Content-Length` de la ÚLTIMA respuesta de `curl -I` (con redirecciones hay una cabecera por salto).
+pub fn parse_content_length(lines: &[String]) -> Option<u64> {
+    lines.iter().rev().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim().eq_ignore_ascii_case("content-length").then(|| v.trim().parse().ok()).flatten()
+    })
 }
 
 // ---------------------------------------------------------------- informe
@@ -432,6 +466,8 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
         _ => format!("host {cur} ({flavor}) → {target} (libs only: host already current)"),
     };
     c.cx.say(&format!("pxu NVIDIA driver update · {} · {what}", stamp(started_at)));
+    let named = |ids: &[u32]| -> Vec<(u32, String)> { ids.iter().map(|&id| (id, inv.guests.iter().find(|g| g.vmid == id).map(|g| g.name.clone()).unwrap_or_default())).collect() };
+    (c.cx.ev)(Event::Nv(Note::Plan(Plan { from: cur.clone(), to: target.clone(), host: host_needs, stop: named(&stop_cts), libs: named(&libs_cts) })));
     // El permiso se deriva de las opciones del usuario y vale solo mientras dura este paso.
     let _optin = NvidiaOptIn::new(host, grant.clone());
     let (res, stop) = body(&mut c, cfg, &grant, mode, host_needs, &libs, cancel);
@@ -479,20 +515,46 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
     };
     let Some(want) = want else { return fail(c, "the NVIDIA .sha256sum file is malformed".into()) };
     c.cx.step(super::Step::Refresh);
-    match c.cx.host_cmd(&argv(&g.download()), &long_s(FETCH_S)) {
+    if let Ok(0) = c.cx.host_cmd(&argv(&g.head()), &q) {
+        if let Some(n) = parse_content_length(&c.cx.capture) {
+            c.cx.say(&format!("download size: {n} bytes"));
+            (c.cx.ev)(Event::Nv(Note::Size(n)));
+        }
+    }
+    // Ctrl-C corta en el acto la descarga, la verificación y la compilación de prueba (nada del sistema se ha tocado aún):
+    // el grupo de procesos entero recibe SIGTERM (`make -jN` tiene hijos) y `WORK_DIR` se borra al salir.
+    let stop = |c: &mut Cx, what: &str, untouched: &str| -> Res {
+        let why = format!("cancelled during {what}; {untouched}");
+        c.cx.say(&format!("{}: stopped during {what}; {untouched}", super::cancel_requested(super::CANCEL_SIGNAL.load(AtomicOrdering::SeqCst), false, true)));
+        ((Outcome::Cancelled, why), Some(super::cancel_reason()))
+    };
+    let cancelable = |s: u64| ExecOpts { cancel: Some(cancel), cancel_group: true, ..long_s(s) };
+    let gone = |r: &Result<i32, String>| cancel.load(AtomicOrdering::SeqCst) && r.as_ref().map_or(true, |&c| c != 0);
+    if cancel.load(AtomicOrdering::SeqCst) {
+        return stop(c, "the preparation", "nothing was installed");
+    }
+    let dl = c.cx.host_cmd(&argv(&g.download()), &cancelable(FETCH_S));
+    match dl {
         Ok(0) => {}
+        ref r if gone(r) => return stop(c, "the download", "nothing was installed"),
         r => return fail(c, format!("download failed: {}", describe(&r))),
     }
-    let got = match c.cx.host_cmd(&argv(&g.sha256sum()), &long_s(VERIFY_S)) {
+    if cancel.load(AtomicOrdering::SeqCst) {
+        return stop(c, "the download", "nothing was installed");
+    }
+    let sum = c.cx.host_cmd(&argv(&g.sha256sum()), &cancelable(VERIFY_S));
+    let got = match sum {
         Ok(0) => c.cx.capture.iter().find_map(|l| l.split_whitespace().next().map(str::to_ascii_lowercase)),
+        ref r if gone(r) => return stop(c, "the SHA-256 check", "nothing was installed"),
         r => return fail(c, format!("sha256sum failed: {}", describe(&r))),
     };
     if got.as_deref() != Some(want.as_str()) {
         return fail(c, format!("SHA-256 mismatch for {file}: the download does not match NVIDIA's checksum; nothing was installed"));
     }
     c.cx.say("sha256 OK");
-    match c.cx.host_cmd(&argv(&g.check()), &long_s(VERIFY_S)) {
+    match c.cx.host_cmd(&argv(&g.check()), &cancelable(VERIFY_S)) {
         Ok(0) => c.cx.say("installer integrity (--check) OK"),
+        ref r if gone(r) => return stop(c, "the installer check", "nothing was installed"),
         r => return fail(c, format!("the .run integrity check failed: {}", describe(&r))),
     }
     if host_needs {
@@ -501,13 +563,14 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
             return fail(c, format!("kernel headers for the running kernel are missing (/lib/modules/{}/build): the module could not be built", g.kernel));
         }
         for (what, cmd) in [("extract", g.extract()), ("test build", g.make())] {
-            match c.cx.host_cmd(&argv(&cmd), &long_s(FETCH_S)) {
+            match c.cx.host_cmd(&argv(&cmd), &cancelable(FETCH_S)) {
                 Ok(0) => {}
+                ref r if gone(r) => return stop(c, &format!("the driver {what}"), "the current driver was not touched"),
                 r => return fail(c, format!("{what} of the driver failed ({}); the current driver was not touched", describe(&r))),
             }
         }
         if cancel.load(AtomicOrdering::SeqCst) {
-            return ((Outcome::Cancelled, "cancelled before touching the driver".into()), Some("cancelled by user".into()));
+            return stop(c, "the test build", "the current driver was not touched");
         }
         // ---- a partir de aquí se toca el sistema
         c.cx.step(super::Step::Upgrade);
@@ -521,6 +584,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
             return r;
         }
     }
+    super::CRITICAL.store(true, AtomicOrdering::SeqCst);
     // ---- librerías de los CT (el host ya está bien). El resultado del host NO depende del de los CT: cada uno se informa aparte
     for ct in libs {
         let r = ct_libs(c, g, ct.vmid, &ct.name, host_needs && g.stop_cts.contains(&ct.vmid), &want);
@@ -646,6 +710,7 @@ fn recover(c: &mut Cx, g: &Grant, stopped: &[u32], why: String) -> Res {
 fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool, want: &str) -> NvidiaCt {
     let done = |c: &mut Cx, outcome: Outcome, detail: &str| {
         c.cx.say(&format!("CT {vmid}: {detail}"));
+        (c.cx.ev)(Event::Nv(Note::Ct { vmid, outcome, detail: detail.into() }));
         NvidiaCt { vmid, name: name.into(), outcome, detail: detail.into() }
     };
     c.cx.vmid = vmid;

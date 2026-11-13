@@ -1285,6 +1285,8 @@ impl App {
                     u.current = None;
                 }
             }
+            // solo para la mini TUI de `pxu update --host`
+            UpdEvent::Nv(_) => {}
         }
     }
 

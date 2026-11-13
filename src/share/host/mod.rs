@@ -49,6 +49,9 @@ pub struct ExecOpts<'a> {
     /// Si pasa a `true` mientras corre, el host real manda SIGTERM al proceso (solo a él; sus hijos los limpia él mismo) y devuelve
     /// `Interrupted`. Solo para órdenes que se pueden abortar limpiamente (vzdump): nunca para apt/dpkg.
     pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Con `cancel`: SIGTERM a TODO el grupo de procesos (no solo al hijo) y SIGKILL al grupo si sigue vivo 1 s después. Para órdenes sin
+    /// estado que limpiar (curl, sha256sum, el `.run`, `make -jN`, que tiene hijos): la cancelación corta en menos de 2 s y no deja procesos.
+    pub cancel_group: bool,
     /// `true`: stderr va aparte (a `LineSink::err_line`) en vez de mezclarse con stdout. Para órdenes cuya stdout es un dato
     /// (systemd-creds), donde un aviso en stderr lo corrompería.
     pub split_stderr: bool,

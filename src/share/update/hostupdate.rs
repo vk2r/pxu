@@ -315,7 +315,14 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &HostOpts, canc
     *live.borrow_mut() = runlog::begin_live(host, started_at, &inv.node);
     ev(Event::Queue(vec![(0, "host".into())]));
     ev(Event::Start(0));
+    super::CRITICAL.store(false, Ordering::SeqCst);
     let out = core(host, inv, cfg, opts.confirmed.clone(), false, started_at, cancel, ev)?;
+    if cancel.load(Ordering::SeqCst) {
+        // queda en el log: qué señal llegó y qué se hizo con ella
+        let sig = super::CANCEL_SIGNAL.load(Ordering::SeqCst);
+        let done = matches!(&out, HostOutcome::Done(r) if r.cancelled);
+        ev(Event::Line(0, if done { format!("{}: stopped before installing anything", super::cancel_requested(sig, false, false)) } else { format!("{}: ignored while packages were installing; the run finished normally", super::cancel_requested(sig, true, false)) }));
+    }
     Ok(seal(host, cfg, &rec, &live, &inv.node, out))
 }
 
@@ -365,7 +372,7 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
         }
     };
     if cancel.load(Ordering::SeqCst) {
-        let why = "cancelled by user".to_string();
+        let why = super::cancel_reason();
         return Ok(HostOutcome::Done(finish(&mut cx, started_at, Outcome::Cancelled, Step::Backup, why.clone(), Some(why), confirmed.len(), false, Some(backup))));
     }
     // la copia de /etc tardó: la lista y la simulación se repiten justo antes de instalar
@@ -495,7 +502,7 @@ fn prechecks(cx: &mut Ctx, cfg: &Config, confirmed: &mut Vec<HostPkg>, unattende
     let running = crate::share::host::read_string(cx.host, "/proc/sys/kernel/osrelease").map(|s| s.trim().to_string()).unwrap_or_default();
     verify_list(cx, cfg, confirmed, if unattended { Verify::Adopt } else { Verify::Confirmed }, &running)?;
     if cancel.load(Ordering::SeqCst) {
-        return Err(Stop::Abort("cancelled by user".into()));
+        return Err(Stop::Abort(super::cancel_reason()));
     }
     Ok(Pre { running })
 }
@@ -1403,6 +1410,119 @@ mod tests {
         assert!(c.iter().any(|a| a.starts_with("host ") && a.contains("--dkms")), "{c:#?}");
         assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "the CT with nvidia_auto gets its libs: {c:#?}");
         assert!(!nv.reboot_needed && !c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "{c:?}");
+    }
+
+    #[test]
+    fn the_nvidia_step_announces_its_plan_the_download_size_and_each_ct_result_for_the_live_screen() {
+        use crate::share::update::nvidia::{Note, Plan};
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["auto_update = true", "nvidia_auto = true"]).file("/exec/0/nvidia-head.out", b"HTTP/2 302\r\nlocation: x\r\n\r\nHTTP/2 200\r\ncontent-length: 423000000\r\n\r\n"));
+        let _ct_optin = UpdateOptIn::new(&h);
+        let cfg = Config::load(&h).unwrap();
+        let inv = guests::load(&h);
+        let mut notes: Vec<Note> = vec![];
+        let mut order: Vec<String> = vec![];
+        let rep = update::run_nvidia(&h, &inv, &cfg, crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| match e {
+            Event::Nv(n) => {
+                order.push(format!("{n:?}").chars().take(8).collect());
+                notes.push(n)
+            }
+            Event::Line(_, l) if l.starts_with("$ curl -fsSL") => order.push("download".into()),
+            _ => {}
+        })
+        .expect("no lock error");
+        assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Ok);
+        let Some(Note::Plan(Plan { from, to, host, libs, .. })) = notes.first() else { panic!("the plan comes first: {notes:?}") };
+        assert_eq!((from.as_str(), to.as_str(), *host), ("595.112.07", "595.112.07", true));
+        assert_eq!(libs.iter().map(|l| l.0).collect::<Vec<_>>(), [134]);
+        assert!(notes.contains(&Note::Size(423_000_000)), "the size is the LAST content-length: {notes:?}");
+        assert!(notes.iter().any(|n| matches!(n, Note::Ct { vmid: 134, outcome: Outcome::Ok, .. })), "{notes:?}");
+        let (size, dl) = (order.iter().position(|o| o.starts_with("Size")).unwrap(), order.iter().position(|o| o == "download").unwrap());
+        assert!(size < dl, "the size is known before the download starts: {order:?}");
+        // sin cabeceras no hay total, pero la descarga sigue
+        let h2 = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file("/exec/0/nvidia-head.exit", b"22"));
+        let _o = UpdateOptIn::new(&h2);
+        let mut n2 = 0;
+        let r2 = update::run_nvidia(&h2, &guests::load(&h2), &Config::load(&h2).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(false), &mut |e| n2 += matches!(e, Event::Nv(Note::Size(_))) as u32).unwrap();
+        assert_eq!((n2, r2.nvidia.unwrap().outcome), (0, Outcome::Ok));
+    }
+
+    #[test]
+    fn a_cancel_before_touching_the_driver_installs_nothing() {
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]));
+        let _ct_optin = UpdateOptIn::new(&h);
+        let n0 = h.inner().recorded().len();
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &AtomicBool::new(true), &mut |_| {}).unwrap();
+        // el mock no corta curl (ignora `cancel`): la corrida igual se cancela antes de tocar el driver
+        let nv = rep.nvidia.unwrap();
+        assert_eq!(nv.outcome, Outcome::Cancelled, "{}", nv.detail);
+        assert!(!argvs(&h, n0).iter().any(|a| a.contains("--dkms")), "{:?}", argvs(&h, n0));
+    }
+
+    /// Cancela en cuanto el paso `step` (colgado en el mock) empieza a correr; devuelve el informe, lo que se ejecutó, los eventos y lo que tardó.
+    fn cancel_in_step(step: &str) -> (RunReport, Vec<String>, Vec<Event>, std::time::Duration) {
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file(&format!("/exec/0/nvidia-{step}.hang"), b"1"));
+        let _ct_optin = UpdateOptIn::new(&h);
+        let n0 = h.inner().recorded().len();
+        let cancel = AtomicBool::new(false);
+        let mut evs: Vec<Event> = vec![];
+        let t = std::time::Instant::now();
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &cancel, &mut |e| {
+            if matches!(&e, Event::Line(_, l) if l.starts_with("mock: ") && l.ends_with("running…")) {
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            evs.push(e);
+        })
+        .unwrap();
+        (rep, argvs(&h, n0), evs, t.elapsed())
+    }
+
+    #[test]
+    fn cancelling_in_any_step_before_the_install_stops_at_once_and_never_reaches_the_upgrade() {
+        for (step, what, cmd) in [("download", "the download", "curl"), ("sha256sum", "the SHA-256 check", "sha256sum"), ("check", "the installer check", "--check"), ("extract", "the driver extract", "--extract-only"), ("make", "the driver test build", "make")] {
+            let (rep, cmds, evs, took) = cancel_in_step(step);
+            let nv = rep.nvidia.as_ref().unwrap();
+            assert_eq!(nv.outcome, Outcome::Cancelled, "{step}: {}", nv.detail);
+            assert!(nv.detail.contains(what) && (nv.detail.contains("not touched") || nv.detail.contains("nothing was installed")), "{step}: {}", nv.detail);
+            assert!(rep.cancelled && rep.aborted.as_deref().is_some_and(|a| a.starts_with("cancelled by user")), "{:?}", rep.aborted);
+            assert!(took < std::time::Duration::from_secs(2), "{step}: {took:?}");
+            assert!(cmds.iter().any(|c| c.contains(cmd)), "{step}: {cmds:?}");
+            assert!(!cmds.iter().any(|c| c.contains("--dkms") || c.contains("shutdown") || c.contains("modprobe -r")), "{step}: nothing past the build ran: {cmds:?}");
+            assert!(!evs.iter().any(|e| matches!(e, Event::Step(_, Step::Upgrade))), "{step}: never reaches Upgrade");
+            // el log dice que se pidió cancelar y qué se hizo
+            assert!(evs.iter().any(|e| matches!(e, Event::Line(_, l) if l.starts_with("cancel requested") && l.contains("stopped during"))), "{step}: {evs:?}");
+        }
+    }
+
+    #[test]
+    fn a_cancel_during_the_install_is_ignored_and_the_log_says_so() {
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]));
+        let _ct_optin = UpdateOptIn::new(&h);
+        let cancel = AtomicBool::new(false);
+        let mut lines: Vec<String> = vec![];
+        let rep = update::run_nvidia(&h, &guests::load(&h), &Config::load(&h).unwrap(), crate::share::update::nvidia::Mode::Reinstall, &cancel, &mut |e| {
+            if let Event::Step(_, Step::Upgrade) = &e {
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if let Event::Line(_, l) = e {
+                lines.push(l);
+            }
+        })
+        .unwrap();
+        assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Ok, "{}", rep.nvidia.as_ref().unwrap().detail);
+        assert!(lines.iter().any(|l| l.starts_with("cancel requested") && l.contains("ignored while the system was being changed")), "{lines:?}");
+    }
+
+    #[test]
+    fn the_cancel_reason_and_notice_name_the_signal() {
+        use crate::share::update::{cancel_reason_for, cancel_requested};
+        assert_eq!(cancel_reason_for(0), "cancelled by user");
+        assert!(cancel_reason_for(libc::SIGINT).contains("SIGINT: Ctrl+C"));
+        assert!(cancel_reason_for(libc::SIGHUP).contains("SIGHUP") && cancel_reason_for(libc::SIGHUP).contains("SSH"));
+        assert!(cancel_reason_for(libc::SIGTERM).contains("SIGTERM"));
+        let safe = cancel_requested(libc::SIGHUP, false, true);
+        assert!(safe.starts_with("cancel requested (SIGHUP") && safe.contains("stopping now") && safe.contains("nothing on the system has been changed"), "{safe}");
+        let crit = cancel_requested(libc::SIGINT, true, true);
+        assert!(crit.contains("SIGINT") && crit.contains("waits until the whole change finishes") && crit.contains("recorded"), "{crit}");
     }
 
     #[test]

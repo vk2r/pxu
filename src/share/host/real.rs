@@ -110,7 +110,7 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
     let interrupted = std::sync::atomic::AtomicBool::new(false);
     let st = std::thread::scope(|sc| -> io::Result<std::process::ExitStatus> {
         if let Some(c) = opts.cancel {
-            let (finished, interrupted) = (&finished, &interrupted);
+            let (finished, interrupted, group) = (&finished, &interrupted, opts.cancel_group);
             sc.spawn(move || {
                 let tick = std::time::Duration::from_millis(100);
                 loop {
@@ -120,9 +120,9 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
                     if c.load(std::sync::atomic::Ordering::SeqCst) {
                         interrupted.store(true, std::sync::atomic::Ordering::SeqCst);
                         // SAFETY: el pid sigue siendo del hijo mientras `wait` no haya vuelto (`finished` se pone justo después).
-                        unsafe { libc::kill(pid, libc::SIGTERM) };
-                        // vzdump limpia su archivo parcial y su snapshot al recibir SIGTERM; si no acaba en 2 min se corta el grupo.
-                        for _ in 0..1200 {
+                        unsafe { libc::kill(if group { -pid } else { pid }, libc::SIGTERM) };
+                        // vzdump limpia su archivo parcial y su snapshot al recibir SIGTERM; si no acaba en 2 min se corta el grupo (con `cancel_group`, en 1 s).
+                        for _ in 0..(if group { 10 } else { 1200 }) {
                             if finished.load(std::sync::atomic::Ordering::SeqCst) {
                                 return;
                             }
@@ -482,6 +482,32 @@ mod tests {
         let e = run(&["sh", "-c", "trap '' TERM; sleep 60"], &ExecOpts { timeout_s: Some(1), no_kill_on_timeout: true, no_kill_grace_s: Some(1), ..Default::default() }, &mut Vec::<String>::new()).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::TimedOut);
         assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
+    }
+
+    /// ¿Sigue vivo el proceso `pid`? (un zombi ya no cuenta)
+    fn alive(pid: i32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| s.rsplit(')').next().is_some_and(|r| !r.trim_start().starts_with('Z')))
+    }
+
+    #[test]
+    fn cancel_group_leaves_no_children_behind() {
+        let script = "sleep 300 & echo $!; (trap '' TERM; sleep 300) & echo $!; wait";
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut pids = Vec::<String>::new();
+        let t = std::time::Instant::now();
+        let r = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            run(&["sh", "-c", script], &ExecOpts { cancel: Some(&cancel), cancel_group: true, ..Default::default() }, &mut pids)
+        });
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+        let pids: Vec<i32> = pids.iter().filter_map(|p| p.trim().parse().ok()).collect();
+        assert_eq!(pids.len(), 2, "{pids:?}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(pids.iter().all(|&p| !alive(p)), "children still alive: {pids:?}");
     }
 
     #[test]

@@ -203,7 +203,7 @@ impl Recorder {
                     self.pending += &format!("{}  {}\n", local_hms(now), l);
                 }
             }
-            Event::Step(..) | Event::Done(_) => {}
+            Event::Step(..) | Event::Done(_) | Event::Nv(_) => {}
         }
     }
 }

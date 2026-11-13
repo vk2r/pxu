@@ -1,5 +1,6 @@
 //! `pxu list [--json] [--all-nodes]`
 pub mod args;
+pub mod live;
 use pxu::share::update::check::{self, CheckOpts, Report, EXIT_USAGE};
 use pxu::share::config::{self, Config};
 use pxu::share::fmt::{self, trunc};
@@ -237,8 +238,56 @@ pub fn cmd_notify_test(host: &dyn Host) -> i32 {
 /// Marcado por SIGINT/SIGTERM/SIGHUP: el motor termina el CT en curso y para (ARCHITECTURE §3.2).
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
-extern "C" fn on_signal(_: libc::c_int) {
+extern "C" fn on_signal(sig: libc::c_int) {
+    // primero la señal (para que quien vea INTERRUPTED ya sepa cuál fue), después la bandera
+    update::note_signal(sig);
     INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Avisa en stderr, en el instante, de que llegó una petición de cancelar y qué va a pasar (el modo de líneas no tiene pantalla donde verlo).
+/// Dura lo que la corrida: al soltarlo, el hilo termina. Sin `println!`: con el terminal cerrado (SIGHUP) fallaría.
+pub struct CancelWatch(std::sync::Arc<AtomicBool>);
+
+impl Drop for CancelWatch {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub fn watch_cancel(driver: bool) -> CancelWatch {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    spawn_watch(&INTERRUPTED, &REPORTED, driver, |m| {
+        let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("pxu: {m}\n"));
+    })
+}
+
+fn spawn_watch(flag: &'static AtomicBool, reported: &'static AtomicBool, driver: bool, mut out: impl FnMut(String) + Send + 'static) -> CancelWatch {
+    use std::sync::atomic::Ordering::SeqCst;
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let s = stop.clone();
+    std::thread::spawn(move || {
+        while !s.load(SeqCst) {
+            if flag.load(SeqCst) && !reported.swap(true, SeqCst) {
+                out(update::cancel_requested(update::CANCEL_SIGNAL.load(SeqCst), update::CRITICAL.load(SeqCst), driver));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    CancelWatch(stop)
+}
+
+/// Con SIGHUP el terminal ya no existe: stdout/stderr van a /dev/null para que el texto final (`println!`) no falle ni mate a pxu con la corrida ya cerrada.
+fn quiet_if_hung_up() {
+    if update::CANCEL_SIGNAL.load(std::sync::atomic::Ordering::SeqCst) == libc::SIGHUP {
+        if let Ok(n) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+            use std::os::fd::AsRawFd;
+            // SAFETY: dup2 sobre los descriptores 1 y 2 con un descriptor válido.
+            unsafe {
+                libc::dup2(n.as_raw_fd(), 1);
+                libc::dup2(n.as_raw_fd(), 2);
+            }
+        }
+    }
 }
 
 /// Ctrl-C ya no mata a pxu: los hijos van en su propio grupo de procesos y no reciben la señal.
@@ -412,6 +461,12 @@ pub fn cmd_update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, not
     update_host(host, only, json, yes, notify_flag, tty)
 }
 
+/// La mini TUI, solo con terminal en la entrada y en la salida y sin `--json`; `None` = salida plana.
+fn live_ui(json: bool, m: live::Live) -> Option<live::Ui> {
+    use std::io::IsTerminal;
+    live::wanted(std::io::stdin().is_terminal(), std::io::stdout().is_terminal(), json, std::env::var("TERM").ok().as_deref()).then(|| live::Ui::start(m, &INTERRUPTED)).flatten()
+}
+
 /// `pxu update --host --nvidia-reinstall`: reinstala el driver NVIDIA del host (aunque la versión ya coincida) en lugar del apt. Solo a mano, con terminal
 /// y con `--yes` (sin él no se toca nada); el timer no pasa por aquí. Informa aparte el host y cada CT; nunca reinicia el host.
 fn nvidia_reinstall_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool, tty: bool) -> i32 {
@@ -444,10 +499,18 @@ fn nvidia_reinstall_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, n
     install_signal_handlers();
     let inv = guests::load(host);
     let optin = pxu::share::host::UpdateOptIn::new(host);
+    // con terminal: mini TUI en vivo; sin él (o con --json) el texto plano de siempre
+    let ui = live_ui(json, live::Live::nvidia());
+    // sin pantalla (modo de líneas) el aviso de cancelación sale en stderr; con ella lo da la propia pantalla
+    let _watch = (ui.is_none() && !json).then(|| watch_cancel(true));
+    let mut sink = ui.as_ref().map(|u| u.sink());
     // sin `println!`: con el terminal cerrado (SIGHUP) fallaría y mataría a pxu a mitad de la instalación
     let mut on_event = |e: update::Event| {
         if json {
             return;
+        }
+        if let Some(s) = sink.as_mut() {
+            return s(e);
         }
         if let update::Event::Line(_, l) = e {
             let _ = std::io::Write::write_fmt(&mut std::io::stdout(), format_args!("  {l}\n"));
@@ -455,6 +518,10 @@ fn nvidia_reinstall_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, n
     };
     let res = update::run_nvidia(host, &inv, &cfg, nvidia::Mode::Reinstall, &INTERRUPTED, &mut on_event);
     drop(optin);
+    if let Some(u) = ui {
+        u.finish(res.as_ref().ok().map(live::summarize));
+    }
+    quiet_if_hung_up();
     let rep = match res {
         Ok(r) => r,
         Err(update::RunError::Locked) => {
@@ -556,10 +623,16 @@ fn update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
                 return update::EXIT_OK;
             }
             let optin = pxu::share::host::HostUpdateOptIn::new(host);
+            let mut ui = live_ui(json, live::Live::apt());
+            let _watch = (ui.is_none() && !json).then(|| watch_cancel(false));
+            let sink = std::cell::RefCell::new(ui.as_ref().map(|u| Box::new(u.sink()) as Box<dyn FnMut(update::Event)>));
             // sin `println!`: con el terminal cerrado (SIGHUP) fallaría y mataría a pxu a mitad de la instalación
             let mut on_event = |e: update::Event| {
                 if json {
                     return;
+                }
+                if let Some(s) = sink.borrow_mut().as_mut() {
+                    return s(e);
                 }
                 let mut o = std::io::stdout();
                 match e {
@@ -574,6 +647,15 @@ fn update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
             };
             let out = hu::run(host, &inv, &cfg, &hu::HostOpts { confirmed: confirmed.clone() }, &INTERRUPTED, &mut on_event);
             drop(optin);
+            if let Some(u) = ui.take() {
+                u.finish(match &out {
+                    Ok(hu::HostOutcome::Done(r)) => Some(live::summarize(r)),
+                    _ => None,
+                });
+                // la pantalla ya cerró: lo que venga (p. ej. la reparación de dpkg) sale en texto plano
+                *sink.borrow_mut() = None;
+            }
+            quiet_if_hung_up();
             match out {
                 Err(update::RunError::Locked) => {
                     eprintln!("pxu: another pxu update is running (lock {}/pxu-run.lock or pxu-host-update.lock)", host.lock_dir().display());
@@ -701,6 +783,25 @@ pub fn cmd_config_disable_apprise(host: &dyn Host) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_line_mode_prints_the_cancel_notice_once_as_soon_as_the_flag_is_set() {
+        use std::sync::atomic::Ordering::SeqCst;
+        static FLAG: AtomicBool = AtomicBool::new(false);
+        static REPORTED: AtomicBool = AtomicBool::new(false);
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let w = spawn_watch(&FLAG, &REPORTED, true, move |m| {
+            let _ = tx.send(m);
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_millis(150)).is_err(), "no notice before the signal");
+        let t = std::time::Instant::now();
+        FLAG.store(true, SeqCst);
+        let m = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("the notice comes out");
+        assert!(t.elapsed() < std::time::Duration::from_secs(1) && m.starts_with("cancel requested"), "{m}");
+        println!("--- line mode (stderr): pxu: {m}");
+        assert!(rx.recv_timeout(std::time::Duration::from_millis(150)).is_err(), "only once");
+        drop(w);
+    }
+
     use super::*;
     use pxu::share::host::ReadOnlyHost;
     use pxu::share::mock::scenario::World;
