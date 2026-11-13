@@ -1,5 +1,6 @@
 //! Actualización del driver NVIDIA del host (instalado con el `.run` oficial) y de las librerías de los CT, como paso OPCIONAL de la corrida
-//! programada: `[update] host_nvidia_auto` (host) y `[[ct]] nvidia_auto` (CT). Sin esos opt-ins el timer no toca nada de NVIDIA.
+//! programada: `[update] host_nvidia_auto`. Sin ese opt-in el timer no toca nada de NVIDIA. No hay opt-in por CT: cada vez que se instala o reinstala el
+//! driver del host, TODOS los CT LXC con GPU NVIDIA reciben las librerías de esa versión (si no, fallarían al usar la GPU).
 //!
 //! Fuente única (NVIDIA, sin intermediarios): índice `https://download.nvidia.com/XFree86/Linux-x86_64/` (una línea `href='<versión>/'` por
 //! versión); por versión, `NVIDIA-Linux-x86_64-<v>.run` y `.run.sha256sum` (`<hash>  <archivo>`). Solo se sube dentro de la MISMA rama mayor
@@ -8,7 +9,7 @@
 //! Orden (cualquier fallo antes de tocar el sistema aborta ESE paso y deja todo como estaba): reinicio pendiente → lecturas (versión cargada,
 //! `nvidia-uninstall`, índice) → descarga + sha256 + `--check` → cabeceras del kernel + compilación de prueba (`--extract-only`) → (solo aquí
 //! se toca el sistema) parar los CT con GPU → `modprobe -r` → instalar con `--dkms` → verificar con `nvidia-smi` → arrancar los CT → librerías
-//! de los CT con `nvidia_auto` (`--no-kernel-modules`) y reinicio de cada uno. Si el driver del host falla, NINGÚN CT recibe librerías, los CT
+//! de todos los CT con GPU (`--no-kernel-modules`) y reinicio de cada uno; uno apagado se arranca solo para esto y se vuelve a apagar. Si el driver del host falla, NINGÚN CT recibe librerías, los CT
 //! parados se vuelven a arrancar si el módulo viejo aún carga, y la corrida se corta. Nunca reinicia el host.
 use super::{now_s, stamp, Ctx, Event, Outcome};
 use crate::share::config::Config;
@@ -174,7 +175,7 @@ fn a(parts: &[&str]) -> Argv {
 }
 
 /// Lo que el opt-in deja pasar: la versión elegida (ya validada), el kernel en marcha, el sabor del módulo, los CT que se paran/arrancan
-/// y los CT a los que se les ponen las librerías. Todo sale de las opciones (`host_nvidia_auto`, `nvidia_auto`) y del inventario.
+/// y los CT a los que se les ponen las librerías. Todo sale de la opción (`host_nvidia_auto`) y del inventario.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub version: String,
@@ -182,7 +183,7 @@ pub struct Grant {
     pub flavor: String,
     /// CT con GPU NVIDIA en marcha: se paran antes de descargar el módulo y se vuelven a arrancar.
     pub stop_cts: Vec<u32>,
-    /// CT con `nvidia_auto`: reciben las librerías de `version`.
+    /// CT LXC con GPU NVIDIA: reciben las librerías de `version` (los apagados se arrancan y se vuelven a apagar).
     pub libs_cts: Vec<u32>,
 }
 
@@ -472,7 +473,7 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
         Mode::CtLibs(_) => false,
     };
     let target = newest.clone().unwrap_or_else(|| cur.clone());
-    // CT con GPU NVIDIA: en marcha → se paran con el módulo; con `nvidia_auto` → reciben las librerías si su versión no es la del destino
+    // CT con GPU NVIDIA: en marcha → se paran con el módulo; TODOS reciben las librerías (los apagados se arrancan y se vuelven a apagar)
     let gpu_cts: Vec<&crate::share::model::Guest> = inv.guests.iter().filter(|g| g.kind == GuestKind::Lxc && !g.template && g.gpu.nvidia).collect();
     let stop_cts: Vec<u32> = if host_needs { gpu_cts.iter().filter(|g| lxc_running(host, g.vmid)).map(|g| g.vmid).collect() } else { vec![] };
     let ct_version = |vmid: u32| inv.host.as_ref().and_then(|h| h.ct_nvidia.get(&vmid.to_string())).and_then(|n| n.version.clone());
@@ -481,7 +482,8 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
             let Some(g) = gpu_cts.iter().copied().find(|g| g.vmid == id) else { return skip(&format!("skipped: CT {id} is not an LXC with an NVIDIA GPU")) };
             vec![g]
         }
-        _ => gpu_cts.iter().copied().filter(|g| cfg.nvidia_auto(g.vmid) && (host_needs || ct_version(g.vmid).as_deref() != Some(target.as_str()))).collect(),
+        // con el driver del host tocado, todos; si no, los que no coinciden (un CT apagado de versión desconocida no se arranca cada día)
+        _ => gpu_cts.iter().copied().filter(|g| host_needs || ct_version(g.vmid).map_or_else(|| lxc_running(host, g.vmid), |v| v != target)).collect(),
     };
     if !host_needs && libs.is_empty() {
         return None;
@@ -507,7 +509,7 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     // un CT con GPU que no recibe librerías lo dice explícitamente (panel y log), también si está apagado
     if !matches!(mode, Mode::CtLibs(_)) {
         for g in gpu_cts.iter().filter(|g| !libs_cts.contains(&g.vmid)) {
-            c.cx.say(&skipped_libs_line(g.vmid, &g.name, cfg.nvidia_auto(g.vmid), lxc_running(host, g.vmid)));
+            c.cx.say(&skipped_libs_line(g.vmid, &g.name, ct_version(g.vmid).is_some()));
         }
     }
     let named = |ids: &[u32]| -> Vec<(u32, String)> { ids.iter().map(|&id| (id, inv.guests.iter().find(|g| g.vmid == id).map(|g| g.name.clone()).unwrap_or_default())).collect() };
@@ -521,11 +523,12 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     Some((run, stop))
 }
 
-/// `CT 129 (llama-swap): no libraries (nvidia_auto = false)`: por qué un CT con GPU no recibe las librerías del driver.
-fn skipped_libs_line(vmid: u32, name: &str, auto: bool, running: bool) -> String {
-    let why = if auto { "already at the target version" } else { "nvidia_auto = false" };
+/// `CT 129 (llama-swap): no libraries (already at the target version)`: por qué un CT con GPU no recibe las librerías del driver
+/// (solo si el host no se tocó: con el driver del host instalado o reinstalado reciben todos).
+fn skipped_libs_line(vmid: u32, name: &str, version_known: bool) -> String {
+    let why = if version_known { "already at the target version" } else { "CT is stopped and its libs version is unknown" };
     let name = if name.is_empty() { String::new() } else { format!(" ({name})") };
-    format!("CT {vmid}{name}: no libraries ({why}{})", if running { "" } else { "; CT is stopped" })
+    format!("CT {vmid}{name}: no libraries ({why})")
 }
 
 fn argv(v: &[String]) -> Vec<&str> {
@@ -811,6 +814,7 @@ fn recover(c: &mut Cx, g: &Grant, stopped: &[u32], why: String) -> Res {
 }
 
 /// Librerías de un CT: copia el `.run` a un directorio privado nuevo, revisa su SHA-256 allí, `--no-kernel-modules`, verifica con `nvidia-smi` y reinicia el CT.
+/// Un CT que estaba apagado se arranca para esto y se vuelve a apagar al terminar (también si falla): queda como estaba.
 fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool, want: &str) -> NvidiaCt {
     let done = |c: &mut Cx, outcome: Outcome, detail: &str| {
         c.cx.say(&format!("CT {vmid}: {detail}"));
@@ -818,28 +822,50 @@ fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool, wa
         NvidiaCt { vmid, name: name.into(), outcome, detail: detail.into() }
     };
     c.cx.vmid = vmid;
-    let was_running = we_stopped_it || lxc_running(c.cx.host, vmid);
-    if !was_running {
-        return done(c, Outcome::Skipped, "CT stopped: not started by pxu, libs not updated");
-    }
-    let q = long_s(c.qs);
-    if we_stopped_it {
+    // apagado desde antes (no por pxu al parar el módulo): se arranca solo para esto y se apaga de nuevo
+    let was_off = !we_stopped_it && !lxc_running(c.cx.host, vmid);
+    if we_stopped_it || was_off {
         match c.cx.host_cmd(&argv(&g.ct_start(vmid)), &long_s(90)) {
             Ok(0) => {}
-            r => return done(c, Outcome::Failed, &format!("cannot start the CT: {}", describe(&r))),
+            r => return done(c, Outcome::Failed, &format!("cannot start the CT{}: {}", if was_off { " (it was stopped; left stopped)" } else { "" }, describe(&r))),
         }
     }
+    let worked = ct_libs_work(c, g, vmid, want);
+    if was_off {
+        let _ = c.cx.host_cmd(&argv(&g.ct_shutdown(vmid)), &long_s(90));
+        if lxc_running(c.cx.host, vmid) {
+            let _ = c.cx.host_cmd(&argv(&g.ct_stop(vmid)), &long_s(90));
+        }
+        let off = !lxc_running(c.cx.host, vmid);
+        return match worked {
+            Err(why) => done(c, Outcome::Failed, &format!("{why}{}", if off { "; CT left stopped as it was" } else { "; !! the CT could not be stopped again" })),
+            Ok(()) if off => done(c, Outcome::Ok, &format!("libs {} installed (CT was stopped: started and stopped again)", g.version)),
+            Ok(()) => done(c, Outcome::Warn, &format!("libs {} installed but the CT could not be stopped again (it was stopped before)", g.version)),
+        };
+    }
+    match worked {
+        Err(why) => done(c, Outcome::Failed, &why),
+        Ok(()) => match c.cx.host_cmd(&argv(&g.ct_reboot(vmid)), &long_s(120)) {
+            Ok(0) => done(c, Outcome::Ok, &format!("libs {} installed, CT restarted", g.version)),
+            r => done(c, Outcome::Warn, &format!("libs {} installed but the CT restart failed ({})", g.version, describe(&r))),
+        },
+    }
+}
+
+/// Lo que se hace dentro del CT (ya en marcha): espacio, copia del `.run`, SHA-256, instalador de librerías y `nvidia-smi`. `Err` = motivo del fallo.
+fn ct_libs_work(c: &mut Cx, g: &Grant, vmid: u32, want: &str) -> Result<(), String> {
+    let q = long_s(c.qs);
     match c.cx.guest(CT_DF, &q) {
         Ok(0) if free_kb(&c.cx).is_some_and(|k| k >= MIN_FREE_CT_KB) => {}
-        Ok(0) => return done(c, Outcome::Failed, &format!("not enough free space in the CT (/var/lib): {} MB needed", MIN_FREE_CT_KB / 1024)),
-        r => return done(c, Outcome::Failed, &format!("cannot check CT free space: {}", describe(&r))),
+        Ok(0) => return Err(format!("not enough free space in the CT (/var/lib): {} MB needed", MIN_FREE_CT_KB / 1024)),
+        r => return Err(format!("cannot check CT free space: {}", describe(&r))),
     }
     let dir = match c.cx.guest(CT_MKTEMP, &q) {
         Ok(0) => c.cx.capture.iter().map(|l| l.trim()).find(|l| !l.is_empty()).map(String::from),
-        r => return done(c, Outcome::Failed, &format!("cannot create a private directory in the CT: {}", describe(&r))),
+        r => return Err(format!("cannot create a private directory in the CT: {}", describe(&r))),
     };
     let Some(dir) = dir.filter(|d| ct_dir_ok(d)) else {
-        return done(c, Outcome::Failed, "the CT returned an unexpected temporary directory; nothing was copied");
+        return Err("the CT returned an unexpected temporary directory; nothing was copied".into());
     };
     let mut result = match c.cx.host_cmd(&argv(&g.ct_push(vmid, &dir)), &long_s(FETCH_S)) {
         Ok(0) => {
@@ -869,13 +895,7 @@ fn ct_libs(c: &mut Cx, g: &Grant, vmid: u32, name: &str, we_stopped_it: bool, wa
             result = Some(format!("verification failed: nvidia-smi in the CT reports {}", v.as_deref().unwrap_or("nothing")));
         }
     }
-    match result {
-        Some(why) => done(c, Outcome::Failed, &why),
-        None => match c.cx.host_cmd(&argv(&g.ct_reboot(vmid)), &long_s(120)) {
-            Ok(0) => done(c, Outcome::Ok, &format!("libs {} installed, CT restarted", g.version)),
-            r => done(c, Outcome::Warn, &format!("libs {} installed but the CT restart failed ({})", g.version, describe(&r))),
-        },
-    }
+    result.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -886,9 +906,8 @@ mod tests {
 
     #[test]
     fn a_gpu_ct_without_libs_gets_an_explicit_line_with_the_reason() {
-        assert_eq!(skipped_libs_line(129, "llama-swap", false, true), "CT 129 (llama-swap): no libraries (nvidia_auto = false)");
-        assert_eq!(skipped_libs_line(120, "", false, false), "CT 120: no libraries (nvidia_auto = false; CT is stopped)");
-        assert_eq!(skipped_libs_line(7, "x", true, true), "CT 7 (x): no libraries (already at the target version)");
+        assert_eq!(skipped_libs_line(129, "llama-swap", true), "CT 129 (llama-swap): no libraries (already at the target version)");
+        assert_eq!(skipped_libs_line(120, "", false), "CT 120: no libraries (CT is stopped and its libs version is unknown)");
     }
 
     #[test]

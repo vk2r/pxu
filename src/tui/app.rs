@@ -87,7 +87,7 @@ pub enum Action {
     CancelUpdate,
     /// `a`: el bucle lee la config (validada) y abre la ventana de opciones de auto-update (auto-update + driver NVIDIA).
     AskAutoUpdate { vmid: u32 },
-    /// Enter en esa ventana: el bucle escribe solo lo que cambió (`auto`: `host_auto`/`[[ct]] auto_update`; `driver`: `nvidia_auto`) y recarga.
+    /// Enter en esa ventana: el bucle escribe solo lo que cambió (`auto`: `host_auto`/`[[ct]] auto_update`; `driver`: `host_nvidia_auto`) y recarga.
     SetAutoUpdate { vmid: u32, auto: Option<bool>, driver: Option<bool> },
     /// `b`: el bucle lee la config (validada) y abre el modal del backup previo al update.
     AskBackup { vmid: u32 },
@@ -129,27 +129,22 @@ pub enum Action {
 pub struct DriverBox {
     pub current: String,
     pub newest: Newest,
-    /// Casilla marcada; arranca en el valor guardado (`nvidia_auto`).
+    /// Casilla marcada; arranca en el valor guardado (`host_nvidia_auto`).
     pub checked: bool,
     /// Valor guardado al abrir.
     pub initial: bool,
-    /// Host: cuántos CT tienen `nvidia_auto` (dejan de recibir el driver si el del host se apaga).
-    pub dependents: usize,
 }
 
 impl DriverBox {
     /// Líneas informativas, compactas.
-    pub fn lines(&self, ct: bool) -> Vec<String> {
+    pub fn lines(&self) -> Vec<String> {
         let latest = match &self.newest {
             Newest::Newer(v) => format!("{v} (newer, same {} branch)", self.branch()),
             Newest::UpToDate => format!("{} (up to date)", self.current),
             Newest::Unknown => "unknown (could not reach nvidia.com)".into(),
         };
         let mut l = vec![format!("Installed: {} · Latest: {latest}", self.current)];
-        l.push(format!("the run installs the newest {}.x with DKMS after the host update; GPU CTs get its libs", self.branch()));
-        if ct {
-            l.push("this CT restarts after getting the libs".into());
-        }
+        l.push(format!("the run installs the newest {}.x with DKMS after the host update; ALL GPU CTs get its libs (stopped ones are started and stopped again)", self.branch()));
         l.push("skipped if a host reboot is pending; pxu never reboots the host".into());
         l
     }
@@ -222,20 +217,9 @@ impl AutoModal {
             parts.push(if self.vmid == 0 { format!("[update] host_auto = {v}") } else { format!("[[ct]] {} auto_update = {v}", self.vmid) });
         }
         if let Some(v) = driver {
-            parts.push(match (v, self.vmid) {
-                (true, 0) => "[update] host_nvidia_auto = true".into(),
-                (true, id) => format!("[[ct]] {id} nvidia_auto + [update] host_nvidia_auto"),
-                (false, 0) => "[update] host_nvidia_auto = false".into(),
-                (false, id) => format!("[[ct]] {id} nvidia_auto = false (host flag untouched)"),
-            });
+            parts.push(format!("[update] host_nvidia_auto = {v}"));
         }
         if parts.is_empty() { "nothing changed: Enter writes nothing".into() } else { format!("Saves: {}", parts.join(" + ")) }
-    }
-
-    /// Aviso: apagar el driver del host deja sin él a los CT que lo tienen activo.
-    pub fn warning(&self) -> Option<String> {
-        let d = self.driver.as_ref().ok()?;
-        (self.vmid == 0 && !d.checked && d.dependents > 0).then(|| format!("! {} CT(s) with nvidia_auto get nothing while the host flag is off", d.dependents))
     }
 
     /// `Space` sobre la casilla enfocada. El driver depende del auto-update: no se marca con este apagado, y apagar este lo desmarca.

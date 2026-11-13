@@ -1370,7 +1370,7 @@ mod tests {
             let ct = rep.nvidia.as_ref().unwrap().cts.iter().find(|c| c.vmid == 134).expect("ct entry");
             assert_eq!(ct.outcome, Outcome::Failed, "{hostile}: {}", ct.detail);
             let c = all_cmds(&h, n0);
-            assert!(!c.iter().any(|a| a.contains("pct push") || a.contains("--no-kernel-modules") || a.contains(hostile) && a.starts_with("ct134 rm")), "{hostile}: {c:#?}");
+            assert!(!c.iter().any(|a| a.contains("pct push 134") || a.starts_with("ct134 ") && a.contains("--no-kernel-modules") || a.contains(hostile) && a.starts_with("ct134 rm")), "{hostile}: {c:#?}");
         }
     }
 
@@ -1382,7 +1382,7 @@ mod tests {
         let ct = rep.nvidia.as_ref().unwrap().cts.iter().find(|c| c.vmid == 134).expect("ct entry");
         assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
         let c = all_cmds(&h, n0);
-        assert!(!c.iter().any(|a| a.contains("--no-kernel-modules")), "{c:#?}");
+        assert!(!c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "{c:#?}");
         assert!(c.iter().any(|a| a.starts_with("ct134 rm -rf -- /var/lib/pxu-nvidia.")), "the temp dir is removed: {c:#?}");
     }
 
@@ -1408,8 +1408,46 @@ mod tests {
         assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (Some("595.112.07"), Some("595.112.07")));
         let c = all_cmds(&h, n1);
         assert!(c.iter().any(|a| a.starts_with("host ") && a.contains("--dkms")), "{c:#?}");
-        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "the CT with nvidia_auto gets its libs: {c:#?}");
+        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "every GPU CT gets its libs: {c:#?}");
         assert!(!nv.reboot_needed && !c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "{c:?}");
+    }
+
+    #[test]
+    fn reinstall_puts_libs_in_every_gpu_ct_without_any_per_ct_opt_in_and_a_stopped_one_is_started_and_stopped_again() {
+        use crate::share::proxmox::guests::lxc_running;
+        // 134 en marcha y 135 apagado, ninguno con `nvidia_auto`; una config vieja con `nvidia_auto = false` se ignora
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["nvidia_auto = false"]));
+        assert!(!lxc_running(&h, 135));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        let by = |id: u32| nv.cts.iter().find(|c| c.vmid == id).unwrap_or_else(|| panic!("CT {id} missing: {:?}", nv.cts));
+        assert_eq!((by(134).outcome, by(135).outcome), (Outcome::Ok, Outcome::Ok), "{} / {}", by(134).detail, by(135).detail);
+        assert!(by(134).detail.contains("CT restarted"), "{}", by(134).detail);
+        assert!(by(135).detail.contains("CT was stopped: started and stopped again"), "{}", by(135).detail);
+        assert!(nv.detail.contains("CT updated: 134, 135"), "{}", nv.detail);
+        let c = all_cmds(&h, n0);
+        let pos = |p: &str| c.iter().position(|a| a == p || a.contains(p)).unwrap_or_else(|| panic!("{p} missing in {c:#?}"));
+        assert!(pos("host pct start 135") < pos("ct135 sh") && pos("ct135 sh") < pos("host pct shutdown 135 --timeout 60"), "{c:#?}");
+        assert!(!c.iter().any(|a| a.contains("pct reboot 135")), "a CT that was off is not restarted: {c:#?}");
+        assert!(!lxc_running(&h, 135), "135 ends stopped, as it was");
+        assert!(lxc_running(&h, 134));
+    }
+
+    #[test]
+    fn a_failing_stopped_ct_is_left_stopped_and_reported_as_failed() {
+        use crate::share::proxmox::guests::lxc_running;
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file("/exec/135/nvidia-ct-sha.out", b"deadbeef  x\n"));
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "the host result does not depend on the CTs: {}", nv.detail);
+        let ct = nv.cts.iter().find(|c| c.vmid == 135).expect("ct entry");
+        assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
+        assert!(ct.detail.contains("CT left stopped as it was"), "{}", ct.detail);
+        assert!(!lxc_running(&h, 135), "still stopped");
+        assert!(nv.detail.contains("(1 failed"), "{}", nv.detail);
+        assert!(update::report::body(&rep).contains("135"), "the failed CT shows in the summary");
     }
 
     #[test]
@@ -1433,7 +1471,7 @@ mod tests {
         assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Ok);
         let Some(Note::Plan(Plan { from, to, host, libs, .. })) = notes.first() else { panic!("the plan comes first: {notes:?}") };
         assert_eq!((from.as_str(), to.as_str(), *host), ("595.112.07", "595.112.07", true));
-        assert_eq!(libs.iter().map(|l| l.0).collect::<Vec<_>>(), [134]);
+        assert!(libs.iter().any(|l| l.0 == 134), "{libs:?}");
         assert!(notes.contains(&Note::Size(423_000_000)), "the size is the LAST content-length: {notes:?}");
         assert!(notes.iter().any(|n| matches!(n, Note::Ct { vmid: 134, outcome: Outcome::Ok, .. })), "{notes:?}");
         let (size, dl) = (order.iter().position(|o| o.starts_with("Size")).unwrap(), order.iter().position(|o| o == "download").unwrap());
@@ -1596,7 +1634,7 @@ mod tests {
         assert_eq!(nv.outcome, Outcome::Ok, "host ok: {}", nv.detail);
         let ct = nv.cts.iter().find(|c| c.vmid == 134).expect("ct entry");
         assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
-        assert!(nv.detail.contains("CT updated: none") && nv.detail.contains("1 failed"), "{}", nv.detail);
+        assert!(nv.detail.contains("CT updated: 135") && nv.detail.contains("(1 failed"), "{}", nv.detail);
         assert_eq!(rep.exit_code(), update::EXIT_PARTIAL, "a failed CT still fails the run");
         let b = update::report::body(&rep);
         let host_row = b.lines().find(|l| l.starts_with("| host")).expect("host row");

@@ -5,7 +5,7 @@ pxu · Proxmox Updater [RO] [MOCK]              node server · 6 guests · 5 run
 >   0  HOST  server   run      proxmox ve 9.0.11       —  24.4/62.5 GB  —        NVIDIA ✓+drv  7/2          -       yes
   131  LXC   ct-131   run      debian 12               —  0.2/0.5 GB    4.0 GB   AMD ✓         0            yes     —
   134  LXC   openwe…  run      debian 12               —  0.2/0.5 GB    4.0 GB   NVIDIA ✓+drv  1/0          yes     yes
-  135  LXC   ct-135   stopped  debian 12               —  —/0.5 GB      4.0 GB   NVIDIA ?      0            yes     —
+  135  LXC   ct-135   stopped  debian 12               —  —/0.5 GB      4.0 GB   NVIDIA ?+drv  0            yes     —
   140  LXC   ct-140   run      debian 12               —  0.2/0.5 GB    4.0 GB   —             0            yes     —
   150  LXC   ct-150   run      debian 12               —  0.2/0.5 GB    4.0 GB   —             0            yes     —
   200  VM ┌ auto-update ─────────────────────────────────────────────────────────────────────────────────────┐      —
@@ -19,7 +19,7 @@ pxu · Proxmox Updater [RO] [MOCK]              node server · 6 guests · 5 run
           │> [x] Automatic updates                                                                           │
           │  [x] Include GPU driver update (NVIDIA)                                                          │
           │      Installed: 595.112.07 · Latest: 595.120.01 (newer, same 595 branch)                         │
-          │      the run installs the newest 595.x with DKMS after the host update; GPU CTs get its libs     │
+          │      the run installs the newest 595.x with DKMS after the host update; ALL GPU CTs get its libs…│
           │      skipped if a host reboot is pending; pxu never reboots the host                             │
           │                                                                                                  │
           │ nothing changed: Enter writes nothing                                                            │

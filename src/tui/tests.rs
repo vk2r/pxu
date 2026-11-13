@@ -1467,10 +1467,9 @@ fn open_a(h: &ReadOnlyHost<MockHost>, a: &mut App, vmid: u32) {
 #[test]
 fn the_driver_box_is_offered_for_a_gpu_machine_with_a_run_driver_even_when_up_to_date() {
     use pxu::share::update::nvidia::Newest;
-    let h = gpu_host(&["595.112.07", "595.120.01", "596.10.01"], true);
-    let mut a = auto_app(&h);
-    open_a(&h, &mut a, 134);
-    let d = a.auto_modal.as_ref().unwrap().driver.as_ref().expect("CT with NVIDIA GPU + newer driver");
+    let (mut a, h) = host_app_with(gpu_host(&["595.112.07", "595.120.01", "596.10.01"], true));
+    open_a(&h, &mut a, 0);
+    let d = a.auto_modal.as_ref().unwrap().driver.as_ref().expect("host with NVIDIA GPU + newer driver");
     assert_eq!((d.current.as_str(), d.newest.clone(), d.checked), ("595.112.07", Newest::Newer("595.120.01".into()), false), "never a newer major (596)");
     // sin GPU NVIDIA (CT140, CT131 AMD): sin casilla y con el motivo
     for vmid in [140, 131] {
@@ -1482,45 +1481,55 @@ fn the_driver_box_is_offered_for_a_gpu_machine_with_a_run_driver_even_when_up_to
         assert!(!out.contains("Include GPU driver update") && out.contains("not offered — no NVIDIA GPU"), "{out}");
     }
     // al día: la casilla sale igual
-    let h2 = gpu_host(&["595.112.07", "596.10.01"], true);
-    let mut a = auto_app(&h2);
-    open_a(&h2, &mut a, 134);
+    let (mut a, h2) = host_app_with(gpu_host(&["595.112.07", "596.10.01"], true));
+    open_a(&h2, &mut a, 0);
     let d = a.auto_modal.as_ref().unwrap().driver.as_ref().expect("up to date");
     assert_eq!(d.newest, Newest::UpToDate);
-    assert!(d.lines(true)[0].contains("595.112.07 (up to date)"));
+    assert!(d.lines()[0].contains("595.112.07 (up to date)"));
     // driver de apt (sin nvidia-uninstall): sin casilla y con el motivo
-    let h3 = gpu_host(&["595.112.07", "595.120.01"], false);
-    let mut a = auto_app(&h3);
-    open_a(&h3, &mut a, 134);
+    let (mut a, h3) = host_app_with(gpu_host(&["595.112.07", "595.120.01"], false));
+    open_a(&h3, &mut a, 0);
     assert_eq!(a.auto_modal.as_ref().unwrap().driver.as_ref().err().map(String::as_str), Some("driver not installed with the .run"));
     let (out, _) = render(&a, 120, 40, false);
     assert!(!out.contains("Include GPU driver update") && out.contains("driver not installed with the .run"), "{out}");
     // sin red / índice ilegible: sale igual, con aviso
-    let h4 = ReadOnlyHost::new(World::host_gpu().config_raw("[update]\n").file("/usr/bin/nvidia-uninstall", b"").build());
-    let mut a = auto_app(&h4);
-    open_a(&h4, &mut a, 134);
+    let (mut a, h4) = host_app_with(ReadOnlyHost::new(World::host_gpu().config_raw("[update]\n").file("/usr/bin/nvidia-uninstall", b"").build()));
+    open_a(&h4, &mut a, 0);
     let d = a.auto_modal.as_ref().unwrap().driver.as_ref().expect("no network");
     assert_eq!(d.newest, Newest::Unknown);
-    assert!(d.lines(true)[0].contains("unknown (could not reach nvidia.com)"));
+    assert!(d.lines()[0].contains("unknown (could not reach nvidia.com)"));
     // el host del fixture usa un driver de apt: sin casilla
     let (mut a, h5) = host_app_with(fixture("host"));
     open_a(&h5, &mut a, 0);
     assert_eq!(a.auto_modal.as_ref().unwrap().driver.as_ref().err().map(String::as_str), Some("driver not installed with the .run"));
 }
 
-fn nvidia_cfg(auto_on: bool, host_on: bool, ct_on: bool) -> String {
-    format!("[update]\nstopped = \"skip\"\nhost_nvidia_auto = {host_on}\n[[ct]]\nvmid = 134\nauto_update = {auto_on}\nnvidia_auto = {ct_on}\n")
+fn nvidia_cfg(host_auto: bool, host_on: bool) -> String {
+    format!("[update]\nstopped = \"skip\"\nhost_auto = {host_auto}\nhost_nvidia_auto = {host_on}\n[[ct]]\nvmid = 134\nauto_update = true\n")
 }
 
-fn nvidia_host(auto_on: bool, host_on: bool, ct_on: bool) -> ReadOnlyHost<MockHost> {
-    ReadOnlyHost::new(World::host_gpu().config_raw(&nvidia_cfg(auto_on, host_on, ct_on)).nvidia_run_driver(&["595.112.07", "595.120.01"]).build())
+fn nvidia_host(host_auto: bool, host_on: bool) -> ReadOnlyHost<MockHost> {
+    ReadOnlyHost::new(World::host_gpu().config_raw(&nvidia_cfg(host_auto, host_on)).nvidia_run_driver(&["595.112.07", "595.120.01"]).build())
+}
+
+#[test]
+fn a_gpu_ct_has_no_driver_checkbox_because_it_follows_the_host() {
+    // an old config with `[[ct]] nvidia_auto` loads and changes nothing in the window
+    let cfg = "[update]\nstopped = \"skip\"\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nauto_update = true\nnvidia_auto = false\n";
+    let (mut a, h) = host_app_with(ReadOnlyHost::new(World::host_gpu().config_raw(cfg).nvidia_run_driver(&["595.112.07", "595.120.01"]).build()));
+    open_a(&h, &mut a, 134);
+    let m = a.auto_modal.as_ref().unwrap();
+    assert!(m.driver.is_err() && m.value, "{:?}", m.driver.as_ref().err());
+    let (out, _) = render(&a, 120, 40, false);
+    assert!(!out.contains("Include GPU driver update") && out.contains("GPU CTs follow the host driver"), "{out}");
+    assert!(a.guest(134).unwrap().nvidia_auto, "the CT follows the host flag (+drv)");
 }
 
 #[test]
 fn a_opens_with_the_saved_values_auto_on_off_by_driver_on_off() {
     for (auto_on, drv_on) in [(true, true), (true, false), (false, false), (false, true)] {
-        let (mut a, h) = host_app_with(nvidia_host(auto_on, drv_on, drv_on));
-        open_a(&h, &mut a, 134);
+        let (mut a, h) = host_app_with(nvidia_host(auto_on, drv_on));
+        open_a(&h, &mut a, 0);
         let m = a.auto_modal.as_ref().expect("window");
         let d = m.driver.as_ref().expect("driver box");
         assert_eq!((m.value, m.initial, d.checked, d.initial), (auto_on, auto_on, drv_on, drv_on));
@@ -1537,8 +1546,8 @@ fn a_opens_with_the_saved_values_auto_on_off_by_driver_on_off() {
 
 #[test]
 fn the_driver_box_needs_auto_update_and_unchecking_auto_update_unchecks_it() {
-    let (mut a, h) = host_app_with(nvidia_host(false, false, false));
-    open_a(&h, &mut a, 134);
+    let (mut a, h) = host_app_with(nvidia_host(false, false));
+    open_a(&h, &mut a, 0);
     // foco en el driver, auto-update desmarcado: Space no marca
     a.on_key(key(KeyCode::Down));
     assert_eq!(a.auto_modal.as_ref().unwrap().focus, 1);
@@ -1554,74 +1563,59 @@ fn the_driver_box_needs_auto_update_and_unchecking_auto_update_unchecks_it() {
     a.on_key(key(KeyCode::Char(' ')));
     let m = a.auto_modal.as_ref().unwrap();
     assert!(m.value && m.driver.as_ref().unwrap().checked);
-    assert_eq!(m.saves(), "Saves: [[ct]] 134 auto_update = true + [[ct]] 134 nvidia_auto + [update] host_nvidia_auto");
+    assert_eq!(m.saves(), "Saves: [update] host_auto = true + [update] host_nvidia_auto = true");
     a.on_key(key(KeyCode::Up));
     a.on_key(key(KeyCode::Char(' ')));
     let m = a.auto_modal.as_ref().unwrap();
     assert!(!m.value && !m.driver.as_ref().unwrap().checked);
     assert_eq!(m.changes(), (None, None));
-    // un CT con el driver activo: apagar auto-update apaga también el driver
-    let (mut a, h) = host_app_with(nvidia_host(true, true, true));
-    open_a(&h, &mut a, 134);
+    // el host con el driver activo: apagar auto-update apaga también el driver
+    let (mut a, h) = host_app_with(nvidia_host(true, true));
+    open_a(&h, &mut a, 0);
     a.on_key(key(KeyCode::Char(' ')));
     let m = a.auto_modal.as_ref().unwrap();
     assert!(!m.driver.as_ref().unwrap().checked);
     assert_eq!(m.changes(), (Some(false), Some(false)));
-    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 134, auto: Some(false), driver: Some(false) });
-    super::save_auto_update(&h, &mut a, 134, Some(false), Some(false));
+    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 0, auto: Some(false), driver: Some(false) });
+    super::save_auto_update(&h, &mut a, 0, Some(false), Some(false));
     let cfg = pxu::share::config::Config::load(&h).unwrap();
-    assert!(!cfg.nvidia_auto(134) && !cfg.auto_update(134, &[]) && cfg.update.host_nvidia_auto, "{}", cfg_text(&h));
+    assert!(!cfg.update.host_auto && !cfg.update.host_nvidia_auto, "{}", cfg_text(&h));
     assert!(a.status.contains("auto-update disabled") && a.status.contains("NVIDIA driver update disabled"), "{}", a.status);
 }
 
 #[test]
-fn saving_driver_on_in_a_ct_also_turns_the_host_on() {
-    let (mut a, h) = host_app_with(nvidia_host(true, false, false));
-    open_a(&h, &mut a, 134);
+fn saving_driver_on_in_the_host_turns_host_nvidia_auto_on() {
+    let (mut a, h) = host_app_with(nvidia_host(true, false));
+    open_a(&h, &mut a, 0);
     a.on_key(key(KeyCode::Down));
     a.on_key(key(KeyCode::Char(' ')));
-    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 134, auto: None, driver: Some(true) });
-    super::save_auto_update(&h, &mut a, 134, None, Some(true));
+    assert_eq!(a.auto_modal.as_ref().unwrap().saves(), "Saves: [update] host_nvidia_auto = true");
+    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 0, auto: None, driver: Some(true) });
+    super::save_auto_update(&h, &mut a, 0, None, Some(true));
     let cfg = pxu::share::config::Config::load(&h).unwrap();
-    assert!(cfg.nvidia_auto(134) && cfg.update.host_nvidia_auto && cfg.auto_update(134, &[]), "{}", cfg_text(&h));
+    assert!(cfg.update.host_nvidia_auto && cfg.update.host_auto, "{}", cfg_text(&h));
     assert!(a.status.contains("NVIDIA driver update enabled") && !a.status.contains("auto-update"), "{}", a.status);
+    assert!(a.guest(134).unwrap().nvidia_auto, "GPU CTs show +drv: they follow the host");
 }
 
 #[test]
-fn saving_driver_off_in_a_ct_leaves_the_host_flag_and_auto_update_alone() {
-    let (mut a, h) = host_app_with(nvidia_host(true, true, true));
-    open_a(&h, &mut a, 134);
+fn saving_driver_off_in_the_host_turns_only_the_host_flag_off() {
+    let (mut a, h) = host_app_with(nvidia_host(true, true));
+    open_a(&h, &mut a, 0);
     a.on_key(key(KeyCode::Down));
     a.on_key(key(KeyCode::Char(' ')));
-    assert_eq!(a.auto_modal.as_ref().unwrap().saves(), "Saves: [[ct]] 134 nvidia_auto = false (host flag untouched)");
-    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 134, auto: None, driver: Some(false) });
-    super::save_auto_update(&h, &mut a, 134, None, Some(false));
+    let (out, _) = render(&a, 120, 40, false);
+    assert!(out.contains("Saves: [update] host_nvidia_auto = false"), "{out}");
+    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 0, auto: None, driver: Some(false) });
+    super::save_auto_update(&h, &mut a, 0, None, Some(false));
     let cfg = pxu::share::config::Config::load(&h).unwrap();
-    assert!(!cfg.nvidia_auto(134) && cfg.update.host_nvidia_auto && cfg.auto_update(134, &[]), "{}", cfg_text(&h));
+    assert!(!cfg.update.host_nvidia_auto && cfg.update.host_auto, "{}", cfg_text(&h));
     assert!(!a.guest(134).unwrap().nvidia_auto, "column refreshed");
 }
 
 #[test]
-fn saving_driver_off_in_the_host_warns_about_dependent_cts_and_turns_only_the_host_flag_off() {
-    let cfg = "[update]\nstopped = \"skip\"\nhost_auto = true\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nnvidia_auto = true\n";
-    let h = ReadOnlyHost::new(World::host_gpu().config_raw(cfg).nvidia_run_driver(&["595.112.07", "595.120.01"]).build());
-    let (mut a, h) = host_app_with(h);
-    open_a(&h, &mut a, 0);
-    let m = a.auto_modal.as_ref().unwrap();
-    assert!(m.value && m.driver.as_ref().unwrap().dependents == 1 && m.warning().is_none());
-    a.on_key(key(KeyCode::Down));
-    a.on_key(key(KeyCode::Char(' ')));
-    let (out, _) = render(&a, 120, 40, false);
-    assert!(out.contains("1 CT(s) with nvidia_auto get nothing while the host flag is off") && out.contains("Saves: [update] host_nvidia_auto = false"), "{out}");
-    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::SetAutoUpdate { vmid: 0, auto: None, driver: Some(false) });
-    super::save_auto_update(&h, &mut a, 0, None, Some(false));
-    let cfg = pxu::share::config::Config::load(&h).unwrap();
-    assert!(!cfg.update.host_nvidia_auto && cfg.nvidia_auto(134) && cfg.update.host_auto, "{}", cfg_text(&h));
-}
-
-#[test]
 fn n_does_nothing_in_the_list_and_in_the_detail() {
-    let (mut a, _h) = host_app_with(nvidia_host(true, true, true));
+    let (mut a, _h) = host_app_with(nvidia_host(true, true));
     goto(&mut a, 134);
     assert_eq!(a.on_key(key(KeyCode::Char('n'))), Action::None);
     assert!(a.auto_modal.is_none());
@@ -1639,16 +1633,12 @@ fn print_window(title: &str, a: &App) {
 
 #[test]
 fn a_window_snapshots_for_the_host_a_gpu_ct_and_a_ct_without_gpu() {
-    let cfg = "[update]\nstopped = \"skip\"\nhost_auto = true\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nauto_update = true\nnvidia_auto = true\n";
+    let cfg = "[update]\nstopped = \"skip\"\nhost_auto = true\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nauto_update = true\n";
     let h = ReadOnlyHost::new(World::host_gpu().config_raw(cfg).nvidia_run_driver(&["595.112.07", "595.120.01"]).build());
     let mut a = auto_app(&h);
     open_a(&h, &mut a, 134);
-    print_window("CT 134 (GPU), checked", &a);
-    snap("auto-modal-ct-gpu-checked", &a);
-    a.on_key(key(KeyCode::Down));
-    a.on_key(key(KeyCode::Char(' ')));
-    print_window("CT 134 (GPU), driver unchecked", &a);
-    snap("auto-modal-ct-gpu-unchecked", &a);
+    print_window("CT 134 (GPU)", &a);
+    snap("auto-modal-ct-gpu", &a);
     let (mut a, h) = host_app_with(h);
     open_a(&h, &mut a, 0);
     print_window("host, checked", &a);
@@ -2480,7 +2470,7 @@ fn storage_page_without_data_or_with_nothing_readable() {
 
 #[test]
 fn the_gpu_column_and_the_detail_show_when_the_driver_is_included() {
-    let (a, h) = host_app_with(nvidia_host(true, true, true));
+    let (a, h) = host_app_with(nvidia_host(true, true));
     let (out, _) = render(&a, 120, 40, false);
     assert!(out.contains("NVIDIA ✓+drv"), "{out}");
     println!("--- GPU column ---\n{out}");
@@ -2491,10 +2481,10 @@ fn the_gpu_column_and_the_detail_show_when_the_driver_is_included() {
     a.on_key(key(KeyCode::Enter));
     let (det, _) = render(&a, 120, 40, false);
     assert!(det.contains("gpu driver: in scheduled updates"), "{det}");
-    let (a, _h) = host_app_with(nvidia_host(true, false, false));
+    let (a, _h) = host_app_with(nvidia_host(true, false));
     let (out, _) = render(&a, 120, 40, false);
     assert!(!out.contains("+drv"), "{out}");
-    let (mut a, _h) = host_app_with(nvidia_host(true, false, false));
+    let (mut a, _h) = host_app_with(nvidia_host(true, false));
     goto(&mut a, 134);
     a.on_key(key(KeyCode::Enter));
     let (det, _) = render(&a, 120, 40, false);

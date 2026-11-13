@@ -4,28 +4,28 @@ pxu · Proxmox Updater [MOCK]                                 node server · 6 g
    ID  TYPE  NAME        STATE    OS            CPU  RAM         DISK     GPU           UPD all/sec  BACKUP  AUTO
   131  LXC   ct-131      run      debian 12       —  0.2/0.5 GB  4.0 GB   AMD ✓         0            yes     —
 > 134  LXC   openweb-ui  run      debian 12       —  0.2/0.5 GB  4.0 GB   NVIDIA ?+drv  1/0          yes     yes
-  135  LXC   ct-135      stopped  debian 12       —  —/0.5 GB    4.0 GB   NVIDIA ?      0            yes     —
+  135  LXC   ct-135      stopped  debian 12       —  —/0.5 GB    4.0 GB   NVIDIA ?+drv  0            yes     —
   140  LXC   ct-140      run      debian 12       —  0.2/0.5 GB  4.0 GB   —             0            yes     —
   150  LXC   ct-150      run      debian 12       —  0.2/0.5 GB  4.0 GB   —             0            yes     —
   200  VM    vm-200      run      l26             —  —/2.0 GB    32.0 GB  pass          —            -       —
+
+
 
           ┌ auto-update ─────────────────────────────────────────────────────────────────────────────────────┐
           │ Automatic update options of CT 134 openweb-ui                                                    │
           │                                                                                                  │
           │ today: yes by [[ct]] override                                                                    │
           │                                                                                                  │
-          │  [x] Automatic updates                                                                           │
-          │> [ ] Include GPU driver update (NVIDIA)                                                          │
-          │      Installed: 595.112.07 · Latest: 595.120.01 (newer, same 595 branch)                         │
-          │      the run installs the newest 595.x with DKMS after the host update; GPU CTs get its libs     │
-          │      this CT restarts after getting the libs                                                     │
-          │      skipped if a host reboot is pending; pxu never reboots the host                             │
+          │> [x] Automatic updates                                                                           │
+          │  GPU driver update: not offered — GPU CTs follow the host driver (host row)                      │
           │                                                                                                  │
-          │ Saves: [[ct]] 134 nvidia_auto = false (host flag untouched)                                      │
+          │ nothing changed: Enter writes nothing                                                            │
           │                                                                                                  │
           │ [↑↓] move  [Space] check  [Enter] save  [Esc] cancel                                             │
           │                                                                                                  │
           └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
 
 
 

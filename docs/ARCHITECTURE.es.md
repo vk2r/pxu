@@ -180,7 +180,7 @@ Resultados por CT: `ok`, `warn`, `failed`, `skipped`, `cancelled`.
 
 ### 3.7 Driver NVIDIA (`update/nvidia.rs`)
 
-Solo con `[update] host_nvidia_auto = true` (host) y `[[ct]] nvidia_auto = true` (CT), o desde la casilla «Include GPU driver update» de la ventana de la TUI (`a`, junto a «Automatic updates»; solo guarda lo que cambió; marcarla en un CT activa también el flag del host, desmarcarla en un CT solo ese CT, desmarcar el auto-update la desmarca; la columna GPU muestra `+drv` si está activa). Aplica a un driver instalado con el `.run` oficial (existe `/usr/bin/nvidia-uninstall`). Descarga de `download.nvidia.com` el `.run` y su `.sha256sum`, verifica y solo sube dentro de la misma rama mayor. Los CT reciben las librerías de la versión que tiene el host. Nunca reinicia el host.
+Solo con `[update] host_nvidia_auto = true`, o desde la casilla «Include GPU driver update» de la ventana de la TUI (`a` sobre la fila del host, junto a «Automatic updates»; solo guarda lo que cambió; desmarcar el auto-update la desmarca; la columna GPU muestra `+drv` si está activa). No hay opción por CT: cada vez que se instala o reinstala el driver del host, TODOS los CT LXC con GPU NVIDIA reciben las librerías de esa versión (si algún CT se saltara, fallaría al usar la GPU); un CT apagado se arranca para eso y se vuelve a apagar (si falla, queda apagado y se informa como fallido). Sin cambio en el host, el timer sigue alineando los CT cuya versión de librerías no coincide con la del host (un CT apagado de versión desconocida no se arranca). Una línea `[[ct]] nvidia_auto` antigua se acepta y se ignora. Aplica a un driver instalado con el `.run` oficial (existe `/usr/bin/nvidia-uninstall`). Descarga de `download.nvidia.com` el `.run` y su `.sha256sum`, verifica y solo sube dentro de la misma rama mayor. Los CT reciben las librerías de la versión que tiene el host. Nunca reinicia el host.
 
 **A mano (`Mode::Reinstall` / `Mode::CtLibs`).** `pxu update --host --nvidia-reinstall --yes` reinstala el driver del host aunque la versión coincida (no exige `host_nvidia_auto` y el timer nunca lo usa); en la TUI, `u` sobre un CT con GPU sin nada que actualizar (o `n` en la ventana de update) reinstala solo las librerías de ese CT con la versión del host, sin tocar el host ni los demás CT. El resultado del host y el de cada CT se informan por separado: un CT fallido no marca el host como fallido. Solo se pide reinicio si `nvidia-smi` no confirma la versión nueva al final del paso del host; en ese caso los CT no reciben librerías (Skipped) y el paso NVIDIA queda en Warn.
 
@@ -304,13 +304,12 @@ columns = ["type", "os", "cpu", "ram", "disk", "gpu", "upd", "auto", "backup"]  
 [[ct]]
 vmid = 101
 auto_update = true
-nvidia_auto = false
 refresh = false
 backup = "snapshot"
 keep = 2
 ```
 
-Prioridad de `auto_update`: `[[ct]] auto_update` > tag de `auto_update_tags` > no. El host (vmid 0) no entra por aquí: `[[ct]] vmid = 0` con `auto_update` o `nvidia_auto` es un error de config; se usan `host_auto` / `host_nvidia_auto`.
+Prioridad de `auto_update`: `[[ct]] auto_update` > tag de `auto_update_tags` > no. El host (vmid 0) no entra por aquí: `[[ct]] vmid = 0` con `auto_update` es un error de config; se usan `host_auto` / `host_nvidia_auto`.
 
 ### 5.1 Validación y edición desde la TUI
 

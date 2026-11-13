@@ -8,7 +8,7 @@ pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config chec
                            Backs up /etc (and snapshots a ZFS root) first. Same exit codes.\n                           With `[update] host_auto = true`, a plain `pxu update` (and the timer) updates the host FIRST, and with\n                           `host_nvidia_auto` also the NVIDIA .run driver (same branch); CTs only if the host ended well. Never reboots.
                            --nvidia-reinstall (manual only, the timer never uses it): instead of the apt update, REINSTALL the NVIDIA .run driver
                            of the host even if the version already matches (stops the GPU CTs, reloads the module, then updates the libs of the CTs
-                           with nvidia_auto). Does nothing without --yes. Host and each CT are reported separately; a reboot is asked only if
+                           of ALL the GPU CTs, the stopped ones are started and stopped again). Does nothing without --yes. Host and each CT are reported separately; a reboot is asked only if
                            nvidia-smi does not confirm the new version.
   pxu config check         validate /etc/pxu/config.toml (TOML, values, mode 0600, owner root)
   pxu config encrypt-secrets

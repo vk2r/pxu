@@ -226,9 +226,6 @@ impl Default for BackupCfg {
 pub struct CtOverride {
     pub vmid: u32,
     pub auto_update: Option<bool>,
-    /// Este CT recibe las librerías NVIDIA de la versión del driver del host (corrida programada). Apagado por defecto.
-    #[serde(default)]
-    pub nvidia_auto: Option<bool>,
     /// Este CT refresca el índice al chequear (override de `[check] refresh`).
     pub refresh: Option<bool>,
     /// Override de `[backup] mode` para este CT.
@@ -313,14 +310,6 @@ impl Config {
         self.ct.iter().find(|c| c.vmid == vmid).and_then(|c| c.keep).unwrap_or_else(|| self.backup.keep())
     }
 
-    /// ¿Recibe este CT las librerías NVIDIA del driver del host en la corrida programada? (`[[ct]] nvidia_auto`; el host usa `[update] host_nvidia_auto`.)
-    pub fn nvidia_auto(&self, vmid: u32) -> bool {
-        if vmid == 0 {
-            return self.update.host_nvidia_auto;
-        }
-        self.ct.iter().find(|c| c.vmid == vmid).and_then(|c| c.nvidia_auto).unwrap_or(false)
-    }
-
     /// Prioridad: `[[ct]]` > tag > nada (ARCHITECTURE §5).
     pub fn auto_update(&self, vmid: u32, tags: &[String]) -> bool {
         // vmid 0 = el host Proxmox: no hay override por CT ni tags; solo `[update] host_auto` (opt-in aparte) lo incluye en la corrida programada
@@ -385,6 +374,7 @@ const KEYS: &[(&str, &[&str])] = &[
     ("ui", &["columns"]),
     ("apprise", &["transport", "api_url", "api_key", "urls", "api_key_enc", "urls_enc", "tag", "on", "timeout_s", "retry_delays_ms"]),
 ];
+/// `nvidia_auto` ya no se usa (los CT siempre reciben las librerías del driver del host): se acepta y se ignora para no romper configs viejas.
 const CT_KEYS: &[&str] = &["vmid", "auto_update", "nvidia_auto", "refresh", "backup", "keep"];
 /// Claves retiradas: se avisa en claro en vez de ignorarlas en silencio.
 const DEPRECATED: &[(&str, &str, &str)] = &[
@@ -531,9 +521,6 @@ fn validate_text_into(host: &dyn Host, text: &str, v: &mut Validation) {
     if cfg.ct.iter().any(|c| c.vmid == 0 && c.auto_update == Some(true)) {
         v.errors.push("[[ct]] vmid = 0 is the Proxmox host: auto_update is not allowed there (use `[update] host_auto = true` for the scheduled run, or `pxu update --host` by hand)".into());
     }
-    if cfg.ct.iter().any(|c| c.vmid == 0 && c.nvidia_auto == Some(true)) {
-        v.errors.push("[[ct]] vmid = 0 is the Proxmox host: nvidia_auto is not allowed there (use `[update] host_nvidia_auto = true`)".into());
-    }
     for c in &cfg.ct {
         if let Some(b) = &c.backup {
             oneof(v, &format!("[[ct]] {} backup", c.vmid), b, MODES);
@@ -583,6 +570,7 @@ pub fn set_auto_update(text: &str, vmid: u32, value: bool) -> Result<String, Str
     match at.and_then(|i| cts.get_mut(i)) {
         Some(t) => {
             t["auto_update"] = val(value);
+            t.remove("nvidia_auto");
         }
         None => {
             let mut t = Table::new();
@@ -655,34 +643,19 @@ pub fn write_host_auto(host: &dyn Host, value: bool) -> Result<(), String> {
     host.write_config(new.as_bytes()).map_err(|e| format!("{CONFIG_PATH}: {e}"))
 }
 
-/// Pone `nvidia_auto = value` en el bloque `[[ct]]` de `vmid` (o `[update] host_nvidia_auto` si es el host), conservando comentarios y orden.
-pub fn set_nvidia_auto(text: &str, vmid: u32, value: bool) -> Result<String, String> {
-    use toml_edit::{value as val, ArrayOfTables, DocumentMut, Item, Table};
+/// Pone `[update] host_nvidia_auto = value`, conservando comentarios y orden.
+pub fn set_host_nvidia_auto(text: &str, value: bool) -> Result<String, String> {
+    use toml_edit::{value as val, DocumentMut, Item, Table};
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("TOML syntax: {e}"))?;
-    if vmid == 0 {
-        let up = doc.entry("update").or_insert_with(|| Item::Table(Table::new())).as_table_mut().ok_or("`update` is not a table ([update])")?;
-        up["host_nvidia_auto"] = val(value);
-        return Ok(doc.to_string());
-    }
-    let item = doc.entry("ct").or_insert_with(|| Item::ArrayOfTables(ArrayOfTables::new()));
-    let cts = item.as_array_of_tables_mut().ok_or("`ct` is not an array of tables ([[ct]])")?;
-    let at = cts.iter().position(|t| t.get("vmid").and_then(|v| v.as_integer()) == Some(vmid as i64));
-    match at.and_then(|i| cts.get_mut(i)) {
-        Some(t) => t["nvidia_auto"] = val(value),
-        None => {
-            let mut t = Table::new();
-            t["vmid"] = val(vmid as i64);
-            t["nvidia_auto"] = val(value);
-            cts.push(t);
-        }
-    }
+    let up = doc.entry("update").or_insert_with(|| Item::Table(Table::new())).as_table_mut().ok_or("`update` is not a table ([update])")?;
+    up["host_nvidia_auto"] = val(value);
     Ok(doc.to_string())
 }
 
-/// Activa o desactiva la actualización programada del driver NVIDIA de un CT o del host (vmid 0). Valida el resultado ANTES de escribir (atómico, como `write_auto_update`).
-pub fn write_nvidia_auto(host: &dyn Host, vmid: u32, value: bool) -> Result<(), String> {
+/// Activa o desactiva la actualización programada del driver NVIDIA del host. Valida el resultado ANTES de escribir (atómico, como `write_auto_update`).
+pub fn write_host_nvidia_auto(host: &dyn Host, value: bool) -> Result<(), String> {
     let old = read_config_text(host)?;
-    let new = set_nvidia_auto(&old, vmid, value)?;
+    let new = set_host_nvidia_auto(&old, value)?;
     let v = validate_text(host, &new);
     if let Some(e) = v.errors.iter().chain(v.typos.iter()).next() {
         return Err(format!("the resulting config would be invalid ({e}): nothing was written"));
@@ -1186,35 +1159,39 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_auto_fields_are_backward_compatible_and_validated() {
+    fn host_nvidia_auto_is_validated_and_the_old_per_ct_key_is_ignored() {
         let c: Config = toml::from_str("[update]\nstopped = \"skip\"\n[[ct]]\nvmid = 134\nauto_update = true\n").unwrap();
-        assert!(!c.update.host_nvidia_auto && !c.nvidia_auto(134) && !c.nvidia_auto(0));
-        let h = host("[update]\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nnvidia_auto = true\n");
+        assert!(!c.update.host_nvidia_auto);
+        // a config written by an older pxu (`[[ct]] nvidia_auto`, even on vmid 0) still loads, without error or typo warning
+        let h = host("[update]\nhost_nvidia_auto = true\n[[ct]]\nvmid = 134\nnvidia_auto = true\n[[ct]]\nvmid = 0\nnvidia_auto = true\n");
         let (c, _) = Config::load_checked(&h).unwrap();
-        assert!(c.nvidia_auto(0) && c.nvidia_auto(134) && !c.nvidia_auto(135));
-        let e = Config::load_checked(&host("[[ct]]\nvmid = 0\nnvidia_auto = true\n")).unwrap_err();
-        assert!(e.contains("vmid = 0") && e.contains("nvidia_auto"), "{e}");
+        assert!(c.update.host_nvidia_auto && c.ct.len() == 2);
+        let v = validate_text(&h, &text(&h));
+        assert!(v.errors.is_empty() && v.typos.is_empty(), "{:?} {:?}", v.errors, v.typos);
         // misspelled key is rejected
         assert!(Config::load_checked(&host("[update]\nhost_nvidia_aut = true\n")).is_err());
     }
 
     #[test]
-    fn writing_nvidia_auto_edits_in_place_and_respects_read_only() {
-        let t = set_nvidia_auto("# mi config\n[[ct]]\nvmid = 134\nauto_update = true\n", 134, true).unwrap();
-        assert!(t.starts_with("# mi config\n") && t.contains("nvidia_auto = true"), "{t}");
-        let t = set_nvidia_auto(&t, 134, false).unwrap();
-        assert!(t.contains("nvidia_auto = false"), "{t}");
-        assert!(set_nvidia_auto("", 140, true).unwrap().contains("vmid = 140"));
-        assert!(set_nvidia_auto("", 0, true).unwrap().contains("host_nvidia_auto = true"));
+    fn changing_auto_update_of_a_ct_drops_its_old_nvidia_auto_line() {
+        let t = set_auto_update("[[ct]]\nvmid = 134\nnvidia_auto = true\n", 134, true).unwrap();
+        assert!(t.contains("auto_update = true") && !t.contains("nvidia_auto"), "{t}");
+    }
+
+    #[test]
+    fn writing_host_nvidia_auto_edits_in_place_and_respects_read_only() {
+        let t = set_host_nvidia_auto("# mi config\n[update]\nstopped = \"skip\"\n", true).unwrap();
+        assert!(t.starts_with("# mi config\n") && t.contains("host_nvidia_auto = true"), "{t}");
+        assert!(set_host_nvidia_auto("", true).unwrap().contains("host_nvidia_auto = true"));
         // sin la opción de edición de config el escritor falla y no cambia nada
         let h = host("[update]\nstopped = \"skip\"\n");
         let before = text(&h);
-        assert!(write_nvidia_auto(&h, 0, true).is_err());
+        assert!(write_host_nvidia_auto(&h, true).is_err());
         assert_eq!(text(&h), before);
         // con ella escribe
         {
             let _g = crate::share::host::ConfigEditOptIn::new(&h);
-            write_nvidia_auto(&h, 0, true).unwrap();
+            write_host_nvidia_auto(&h, true).unwrap();
         }
         assert!(text(&h).contains("host_nvidia_auto = true"));
     }

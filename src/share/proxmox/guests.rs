@@ -185,7 +185,7 @@ pub fn load(host: &dyn Host) -> Inventory {
                     lock: conf.get("lock").map(String::from),
                     template: conf.flag("template"),
                     auto_update: is_local && kind == GuestKind::Lxc && cfg.auto_update(vmid, &tags),
-                    nvidia_auto: is_local && kind == GuestKind::Lxc && cfg.nvidia_auto(vmid),
+                    nvidia_auto: is_local && kind == GuestKind::Lxc && cfg.update.host_nvidia_auto,
                     backup: cfg.backup_mode(vmid).to_string(),
                     tags,
                     ostype,

@@ -17,7 +17,7 @@ pxu · Proxmox Updater [MOCK]                                 node server · 6 g
           │ today: no (no override, no matching tag)                                                         │
           │                                                                                                  │
           │> [ ] Automatic updates                                                                           │
-          │  GPU driver update: not offered — driver not installed with the .run                             │
+          │  GPU driver update: not offered — GPU CTs follow the host driver (host row)                      │
           │                                                                                                  │
           │ nothing changed: Enter writes nothing                                                            │
           │                                                                                                  │

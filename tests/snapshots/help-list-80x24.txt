@@ -17,8 +17,8 @@ px┌ help · ↑↓ scroll · any other key closes ─────────�
   │            nothing to update (or n in the modal): reinstall its NVIDIA   │
   │            libs only                                                     │
 ▼ │ a          toggle scheduled auto-update of the CT (asks first); host row:│
-──│            host_auto · host/GPU CT: also the NVIDIA driver checkbox      │──
-> │            (Space toggles, Enter saves)                                  │
+──│            host_auto + the NVIDIA driver checkbox (all GPU CTs get its   │──
+> │            libs) (Space toggles, Enter saves)                            │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │ad
 [a└─────────────────────────────────────────────────────────────── pxu X.Y.Z ┘

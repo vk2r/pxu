@@ -186,13 +186,15 @@ fn ask_auto_modal(host: &dyn Host, app: &mut App, vmid: u32) {
     let Some(g) = app.guest(vmid) else { return };
     let why = cfg.auto_update_why(vmid, &g.tags);
     // el driver se ofrece si la máquina usa la GPU con un driver `.run`; sin índice de NVIDIA, sale igual (`unknown`)
-    let driver = if vmid == 0 && !app.inv.host.as_ref().is_some_and(|h| h.has_nvidia()) {
+    // el driver es solo del host: las librerías de cada CT con GPU siguen al driver del host
+    let driver = if vmid != 0 {
+        Err(if g.kind == pxu::share::model::GuestKind::Lxc && g.gpu.nvidia { "GPU CTs follow the host driver (host row)" } else { "no NVIDIA GPU" })
+    } else if !app.inv.host.as_ref().is_some_and(|h| h.has_nvidia()) {
         Err("no NVIDIA GPU")
     } else {
         pxu::share::update::nvidia::offer_why(host, &app.inv, vmid, cfg.check.timeout_s).map(|o| {
-            let on = cfg.nvidia_auto(vmid);
-            let dependents = if vmid == 0 { cfg.ct.iter().filter(|c| c.nvidia_auto == Some(true)).count() } else { 0 };
-            DriverBox { current: o.current, newest: o.newest, checked: on, initial: on, dependents }
+            let on = cfg.update.host_nvidia_auto;
+            DriverBox { current: o.current, newest: o.newest, checked: on, initial: on }
         })
     };
     let m = AutoModal::new(g, &why, !host.exists(std::path::Path::new(config::CONFIG_PATH)), driver);
@@ -232,8 +234,8 @@ fn save_backup(host: &dyn Host, app: &mut App, vmid: u32, disabled: bool) {
 }
 
 /// Confirmado (solo lo que cambió, validado y atómico): `auto` → `host_auto`/`[[ct]] auto_update`; apagarlo apaga también el driver de esa máquina.
-/// `driver` → `nvidia_auto`: `true` en un CT activa también `host_nvidia_auto` (los CT reciben las librerías de la versión del host);
-/// `false` solo apaga el flag de esa máquina. Recarga la config y sale de solo lectura si correspondía.
+/// `driver` (solo el host) → `host_nvidia_auto`; los CT con GPU siempre reciben las librerías de la versión del host.
+/// Recarga la config y sale de solo lectura si correspondía.
 fn save_auto_update(host: &dyn Host, app: &mut App, vmid: u32, auto: Option<bool>, driver: Option<bool>) {
     let who = if vmid == 0 { "host".to_string() } else { format!("CT {vmid}") };
     let yn = |b: bool| if b { "enabled" } else { "disabled" };
@@ -250,10 +252,10 @@ fn save_auto_update(host: &dyn Host, app: &mut App, vmid: u32, auto: Option<bool
         app.read_only = app.forced_ro || ro;
         app.ro_reason = reason;
         done.push(format!("auto-update {}", yn(value)));
-        if !value && Config::load(host).unwrap_or_default().nvidia_auto(vmid) {
+        if !value && vmid == 0 && Config::load(host).unwrap_or_default().update.host_nvidia_auto {
             let res = {
                 let _optin = pxu::share::host::ConfigEditOptIn::new(host);
-                config::write_nvidia_auto(host, vmid, false)
+                config::write_host_nvidia_auto(host, false)
             };
             done.push(match res {
                 Ok(()) => "NVIDIA driver update disabled".to_string(),
@@ -265,11 +267,7 @@ fn save_auto_update(host: &dyn Host, app: &mut App, vmid: u32, auto: Option<bool
     if let Some(value) = driver.filter(|_| auto != Some(false)) {
         let res = {
             let _optin = pxu::share::host::ConfigEditOptIn::new(host);
-            if value {
-                (if vmid != 0 { config::write_nvidia_auto(host, vmid, true) } else { Ok(()) }).and_then(|_| config::write_nvidia_auto(host, 0, true))
-            } else {
-                config::write_nvidia_auto(host, vmid, false)
-            }
+            config::write_host_nvidia_auto(host, value)
         };
         match res {
             Ok(()) => done.push(format!("NVIDIA driver update {}", yn(value))),

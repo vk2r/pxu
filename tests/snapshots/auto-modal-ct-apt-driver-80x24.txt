@@ -9,7 +9,7 @@ pxu [MOCK]                                       server · 5/6 up · 1 upd   00:
  │ today: no (no override, no matching tag)                                   │
  │                                                                            │
  │> [ ] Automatic updates                                                     │
- │  GPU driver update: not offered — driver not installed with the .run       │
+ │  GPU driver update: not offered — GPU CTs follow the host driver (host row)│
  │                                                                            │
  │ nothing changed: Enter writes nothing                                      │
  │                                                                            │

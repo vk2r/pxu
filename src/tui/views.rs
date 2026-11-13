@@ -1118,7 +1118,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
                 ("v", "show the last check result"),
                 ("o", "choose visible columns (Space toggles; saved in config.toml)"),
                 ("u", "update the visible CTs with updates (asks first): temporary backup, verify, auto-rollback on failure · a GPU CT with nothing to update (or n in the modal): reinstall its NVIDIA libs only"),
-                ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)"),
+                ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto + the NVIDIA driver checkbox (all GPU CTs get its libs) (Space toggles, Enter saves)"),
                 ("b", "toggle the backup before updating the CT (asks first)"),
                 ("g / S", "config view + timer state · S change schedule (asks first)"),
                 ("l", "run logs (one file per update run)"),
@@ -1166,7 +1166,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
         View::Check => keys("Keys", vec![("↑↓ / j k", "select CT (packages shown below)"), ("u", "update the CTs with updates (asks first)"), ("c", "re-check (refreshes the indexes) · C / R read-only check"), ("Enter", "guest detail"), ("Esc", "cancel a running check, then back"), ("?", "this help · q quit")]),
         View::Detail(_) => keys("Keys", vec![
             ("u", "update this CT (asks first)"),
-            ("a", "toggle this CT's scheduled auto-update (asks first); host: host_auto · host/GPU CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)"),
+            ("a", "toggle this CT's scheduled auto-update (asks first); host: host_auto + the NVIDIA driver checkbox (all GPU CTs get its libs) (Space toggles, Enter saves)"),
             ("b", "toggle this CT's backup before updating (asks first)"),
             ("g / S", "config view · change the update schedule"),
             ("↑↓ / j k", "scroll"),
@@ -1500,8 +1500,7 @@ fn draw_col_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
 fn draw_auto_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     let Some(m) = &app.auto_modal else { return };
     let info = m.lines();
-    let ct = m.vmid != 0;
-    let drv = m.driver.as_ref().map(|d| d.lines(ct)).unwrap_or_default();
+    let drv = m.driver.as_ref().map(|d| d.lines()).unwrap_or_default();
     let h = info.len() + drv.len() + 12;
     let r = centered(area, 100, (h as u16).min(area.height.saturating_sub(2)));
     f.render_widget(Clear, r);
@@ -1526,9 +1525,6 @@ fn draw_auto_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     }
     lines.push(Line::default());
     lines.push(Line::raw(trunc(&format!(" {}", m.saves()), w)));
-    if let Some(wr) = m.warning() {
-        lines.push(Line::styled(trunc(&format!(" {wr}"), w), th.warn()));
-    }
     lines.push(Line::default());
     lines.push(mbar(th, &[("↑↓", "move"), ("Space", "check"), ("Enter", "save"), ("Esc", "cancel")], 2, w));
     f.render_widget(Paragraph::new(lines), inner);

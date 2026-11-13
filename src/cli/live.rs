@@ -1089,12 +1089,12 @@ mod tests {
     #[test]
     fn the_skipped_ct_line_and_a_redrawn_progress_bar_reach_the_panel_clean() {
         let mut m = Live::nvidia();
-        line(&mut m, 1, 0, "CT 129 (llama-swap): no libraries (nvidia_auto = false)");
+        line(&mut m, 1, 0, "CT 129 (llama-swap): no libraries (already at the target version)");
         // lo que llega ya pasó por el motor: solo el último estado de la barra
         let bar = pxu::share::fmt::last_redraw("[                              ]   0%\r[#                             ]   0%\r[##############################] 100%\r");
         line(&mut m, 2, 0, bar);
         let t = m.tail.iter().cloned().collect::<Vec<_>>().join("\n");
-        assert!(t.contains("CT 129 (llama-swap): no libraries (nvidia_auto = false)"), "{t}");
+        assert!(t.contains("CT 129 (llama-swap): no libraries (already at the target version)"), "{t}");
         assert!(t.ends_with("│ [##############################] 100%") && !t.contains("  0%"), "{t}");
     }
 
