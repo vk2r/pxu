@@ -832,7 +832,11 @@ fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>,
             return;
         }
         if let Some(p) = m.download_file() {
+            // el contador falso del mock solo existe con debug_assertions o la feature `mock` (no en el build de release)
+            #[cfg(any(debug_assertions, feature = "mock"))]
             let fake = pxu::share::mock::MOCK_DL.load(Ordering::SeqCst);
+            #[cfg(not(any(debug_assertions, feature = "mock")))]
+            let fake = 0u64;
             if fake > 0 {
                 m.observe_download(at, fake);
             } else if let Ok(md) = std::fs::symlink_metadata(&p) {
