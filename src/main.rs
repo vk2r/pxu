@@ -61,6 +61,7 @@ fn main() -> ExitCode {
         Cmd::Update { only, json, yes, notify, host: false } => ExitCode::from(cli::cmd_update(host.as_ref(), &only, json, yes, notify) as u8),
         Cmd::ConfigCheck => ExitCode::from(cli::cmd_config_check(host.as_ref()) as u8),
         Cmd::ConfigEncryptSecrets => ExitCode::from(cli::cmd_config_encrypt_secrets(host.as_ref()) as u8),
+        Cmd::ConfigDisableApprise => ExitCode::from(cli::cmd_config_disable_apprise(host.as_ref()) as u8),
         Cmd::NotifyTest => ExitCode::from(cli::cmd_notify_test(host.as_ref()) as u8),
         Cmd::NotifyFlush => ExitCode::from(cli::cmd_notify_flush(host.as_ref()) as u8),
         Cmd::Tui => match tui::run(host.as_ref(), false) {

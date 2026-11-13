@@ -12,7 +12,11 @@ pub struct RealHost {
 
 impl RealHost {
     pub fn new() -> Self {
-        RealHost { lock_dir: PathBuf::from("/run/lock") }
+        RealHost { lock_dir: PathBuf::from(PXU_LOCK_DIR) }
+    }
+    #[cfg(test)]
+    fn with_lock_dir(dir: &Path) -> Self {
+        RealHost { lock_dir: dir.to_path_buf() }
     }
 }
 
@@ -59,11 +63,11 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
         std::thread::spawn(move || {
             // acotado: solo se guardan las primeras líneas, el resto se lee y se descarta para no bloquear al hijo
             let mut v = Vec::new();
-            for l in BufReader::new(e).lines().map_while(Result::ok) {
+            read_bounded(BufReader::new(e), MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MAX_OUTPUT_LINES, |l| {
                 if v.len() < 20 {
-                    v.push(l);
+                    v.push(l.to_string());
                 }
-            }
+            });
             v
         })
     });
@@ -135,12 +139,7 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
                 }
             });
         }
-        for l in BufReader::new(rd).lines() {
-            match l {
-                Ok(l) => sink.line(&l),
-                Err(_) => break, // salida no UTF-8: se corta la lectura, el exit code manda
-            }
-        }
+        read_bounded(BufReader::new(rd), MAX_LINE_BYTES, MAX_OUTPUT_BYTES, MAX_OUTPUT_LINES, |l| sink.line(l));
         let st = child.wait();
         finished.store(true, std::sync::atomic::Ordering::SeqCst);
         st
@@ -162,6 +161,66 @@ pub(super) fn run(argv: &[&str], opts: &ExecOpts, sink: &mut dyn LineSink) -> io
         )));
     }
     Ok(ExitInfo { code: st.code().unwrap_or(-1) })
+}
+
+/// Lee `r` línea a línea con topes (A-04): una línea más larga que `max_line` se recorta (el resto se descarta hasta el salto),
+/// y al pasar `max_bytes` o `max_lines` lo demás se lee y se tira. Si algo se recortó, entrega `TRUNCATED_MARK` una vez al final.
+/// UTF-8 inválido se convierte con reemplazo en vez de cortar la lectura.
+pub(super) fn read_bounded<R: BufRead>(mut r: R, max_line: usize, max_bytes: usize, max_lines: usize, mut f: impl FnMut(&str)) {
+    use std::io::Read;
+    let (mut total, mut lines, mut truncated) = (0usize, 0usize, false);
+    let mut buf = Vec::new();
+    loop {
+        if total >= max_bytes || lines >= max_lines {
+            truncated = true;
+            // solo drenar: el hijo no debe bloquearse en un pipe lleno
+            loop {
+                let n = match r.fill_buf() {
+                    Ok(b) => b.len(),
+                    Err(_) => break,
+                };
+                if n == 0 {
+                    break;
+                }
+                r.consume(n);
+            }
+            break;
+        }
+        buf.clear();
+        let n = match r.by_ref().take(max_line as u64 + 1).read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        total += n;
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+        } else if buf.len() > max_line {
+            // línea desmesurada: se conserva el comienzo y se descarta hasta el siguiente salto de línea
+            truncated = true;
+            buf.truncate(max_line);
+            loop {
+                let (used, done) = match r.fill_buf() {
+                    Ok(b) if !b.is_empty() => match b.iter().position(|c| *c == b'\n') {
+                        Some(i) => (i + 1, true),
+                        None => (b.len(), false),
+                    },
+                    _ => (0, true),
+                };
+                r.consume(used);
+                if done {
+                    break;
+                }
+            }
+        }
+        lines += 1;
+        f(&String::from_utf8_lossy(&buf));
+    }
+    if truncated {
+        f(TRUNCATED_MARK);
+    }
 }
 
 /// PATH fijo dentro del CT (`--clear-env` descarta el del host).
@@ -282,6 +341,16 @@ impl Host for RealHost {
         }
         write_atomic(Path::new(crate::share::notify::FAILURE_CRED_PATH), data)
     }
+    fn remove_failure_notice(&self) -> io::Result<()> {
+        // SAFETY: geteuid no tiene precondiciones.
+        if unsafe { libc::geteuid() } != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "removing the failure-notice credential requires root"));
+        }
+        match std::fs::remove_file(crate::share::notify::FAILURE_CRED_PATH) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         use crate::share::schedule::*;
         let out = systemctl(&["show", TIMER_NAME, "-p", "LoadState,ActiveState,UnitFileState,NextElapseUSecRealtime,TimersCalendar"])?;
@@ -354,6 +423,12 @@ impl Host for RealHost {
     }
     fn try_lock(&self, path: &Path, create: bool) -> io::Result<Option<LockGuard>> {
         use std::os::fd::AsRawFd;
+        // Locks propios: el directorio se crea 0700 si falta y se valida (real, del usuario actual, sin acceso para otros) ANTES de abrir.
+        // Los de ProxMenux (sin `create`, en su directorio) no se tocan.
+        if create && path.parent() == Some(self.lock_dir.as_path()) {
+            create_private_dirs(&self.lock_dir)?;
+            check_private_dir(&self.lock_dir)?;
+        }
         let f = std::fs::OpenOptions::new().read(true).write(create).create(create).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(path)?;
         // SAFETY: fd válido mientras `f` viva; el lock lo libera el kernel al cerrar `f` o morir el proceso.
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
@@ -449,6 +524,89 @@ mod tests {
         symlink(&ok, &link).unwrap();
         assert_eq!(write_atomic(&link.join("a.json"), b"x").unwrap_err().kind(), io::ErrorKind::PermissionDenied);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn own_locks_live_in_a_validated_private_dir() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let base = std::env::temp_dir().join(format!("pxu-lk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(PXU_LOCK_DIR, "/run/pxu");
+        // directorio que falta: se crea 0700 y el lock funciona (y es exclusivo)
+        let dir = base.join("pxu");
+        let h = RealHost::with_lock_dir(&dir);
+        let g = h.try_lock(&dir.join("pxu-run.lock"), true).unwrap().expect("free");
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert!(h.try_lock(&dir.join("pxu-run.lock"), true).unwrap().is_none());
+        drop(g);
+        // directorio con acceso para otros (alguien podría pre-crear el lock): falla en cerrado, sin abrir nada
+        let open = base.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let h = RealHost::with_lock_dir(&open);
+        assert_eq!(h.try_lock(&open.join("pxu-run.lock"), true).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(!open.join("pxu-run.lock").exists());
+        // directorio que es symlink: falla en cerrado
+        let link = base.join("link");
+        symlink(&dir, &link).unwrap();
+        let h = RealHost::with_lock_dir(&link);
+        assert_eq!(h.try_lock(&link.join("pxu-run.lock"), true).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn bounded(input: &[u8], line: usize, bytes: usize, lines: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        read_bounded(BufReader::new(input), line, bytes, lines, |l| out.push(l.to_string()));
+        out
+    }
+
+    #[test]
+    fn bounded_reader_keeps_normal_output_and_marks_nothing() {
+        assert_eq!(bounded(b"a\r\nb\nlast", 16, 1000, 10), ["a", "b", "last"]);
+        assert!(bounded(b"", 16, 1000, 10).is_empty());
+    }
+
+    #[test]
+    fn bounded_reader_cuts_a_huge_line_without_newline_and_keeps_the_next_ones() {
+        let mut data = vec![b'x'; 10_000];
+        data.extend_from_slice(b"\nnext\n");
+        let out = bounded(&data, 100, 1_000_000, 10);
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[0].len(), 100);
+        assert_eq!(out[1], "next");
+        assert_eq!(out[2], TRUNCATED_MARK);
+        // sin ningún salto de línea: una sola línea recortada + marca
+        let out = bounded(&vec![b'y'; 5_000], 100, 1_000_000, 10);
+        assert_eq!((out[0].len(), out[1].as_str()), (100, TRUNCATED_MARK));
+    }
+
+    #[test]
+    fn bounded_reader_caps_total_lines_and_bytes_with_a_single_mark() {
+        let many = "l\n".repeat(50);
+        let out = bounded(many.as_bytes(), 16, 1_000_000, 5);
+        assert_eq!(out.len(), 6, "{out:?}");
+        assert_eq!(out.iter().filter(|l| *l == TRUNCATED_MARK).count(), 1);
+        let out = bounded(many.as_bytes(), 16, 10, 1000);
+        assert_eq!(out.last().unwrap(), TRUNCATED_MARK);
+        assert!(out.len() <= 7);
+    }
+
+    #[test]
+    fn bounded_reader_survives_invalid_utf8() {
+        let out = bounded(b"ok\n\xff\xfe bad\nafter\n", 64, 1000, 10);
+        assert_eq!(out.len(), 3);
+        assert!(out[1].contains('\u{fffd}') && out[2] == "after");
+    }
+
+    #[test]
+    fn run_drains_a_flood_of_output_without_blocking_and_truncates() {
+        // ~30 MB sin saltos de línea: el hijo termina (se drena) y el sink recibe solo un trozo acotado + marca
+        let mut out: Vec<String> = Vec::new();
+        let e = run(&["sh", "-c", "head -c 30000000 /dev/zero | tr '\\0' 'a'; echo; echo after"], &ExecOpts { timeout_s: Some(60), ..Default::default() }, &mut out).unwrap();
+        assert_eq!(e.code, 0);
+        assert!(out.iter().map(|l| l.len()).sum::<usize>() <= MAX_OUTPUT_BYTES + 100, "bounded");
+        assert!(out.iter().any(|l| l == TRUNCATED_MARK));
     }
 
     #[test]

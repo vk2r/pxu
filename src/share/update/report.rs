@@ -5,8 +5,6 @@ use super::runlog::{local_hm, local_ymd_hm};
 use super::{CtRun, Outcome, RunReport};
 use crate::share::notify::{Level, Message};
 
-/// Tope de filas del aviso: primero todas las que no están bien, luego las ok hasta completarlo.
-pub const MAX_ROWS: usize = 25;
 const HEADER: &str = "| Upgrades | Result | Packages | GPU driver | Time | Details |";
 const CELL_MAX: usize = 300;
 
@@ -290,19 +288,10 @@ pub fn result_line(rep: &RunReport) -> String {
     format!("{icon}{}", parts.join(" · "))
 }
 
-/// Cuerpo Markdown: una sola tabla. Con más de `MAX_ROWS` filas, todas las que no están ok y luego ok hasta completarlas.
+/// Cuerpo Markdown: una sola tabla con todas las filas (sin tope; el destino parte el mensaje si hace falta, p. ej. `overflow=split`).
 pub fn body(rep: &RunReport) -> String {
     let rows = rows(rep);
-    let mut shown: Vec<&Row> = rows.iter().filter(|r| r.outcome != Outcome::Ok).collect();
-    let room = MAX_ROWS.saturating_sub(shown.len());
-    let oks: Vec<&Row> = rows.iter().filter(|r| r.outcome == Outcome::Ok).collect();
-    let hidden = oks.len().saturating_sub(room);
-    let keep: Vec<&Row> = oks.into_iter().take(room).collect();
-    if rows.len() > MAX_ROWS {
-        shown.extend(keep);
-    } else {
-        shown = rows.iter().collect();
-    }
+    let shown: Vec<&Row> = rows.iter().collect();
     let end = if local_ymd_hm(rep.finished_at)[..10] == local_ymd_hm(rep.started_at)[..10] { local_hm(rep.finished_at) } else { local_ymd_hm(rep.finished_at) };
     let mut b = format!("**Update run on {}** · {} → {} · **total {}**\n", rep.node, local_ymd_hm(rep.started_at), end, dur(total_s(rep)));
     if let Some(a) = &rep.aborted {
@@ -321,9 +310,6 @@ pub fn body(rep: &RunReport) -> String {
             }
             b += "\n";
         }
-    }
-    if hidden > 0 && rows.len() > MAX_ROWS {
-        b += &format!("\n+{hidden} more ok (see log)\n");
     }
     if rep.results.iter().any(|r| r.vmid == 0 && r.reboot_required) {
         b += "\n⚠️ The host needs a REBOOT (new kernel). pxu never reboots the host.\n";
@@ -487,17 +473,14 @@ mod tests {
     }
 
     #[test]
-    fn more_than_25_rows_keeps_every_non_ok_row_and_cuts_the_ok_ones() {
+    fn every_row_is_shown_with_no_cap() {
         let mut v: Vec<CtRun> = (100..130).map(|i| ct(i, "ok", Outcome::Ok)).collect();
         v.push(ct(900, "bad", Outcome::Failed));
         v.push(ct(901, "warn", Outcome::Warn));
         let b = body(&rep(v));
         let rows = b.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| Upgrades")).count();
-        assert_eq!(rows, 25, "{b}");
+        assert_eq!(rows, 32, "{b}");
         assert!(b.contains("| 900 bad |") && b.contains("| 901 warn |"), "{b}");
-        assert!(b.contains("+7 more ok (see log)"), "{b}");
-        // 25 filas exactas no recortan nada
-        let b = body(&rep((100..125).map(|i| ct(i, "ok", Outcome::Ok)).collect()));
         assert!(!b.contains("more ok"), "{b}");
     }
 

@@ -16,6 +16,11 @@ pub enum IoPrio {
     BestEffort7,
 }
 
+/// Directorio de locks de ProxMenux (compartido, 1777): pxu solo lee sus locks `proxmenux-lxc-*`, nunca crea nada ahí (A-08).
+pub const PROXMENUX_LOCK_DIR: &str = "/run/lock";
+/// Directorio de los locks propios de pxu (root:root 0700, validado antes de abrir cada lock).
+pub const PXU_LOCK_DIR: &str = "/run/pxu";
+
 /// Descriptor de un lock `flock`: se libera al soltarlo (o si el proceso muere).
 pub type LockGuard = Box<dyn std::any::Any + Send>;
 
@@ -48,6 +53,14 @@ pub struct ExecOpts<'a> {
     /// (systemd-creds), donde un aviso en stderr lo corrompería.
     pub split_stderr: bool,
 }
+
+/// Límites de la salida de un comando (A-04): un CT comprometido no debe poder agotar la memoria del host.
+/// Pasado el tope se sigue drenando (el hijo no se bloquea) pero se descarta, con una única marca.
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
+pub const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_OUTPUT_LINES: usize = 100_000;
+/// Marca que se entrega una sola vez a `LineSink::line` cuando se recortó la salida.
+pub const TRUNCATED_MARK: &str = "[pxu: output truncated]";
 
 /// Margen por omisión de `ExecOpts::no_kill_grace_s`.
 pub const NO_KILL_GRACE_S: u64 = 1800;
@@ -87,6 +100,10 @@ pub trait Host: Sync {
     /// Escribe la credencial cifrada del aviso de fallo (`FAILURE_CRED_PATH`, root, 0600, atómica). Solo la TUI lo usa, junto con la config de Apprise.
     fn write_failure_notice(&self, _data: &[u8]) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "this host cannot write the failure-notice credential"))
+    }
+    /// Borra la credencial cifrada del aviso de fallo (`FAILURE_CRED_PATH`; que no exista no es error). Al desactivar Apprise no debe quedar una vieja.
+    fn remove_failure_notice(&self) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "this host cannot remove the failure-notice credential"))
     }
     /// Estado real del timer `pxu-update` (solo lectura).
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {

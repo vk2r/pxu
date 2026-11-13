@@ -276,7 +276,10 @@ impl LineSink for Ctx<'_> {
     fn line(&mut self, l: &str) {
         let l = crate::share::fmt::clean(l);
         self.say(&l);
-        self.capture.push(l);
+        // A-04: la captura también tiene tope (el host ya recorta, pero un host/mocks distinto no debe poder crecer sin límite)
+        if self.capture.len() < crate::share::host::MAX_OUTPUT_LINES + 1 {
+            self.capture.push(l);
+        }
     }
 }
 
@@ -415,9 +418,13 @@ fn host_worst_s(cfg: &Config, gpu_cts: u64) -> u64 {
 
 /// Avisos del final de la corrida (un resumen, con todos los reintentos) y del chequeo (hasta 4 eventos con 2 reintentos y dos pasadas de la cola).
 pub fn notify_worst_s() -> u64 {
-    use crate::share::notify::{worst_send_s, ATTEMPT_S, MAX_FLUSH, REVEAL_S};
-    // cada envío y cada pasada de la cola descifran una sola vez
-    worst_send_s(notify::MAX_RETRIES) + 4 * worst_send_s(2) + 2 * (REVEAL_S + (MAX_FLUSH as u64 + 1) * ATTEMPT_S)
+    notify_worst_s_with(notify::MAX_SECRETS)
+}
+
+/// Igual con `secrets` secretos cifrados (0, 1 o 2): cada envío y cada pasada de la cola descifran una sola vez.
+pub fn notify_worst_s_with(secrets: u64) -> u64 {
+    use crate::share::notify::{reveal_s, worst_send_s_with, ATTEMPT_S, MAX_FLUSH};
+    worst_send_s_with(notify::MAX_RETRIES, secrets) + 4 * worst_send_s_with(2, secrets) + 2 * (reveal_s(secrets) + (MAX_FLUSH as u64 + 1) * ATTEMPT_S)
 }
 
 /// ¿Cabe un paso de peor caso `worst` en el plazo de la corrida que empezó en `started_at`?
@@ -569,6 +576,11 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
             aborted = Some(format!("stopped after {streak} consecutive failure{}", if streak == 1 { "" } else { "s" }));
         }
     }
+    // Se pidió parar mientras el último CT (o el único) terminaba su upgrade, que no se interrumpe: la corrida estuvo detenida aunque nada quedó "cancelled".
+    if cancel.load(Ordering::SeqCst) && aborted.is_none() {
+        cancelled = true;
+        aborted = Some("cancelled by user".into());
+    }
     let mut report = RunReport { node: inv.node.clone(), started_at, finished_at: now_s(host), results, aborted, cancelled, nvidia, log_path: None };
     runlog::finalize(host, cfg.general.log_retention_days, live.borrow_mut().take(), &rec.borrow(), &mut report);
     Ok(report)
@@ -703,7 +715,7 @@ fn lock_ct(cx: &mut Ctx) -> Result<Vec<crate::share::host::LockGuard>, Done> {
         Ok(None) => return Err(skip("another pxu process holds this CT")),
         Err(e) => return Err(fail(Step::Lock, format!("lock: {e}"))),
     }
-    let pm_path = host.lock_dir().join(format!("proxmenux-lxc-update-{id}.lock"));
+    let pm_path = Path::new(crate::share::host::PROXMENUX_LOCK_DIR).join(format!("proxmenux-lxc-update-{id}.lock"));
     match host.try_lock(&pm_path, false) {
         Ok(Some(l)) => {
             // ProxMenux guarda una reserva (UPID de una tarea de control de PVE) dentro del fichero: sin poder
@@ -717,7 +729,7 @@ fn lock_ct(cx: &mut Ctx) -> Result<Vec<crate::share::host::LockGuard>, Done> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // ProxMenux no la ha creado: nada que respetar
         Err(e) => return Err(skip(&format!("cannot check ProxMenux lock: {e}"))),
     }
-    if host.exists(&host.lock_dir().join(format!("proxmenux-lxc-check-invalid-{id}"))) {
+    if host.exists(&Path::new(crate::share::host::PROXMENUX_LOCK_DIR).join(format!("proxmenux-lxc-check-invalid-{id}"))) {
         return Err(skip("ProxMenux marked this CT's update check as invalid"));
     }
     Ok(guards)
@@ -1207,6 +1219,14 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
             d.detail += &format!("; NO automatic rollback (the upgrade may still have been mid-way): backup {} kept, decide manually: {}", entry.describe(), entry.manual_revert());
             cx.say(&format!("WARNING: backup {} kept; no rollback because the upgrade timed out", entry.describe()));
         }
+        Outcome::Failed if d.step.before_install() => {
+            // Falló antes de instalar nada (p. ej. el refresco del índice): el CT no se tocó, restaurar sería más disruptivo que el fallo.
+            match discard(cx, &entry) {
+                Ok(()) => run.backup = Some(format!("{} (deleted)", entry.describe())),
+                Err(why) => d.detail += &format!("; WARNING: backup {} could not be deleted ({why})", entry.describe()),
+            }
+            d.detail += "; CT untouched: failed before any change, no rollback needed";
+        }
         Outcome::Failed => match rollback(cx, g, cfg, &entry, !*started_by_us) {
             Ok(()) => {
                 // El CT vuelve a su estado previo; si estaba detenido, ya lo está (no hay nada que restaurar luego).
@@ -1220,7 +1240,7 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
                         run.backup = Some(format!("{} (kept)", entry.describe()));
                     }
                 }
-                d.detail += "; rolled back to the pre-update backup";
+                d.detail += &format!("; failed at {}; restored from backup", d.step.label());
             }
             Err(why) => {
                 hold(cx, &entry);
@@ -1237,9 +1257,9 @@ fn settle(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, started_by_us:
 }
 
 fn persist_info(host: &dyn Host, vmid: u32, info: &CheckInfo) {
-    let mut st = state::load_state(host);
-    st.checks.insert(vmid.to_string(), info.clone());
-    let _ = state::save_state(host, &st);
+    let _ = state::update_state(host, |st| {
+        st.checks.insert(vmid.to_string(), info.clone());
+    });
 }
 
 // ---------------------------------------------------------------- notificaciones
@@ -1272,6 +1292,7 @@ pub fn notify_run(host: &dyn Host, c: &AppriseCfg, report: &RunReport) -> Vec<St
         match notify::notify(host, c, &m) {
             notify::Outcome::Sent(t) => lines.push(format!("{}: sent via {t}", m.event)),
             notify::Outcome::Queued(e) => lines.push(format!("{}: send failed ({e}); queued", m.event)),
+            notify::Outcome::Lost(e) => lines.push(format!("{}: send failed and NOT queued ({e})", m.event)),
             notify::Outcome::Disabled => {
                 lines.push("notifications disabled (no Apprise transport configured)".into());
                 break;
@@ -1300,6 +1321,7 @@ mod tests {
         match name {
             "update-ok" | "update-two-fails" => World::preset(if name == "update-ok" { "update-ok" } else { "update-fail" }).unwrap(),
             "update-backup-fail" => fleet(&[411, 412, 413]).fail(412, FailAt::Backup, 255),
+            "update-refresh-fail" => fleet(&[461, 462]).fail(461, FailAt::Probe, 1).fail(462, FailAt::Upgrade, 100),
             "update-timeout" => fleet(&[431, 432]).hang(431, FailAt::Upgrade),
             "update-pm-lock" => fleet(&[441, 442, 443]).proxmenux_reservation(441).proxmenux_invalid_marker(442),
             "update-no-backup" => fleet(&[481]).backup_mode("none"),
@@ -1758,9 +1780,21 @@ mod tests {
 
     #[test]
     fn notices_with_both_secrets_encrypted_fit_the_margin_and_the_systemd_timeout() {
-        use crate::share::notify::{ATTEMPT_S, MAX_FLUSH, MAX_RETRIES, REVEAL_S};
+        use crate::share::notify::{reveal_s, AppriseCfg, ATTEMPT_S, MAX_FLUSH, MAX_RETRIES, REVEAL_S};
         // api_key_enc + urls_enc: dos descifrados de 20 s + 30 s de cola, una vez por envío y por pasada
         assert_eq!(REVEAL_S, 100);
+        // con 1 o 2 secretos cifrados el máximo crece exactamente un descifrado por envío (1 + 4 + 2 envíos/pasadas = 7)
+        let (n0, n1, n2) = (notify_worst_s_with(0), notify_worst_s_with(1), notify_worst_s_with(2));
+        assert_eq!(n1 - n0, 7 * reveal_s(1));
+        assert_eq!(n2 - n1, 7 * reveal_s(1));
+        assert_eq!(n2, notify_worst_s());
+        let enc = |k: &str, u: &str| AppriseCfg { api_key_enc: k.into(), urls_enc: u.into(), ..Default::default() };
+        assert_eq!([enc("", "").encrypted_secrets(), enc("k", "").encrypted_secrets(), enc("", "u").encrypted_secrets(), enc("k", "u").encrypted_secrets()], [0, 1, 1, 2]);
+        let plain_wins = AppriseCfg { api_key: "x".into(), api_key_enc: "k".into(), ..Default::default() };
+        assert_eq!(plain_wins.encrypted_secrets(), 0, "a plain value in memory is never decrypted");
+        for s in 0..=2 {
+            assert!(notify_worst_s_with(s) <= RUN_MARGIN_S, "{s} secrets: {} s", notify_worst_s_with(s));
+        }
         let n = notify_worst_s();
         assert!(n >= 2 * REVEAL_S + (MAX_RETRIES as u64 + 1) * ATTEMPT_S, "{n}");
         assert!(n <= RUN_MARGIN_S, "the notices {n} s must fit the margin {RUN_MARGIN_S} s");
@@ -1803,6 +1837,37 @@ mod tests {
         assert!(g.iter().all(|c| !c.contains("kill")), "no apt/dpkg was killed: {g:?}");
         assert!(host_cmds(&h).iter().all(|c| !c.contains("rollback") && !c.contains("restore")), "nothing was rolled back: {:?}", host_cmds(&h));
         assert!(guest_cmds(&h, 507).is_empty() && by(&rep, 507).outcome == Outcome::Cancelled);
+    }
+
+    #[test]
+    fn a_refresh_failure_leaves_the_ct_untouched_and_deletes_the_backup_without_restoring() {
+        let h = host("update-refresh-fail");
+        let rep = go(&h, &[461]);
+        let r = by(&rep, 461);
+        assert_eq!((r.outcome, r.step), (Outcome::Failed, Step::Refresh), "{r:?}");
+        assert!(r.detail.contains("CT untouched: failed before any change, no rollback needed"), "{}", r.detail);
+        assert!(r.rollback.is_none() && r.backup.as_deref().is_some_and(|b| b.ends_with("(deleted)")), "{r:?}");
+        assert!(host_cmds(&h).iter().all(|c| !c.contains("rollback") && !c.contains("restore")), "no restore: {:?}", host_cmds(&h));
+        assert!(host_cmds(&h).iter().any(|c| c.starts_with("pvesm free") || c.starts_with("pct delsnapshot")), "the temporary backup was deleted: {:?}", host_cmds(&h));
+    }
+
+    #[test]
+    fn an_upgrade_failure_restores_and_the_report_says_where_and_why() {
+        let h = host("update-refresh-fail");
+        let rep = go(&h, &[462]);
+        let r = by(&rep, 462);
+        assert_eq!((r.outcome, r.rollback.as_deref()), (Outcome::Failed, Some("done")), "{r:?}");
+        assert!(r.detail.contains("failed at upgrade; restored from backup"), "{}", r.detail);
+        assert!(host_cmds(&h).iter().any(|c| c.contains("rollback") || c.contains("restore")), "{:?}", host_cmds(&h));
+    }
+
+    #[test]
+    fn a_stop_requested_during_the_only_ct_upgrade_reports_stopped_not_ok() {
+        let h = host("update-cancel-install");
+        let rep = go_cancel(&h, &[506], |e| matches!(e, Event::Step(506, Step::Upgrade)));
+        assert_eq!(by(&rep, 506).outcome, Outcome::Ok, "the upgrade itself finished");
+        assert!(rep.cancelled && rep.aborted.is_some(), "{:?}", rep.aborted);
+        assert_eq!(rep.exit_code(), EXIT_ABORTED);
     }
 
     #[test]

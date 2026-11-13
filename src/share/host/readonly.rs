@@ -5,6 +5,8 @@ use crate::share::proxmox::hostcheck;
 use crate::share::update::hostupdate;
 use crate::share::update::nvidia;
 use crate::share::update::runlog;
+use crate::share::notify::{OUTBOX_FILES_LOCK, OUTBOX_LOCK};
+use crate::share::state::STATE_LOCK;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -162,9 +164,9 @@ pub fn guest_cmd_is_update(argv: &[&str]) -> bool {
 /// Locks propios (`pxu-*.lock`, con creación) y el de ProxMenux solo si ya existe (sin `O_CREAT`).
 fn lock_path_ok(dir: &Path, p: &Path, create: bool) -> bool {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    p.parent() == Some(dir)
-        && (name.starts_with("pxu-") && name.ends_with(".lock") || !create && name.starts_with("proxmenux-lxc-update-") && name.ends_with(".lock"))
-        && !name.contains('/')
+    let own = create && p.parent() == Some(dir) && name.starts_with("pxu-") && name.ends_with(".lock");
+    let proxmenux = !create && p.parent() == Some(Path::new(PROXMENUX_LOCK_DIR)) && name.starts_with("proxmenux-lxc-update-") && name.ends_with(".lock");
+    (own || proxmenux) && !name.contains('/')
 }
 
 /// pxu solo escribe su propio estado: `/var/lib/pxu/**` (sin `..`).
@@ -193,6 +195,10 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         self.inner.guest_exec(vmid, argv, o, s)
     }
     fn host_cmd(&self, argv: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<ExitInfo> {
+        // `curl --config -` solo vale con una configuración de la forma exacta que genera pxu (A-11): el argv no dice qué hay en stdin.
+        if argv == ["curl", "--config", "-"] && !o.stdin.as_deref().and_then(|b| std::str::from_utf8(b).ok()).is_some_and(crate::share::notify::curl_config_is_safe) {
+            return Err(denied("curl configuration", argv));
+        }
         if !host_cmd_is_read_only(argv) && !(self.allow_refresh && host_cmd_is_refresh(argv)) && !self.target().is_some_and(|t| host_cmd_is_update(argv, t)) && !(self.host_update_on() && hostupdate::is_host_update_argv(argv)) && !self.nvidia_allows(|g| nvidia::is_host_argv(argv, g)) && !self.backup_delete_allows(argv) {
             return Err(denied("host command", argv));
         }
@@ -215,6 +221,12 @@ impl<H: Host> Host for ReadOnlyHost<H> {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "read-only mode: refused write to the failure-notice credential"));
         }
         self.inner.write_failure_notice(data)
+    }
+    fn remove_failure_notice(&self) -> io::Result<()> {
+        if !self.allow_config.load(Ordering::SeqCst) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "read-only mode: refused to remove the failure-notice credential"));
+        }
+        self.inner.remove_failure_notice()
     }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         self.inner.timer_status()
@@ -251,8 +263,8 @@ impl<H: Host> Host for ReadOnlyHost<H> {
         self.inner.lock_dir()
     }
     fn try_lock(&self, p: &Path, create: bool) -> io::Result<Option<LockGuard>> {
-        // La cola de avisos se vacía también en solo lectura (`notify-flush`, `check --notify`): su lock no necesita opt-in.
-        let outbox = create && p == self.inner.lock_dir().join("pxu-outbox.lock");
+        // La cola de avisos y el estado se escriben también en solo lectura (`notify-flush`, `check --notify`, `check`): sus locks no necesitan opt-in.
+        let outbox = create && [OUTBOX_LOCK, OUTBOX_FILES_LOCK, STATE_LOCK].iter().any(|n| p == self.inner.lock_dir().join(n));
         if !(outbox || self.update_on() || self.host_update_on()) || !lock_path_ok(self.inner.lock_dir(), p, create) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("read-only mode: refused lock {}", p.display())));
         }
@@ -301,6 +313,26 @@ mod tests {
 
     fn ro() -> ReadOnlyHost<MockHost> {
         ReadOnlyHost::new(World::demo().build())
+    }
+
+    #[test]
+    fn own_locks_live_in_the_pxu_dir_and_proxmenux_locks_are_only_read() {
+        let h = ro();
+        assert_eq!(h.lock_dir(), Path::new("/run/pxu"));
+        // el lock de estado y los de la cola no necesitan opt-in; los demás sí
+        for n in ["pxu-state.lock", "pxu-outbox.lock", "pxu-outbox-files.lock"] {
+            assert!(h.try_lock(&h.lock_dir().join(n), true).is_ok(), "{n}");
+        }
+        assert!(h.try_lock(&h.lock_dir().join("pxu-run.lock"), true).is_err());
+        // un pxu-*.lock en el directorio compartido ya no vale, ni creando ni sin crear
+        h.set_update_enabled(true);
+        assert!(h.try_lock(&h.lock_dir().join("pxu-run.lock"), true).is_ok());
+        assert!(h.try_lock(Path::new("/run/lock/pxu-run.lock"), true).is_err());
+        assert!(h.try_lock(Path::new("/run/lock/pxu-state.lock"), true).is_err());
+        // ProxMenux: solo en su directorio y sin crear nada
+        assert!(!lock_path_ok(Path::new("/run/pxu"), Path::new("/run/lock/proxmenux-lxc-update-5.lock"), true));
+        assert!(lock_path_ok(Path::new("/run/pxu"), Path::new("/run/lock/proxmenux-lxc-update-5.lock"), false));
+        assert!(!lock_path_ok(Path::new("/run/pxu"), Path::new("/run/pxu/proxmenux-lxc-update-5.lock"), false));
     }
 
     #[test]
@@ -534,7 +566,9 @@ mod tests {
         let h = ro();
         let o = ExecOpts::default();
         let mut sink: Vec<String> = Vec::new();
-        let _ = h.host_cmd(&["curl", "--config", "-"], &o, &mut sink);
+        let cfg = crate::share::notify::curl_config(&crate::share::notify::AppriseCfg { api_url: "http://a.example:8000".into(), ..Default::default() }, &crate::share::notify::test_message("n"));
+        let co = ExecOpts { stdin: Some(cfg.into_bytes()), ..Default::default() };
+        let _ = h.host_cmd(&["curl", "--config", "-"], &co, &mut sink);
         let _ = h.guest_exec(103, &["sh", "-c", crate::share::update::check::PROBE_SH, "pxu-probe", "0"], &o, &mut sink);
         assert_eq!(
             h.inner().recorded(),
@@ -641,5 +675,25 @@ mod tests {
         }
         assert!(cmds.iter().all(|c| !run(&h, c)), "the guard closes it again");
         assert!(!crate::share::update::hostupdate::is_write_argv(&["sh", "/var/lib/pxu-nvidia/x.run", "--dkms"]));
+    }
+
+    #[test]
+    fn curl_config_stdin_is_checked_not_just_argv() {
+        use crate::share::notify::{curl_config, test_message, AppriseCfg};
+        let h = ro();
+        let run = |stdin: &str| {
+            let o = ExecOpts { stdin: Some(stdin.as_bytes().to_vec()), timeout_s: Some(10), ..Default::default() };
+            h.host_cmd(&["curl", "--config", "-"], &o, &mut Vec::<String>::new())
+        };
+        let cfg = AppriseCfg { api_url: "http://apprise.example:8000".into(), api_key: "k".into(), ..Default::default() };
+        assert!(run(&curl_config(&cfg, &test_message("n"))).is_ok(), "pxu's own config goes through");
+        let good = curl_config(&cfg, &test_message("n"));
+        for bad in ["output = \"/etc/cron.d/pxu\"", "config = \"/tmp/evil\"", "upload-file = \"/etc/shadow\"", "url = \"file:///etc/shadow\""] {
+            let e = run(&format!("{good}{bad}\n")).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::PermissionDenied, "{bad}");
+        }
+        // sin stdin tampoco: el argv por sí solo ya no basta
+        let none = ExecOpts { timeout_s: Some(10), ..Default::default() };
+        assert!(h.host_cmd(&["curl", "--config", "-"], &none, &mut Vec::<String>::new()).is_err());
     }
 }

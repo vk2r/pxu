@@ -242,7 +242,7 @@ impl MockHost {
     }
     pub fn new(files: BTreeMap<PathBuf, Vec<u8>>, scenario: Scenario) -> Self {
         let scenario_timer = scenario.timer.clone();
-        let lock_dir = PathBuf::from("/run/lock");
+        let lock_dir = PathBuf::from(crate::share::host::PXU_LOCK_DIR);
         MockHost { files, scenario, log: Mutex::new(Vec::new()), budgets: Mutex::new(Vec::new()), overlay: Mutex::new(BTreeMap::new()), lock_dir, upgraded: Mutex::new(HashSet::new()), host_installed: std::sync::atomic::AtomicBool::new(false), host_backed_up: std::sync::atomic::AtomicBool::new(false), clock_offset: std::sync::atomic::AtomicU64::new(0), locks: Arc::new(Mutex::new(HashSet::new())), timer: Mutex::new(scenario_timer), deleted: Mutex::new(HashSet::new()) }
     }
     /// Estado actual del timer simulado (para asserts).
@@ -629,6 +629,12 @@ impl Host for MockHost {
     fn write_failure_notice(&self, data: &[u8]) -> io::Result<()> {
         self.write_file(Path::new(crate::share::notify::FAILURE_CRED_PATH), data)
     }
+    fn remove_failure_notice(&self) -> io::Result<()> {
+        match self.remove_file(Path::new(crate::share::notify::FAILURE_CRED_PATH)) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
     fn timer_status(&self) -> io::Result<crate::share::schedule::TimerStatus> {
         let t = self.timer.lock().unwrap();
         let calendars = if t.installed && !t.calendar.is_empty() { vec![t.calendar.clone()] } else { vec![] };
@@ -721,6 +727,15 @@ impl Host for MockHost {
         if path == Path::new(crate::share::update::nvidia::WORK_DIR) {
             // `/exec/0/nvidia-workdir.meta`: «<modo octal> <uid> <dir|file|symlink>» (por defecto «0700 0 dir»)
             let t = self.exec_file(0, "nvidia-workdir.meta").unwrap_or_else(|| "0700 0 dir".into());
+            let f: Vec<&str> = t.split_whitespace().collect();
+            if f.get(2) == Some(&"symlink") {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "is a symlink"));
+            }
+            return Ok(FileMeta { mode: u32::from_str_radix(f.first().unwrap_or(&"0700"), 8).unwrap_or(0o700), uid: f.get(1).and_then(|u| u.parse().ok()).unwrap_or(0), is_dir: f.get(2) != Some(&"file") });
+        }
+        if crate::share::config::TRUSTED_DIRS.iter().any(|d| path == Path::new(d)) {
+            // `/exec/0/state-dirs.meta`: «<modo octal> <uid> <dir|file|symlink>» para /etc/pxu, /var/lib/pxu y /var/log/pxu (por defecto «0700 0 dir»)
+            let t = self.exec_file(0, "state-dirs.meta").unwrap_or_else(|| "0700 0 dir".into());
             let f: Vec<&str> = t.split_whitespace().collect();
             if f.get(2) == Some(&"symlink") {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "is a symlink"));

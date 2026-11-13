@@ -334,7 +334,12 @@ pub fn cmd_update(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_f
     if !none.is_empty() {
         eprintln!("pxu: WARNING: backup mode \"none\" for CT {}: they are updated WITHOUT a backup and WITHOUT automatic rollback", none.join(", "));
     }
-    if !nothing && !yes && !json && std::io::stdin().is_terminal() {
+    // A-03: sin `--yes` solo se escribe tras la pregunta interactiva; con `--json` o sin TTY no hay a quién preguntar, así que se rechaza antes del opt-in
+    if !nothing && !yes && (json || !std::io::stdin().is_terminal()) {
+        eprintln!("pxu: `pxu update` needs --yes when it runs without a terminal or with --json (nothing was changed)");
+        return update::EXIT_USAGE;
+    }
+    if !nothing && !yes {
         println!("backup before each CT: {} (temporary; keep {} per CT) · if the update fails the CT is rolled back automatically", cfg.backup.mode, cfg.backup.keep());
         println!("NOTE: backup and rollback cover only each CT's rootfs; bind mounts / mp with backup=0 (e.g. /mnt/pve/...) are NOT saved or reverted");
         if host_runs {
@@ -605,11 +610,55 @@ pub fn cmd_config_encrypt_secrets(host: &dyn Host) -> i32 {
     }
 }
 
+/// `pxu config disable-apprise`: `[apprise] transport = "none"` y borra la credencial cifrada del aviso de fallo. 0 hecho · 2 config inválida/sin permiso.
+pub fn cmd_config_disable_apprise(host: &dyn Host) -> i32 {
+    host.set_config_edit(true);
+    match config::disable_apprise(host) {
+        Ok(()) => {
+            println!("apprise disabled: transport = \"none\" in {} and {} removed", config::CONFIG_PATH, pxu::share::notify::FAILURE_CRED_PATH);
+            0
+        }
+        Err(e) => {
+            eprintln!("pxu: {e}");
+            EXIT_USAGE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pxu::share::host::ReadOnlyHost;
     use pxu::share::mock::scenario::World;
+
+    #[test]
+    fn disabling_apprise_deletes_the_old_failure_credential_and_leaks_no_secret() {
+        use pxu::share::notify::FAILURE_CRED_PATH;
+        let raw = "[apprise]\napi_url = \"http://apprise.local:8000\"\napi_key = \"PLAINKEY\"\ntag = \"system\"\n";
+        let h = ReadOnlyHost::new(World::demo().config_raw(raw).build());
+        assert_eq!(cmd_config_encrypt_secrets(&h), 0);
+        // el alta de la credencial de fallo la deja en el host
+        let cred = std::path::Path::new(FAILURE_CRED_PATH);
+        assert!(h.inner().read_file(cred).is_ok(), "the failure credential exists while Apprise is on");
+        assert_eq!(cmd_config_disable_apprise(&h), 0);
+        assert!(h.inner().read_file(cred).is_err(), "the old failure credential is gone");
+        let now = String::from_utf8(h.inner().read_file(std::path::Path::new(config::CONFIG_PATH)).unwrap()).unwrap();
+        assert!(now.contains("transport = \"none\""), "{now}");
+        // la unidad de systemd solo apunta al archivo (se omite sin él) y no lleva ningún secreto
+        let unit = pxu::share::schedule::NOTIFY_FAILED_UNIT;
+        assert!(unit.contains("ConditionPathExists=/etc/pxu/failure-notice.cred") && !unit.contains("PLAINKEY") && !unit.contains("apprise.local"));
+        // ni las URLs ni las claves aparecen en argv ni en el registro de comandos
+        let log = format!("{:?}", h.inner().recorded());
+        assert!(!log.contains("PLAINKEY") && !log.contains("apprise.local"), "{log}");
+        // idempotente: sin credencial tampoco falla
+        assert_eq!(cmd_config_disable_apprise(&h), 0);
+    }
+
+    #[test]
+    fn disabling_apprise_needs_the_config_edit_grant_through_the_host() {
+        let h = ReadOnlyHost::new(World::demo().build());
+        assert!(h.remove_failure_notice().is_err(), "read-only host refuses without the grant");
+    }
 
     #[test]
     fn encrypt_secrets_migrates_a_plain_config_and_is_a_no_op_afterwards() {
@@ -628,6 +677,16 @@ mod tests {
             let h = ReadOnlyHost::new(World::demo().config_raw(bad).build());
             assert_eq!(cmd_update(&h, &[], true, true, false), update::EXIT_USAGE, "{bad}");
             assert!(h.inner().recorded().is_empty(), "no command ran for {bad}");
+        }
+    }
+
+    #[test]
+    fn update_without_yes_and_without_a_tty_or_with_json_exits_2_before_any_write() {
+        // el mock tiene CT con trabajo pendiente: sin --yes y sin TTY (los tests no tienen TTY) o con --json se rechaza
+        for json in [false, true] {
+            let h = ReadOnlyHost::new(World::demo().build());
+            assert_eq!(cmd_update(&h, &[], json, false, false), update::EXIT_USAGE, "json={json}");
+            assert!(!h.inner().recorded().iter().any(|r| format!("{r:?}").contains("full-upgrade") || format!("{r:?}").contains("vzdump")), "no write (json={json})");
         }
     }
 

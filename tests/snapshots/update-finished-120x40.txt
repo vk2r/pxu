@@ -1,7 +1,7 @@
 pxu · update run [MOCK]                                                                    started  · sequential   00:16
 ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
 ── queue ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
-✗ 421   ct-421           FAIL              0m00s  apt-get exited with 100; rolled back to the pre-update backup
+✗ 421   ct-421           FAIL              0m00s  apt-get exited with 100; failed at upgrade; restored from backup
 ✗ 422   ct-422           FAIL              0m00s  backup failed, CT untouched: vzdump exit 255
 » 423   ct-423           skip                  —  not started: stopped after 2 consecutive failures
 » 424   ct-424           skip                  —  not started: stopped after 2 consecutive failures
@@ -16,7 +16,7 @@ ok 0 · warn 0 · fail 2 · skip 2 · canceled 0 · CT 4/4 · finished
  00:16:00  421 $ pct delsnapshot 421 pxu-20261108031600
  00:16:00  421 OK
  00:16:00  421 backup deleted: snapshot pxu-20261108031600
- 00:16:00  421 == result: Failed: apt-get exited with 100; rolled back to the pre-update backup
+ 00:16:00  421 == result: Failed: apt-get exited with 100; failed at upgrade; restored from backup
  00:16:00  422 == lock
  00:16:00  422 == pre-checks
  00:16:00  422 $ [CT 422] df -Pk /

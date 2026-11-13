@@ -153,7 +153,9 @@ pub fn targets<'a>(inv: &'a Inventory, only: &[u32]) -> Vec<&'a Guest> {
 struct Collect(Vec<String>);
 impl LineSink for Collect {
     fn line(&mut self, l: &str) {
-        self.0.push(crate::share::fmt::clean(l));
+        if self.0.len() <= crate::share::host::MAX_OUTPUT_LINES {
+            self.0.push(crate::share::fmt::clean(l));
+        }
     }
 }
 
@@ -179,6 +181,10 @@ pub fn check_one(host: &dyn Host, g: &Guest, cfg: &Config, o: &CheckOpts) -> CtR
         Err(e) if e.kind() == ErrorKind::TimedOut => return CtResult::bare(g, Status::Timeout, &e.to_string()),
         Err(e) => return CtResult::bare(g, Status::Error, &e.to_string()),
     };
+    // A-04: salida recortada = protocolo incompleto; se falla en cerrado en vez de interpretar un trozo
+    if out.0.iter().any(|l| l == crate::share::host::TRUNCATED_MARK) {
+        return CtResult::bare(g, Status::Error, "probe output exceeded the size limit (truncated)");
+    }
     let p = parse_probe(&out.0);
     let Some(end) = p.end else {
         let tail = out.0.last().map(|l| l.trim().chars().take(80).collect::<String>()).unwrap_or_default();
@@ -320,16 +326,16 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, o: &CheckOpts, only: 
 
 /// Guarda el resultado en `state.json` (los CT sin resultado nuevo conservan el anterior).
 pub fn persist(host: &dyn Host, report: &Report) -> std::io::Result<()> {
-    let mut st = state::load_state(host);
-    for r in &report.results {
-        if let (Status::Ok, Some(info)) = (r.status, &r.info) {
-            st.checks.insert(r.vmid.to_string(), info.clone());
+    state::update_state(host, |st| {
+        for r in &report.results {
+            if let (Status::Ok, Some(info)) = (r.status, &r.info) {
+                st.checks.insert(r.vmid.to_string(), info.clone());
+            }
         }
-    }
-    if let Some(h) = &report.host {
-        st.host = Some(h.clone());
-    }
-    state::save_state(host, &st)
+        if let Some(h) = &report.host {
+            st.host = Some(h.clone());
+        }
+    })
 }
 
 #[cfg(test)]

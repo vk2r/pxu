@@ -2,7 +2,8 @@
 # Installs or updates pxu on a Proxmox host (run as root on the host).
 # Usage: ./install.sh [options] [path-to-binary]
 # Without a local binary it downloads the release bundle from GitHub and checks it against the
-# release's SHA256SUMS before installing anything. If pxu is already installed it says which
+# release's SHA256SUMS and verifies its GitHub build attestation (needs the GitHub CLI `gh`) before
+# extracting or installing anything. If pxu is already installed it says which
 # version is there: the same version stops without changes, another one is replaced, together
 # with the systemd units if they were installed. The timers are set up from the TUI (S key).
 set -eu
@@ -14,12 +15,15 @@ usage() {
     cat <<'USAGE'
 Usage: ./install.sh [--force] [--release vX.Y.Z] [--uninstall [--purge]] [path-to-binary]
   path-to-binary   defaults to ./pxu next to the script, else target/release/pxu; if neither
-                   exists, the release bundle is downloaded from GitHub and its SHA-256 checked
+                   exists, the release bundle is downloaded from GitHub; its SHA-256 and its
+                   GitHub build attestation (needs `gh`) are checked before it is extracted
   --release TAG    download that release instead of the latest one (implies downloading)
   --force          do not require the machine to be Proxmox
   --uninstall      remove the binary and units; keep /etc/pxu and /var/lib/pxu
   --purge          with --uninstall, also delete /etc/pxu, /var/lib/pxu and /var/log/pxu
 Variable DESTDIR: install under another root (testing); requires no root or Proxmox and skips systemctl.
+Variable PXU_SKIP_ATTESTATION=1: download without verifying the attestation (SHA-256 only, which cannot
+detect a replaced release); it prints a warning. Without it, a missing `gh` stops the install.
 USAGE
 }
 
@@ -111,14 +115,16 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' INT TERM
 
-# Downloads the release bundle into $work, checks it against SHA256SUMS and points $here and $bin
-# at its contents.
+# Downloads the release bundle into $work, checks it against SHA256SUMS and its GitHub build
+# attestation, and points $here and $bin at its contents.
 download() {
     command -v curl >/dev/null 2>&1 || die "curl is needed to download pxu"
     base=https://github.com/$repo/releases
+    # HTTPS only, also across redirects
+    dl() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$@"; }
     if [ -z "$release" ]; then
         # /releases/latest redirects to /releases/tag/<tag>.
-        url=$(curl -fsSLo /dev/null -w '%{url_effective}' "$base/latest") || die "cannot reach $base/latest"
+        url=$(dl -o /dev/null -w '%{url_effective}' "$base/latest") || die "cannot reach $base/latest"
         release=${url##*/}
     fi
     case $release in
@@ -129,11 +135,21 @@ download() {
     name=pxu-${release#v}-x86_64-linux
     work=$(mktemp -d)
     say "downloading $release from $base"
-    curl -fsSL -o "$work/SHA256SUMS" "$base/download/$release/SHA256SUMS" || die "cannot download SHA256SUMS of $release"
-    curl -fsSL -o "$work/$name.tar.gz" "$base/download/$release/$name.tar.gz" || die "cannot download $name.tar.gz"
+    dl -o "$work/SHA256SUMS" "$base/download/$release/SHA256SUMS" || die "cannot download SHA256SUMS of $release"
+    dl -o "$work/$name.tar.gz" "$base/download/$release/$name.tar.gz" || die "cannot download $name.tar.gz"
     line=$(grep "  $name.tar.gz\$" "$work/SHA256SUMS") || die "$name.tar.gz is not listed in SHA256SUMS"
     (cd "$work" && printf '%s\n' "$line" | sha256sum -c --quiet -) || die "SHA-256 of $name.tar.gz does not match SHA256SUMS"
     say "SHA-256 checked"
+    # The SHA-256 comes from the same place as the tarball, so it only detects accidents. The attestation is
+    # signed by GitHub for this repository's release workflow: it is verified BEFORE anything is extracted.
+    if [ "${PXU_SKIP_ATTESTATION:-0}" = 1 ]; then
+        say "WARNING: PXU_SKIP_ATTESTATION=1: the build attestation was NOT verified (SHA-256 only)"
+    else
+        command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is needed to verify the build attestation of $name.tar.gz; install it, or set PXU_SKIP_ATTESTATION=1 to skip the check knowingly"
+        dl -o "$work/provenance.sigstore.json" "$base/download/$release/provenance.sigstore.json" || die "cannot download provenance.sigstore.json of $release"
+        gh attestation verify "$work/$name.tar.gz" --repo "$repo" --bundle "$work/provenance.sigstore.json" >/dev/null || die "the build attestation of $name.tar.gz is not valid for $repo; nothing was installed"
+        say "build attestation verified"
+    fi
     tar -xzf "$work/$name.tar.gz" -C "$work"
     here=$work/$name
     bin=$here/pxu

@@ -1,5 +1,5 @@
 //! Argumentos de la línea de comandos.
-pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config check|config encrypt-secrets|notify-test|notify-flush] [options]\n  pxu                      open the TUI\n  pxu list [--json] [--all-nodes]\n                           one line per LXC/VM (config read from /etc/pve, no processes)\n  pxu check [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]\n                           updates per LXC, one exec per CT; refreshes the package indexes by default\n                           ([check] refresh = false turns it off; --no-refresh = read-only check; --refresh kept)\n                           exit: 0 none · 10 updates · 12 a CT failed · 2 usage/config\n  pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
+pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config check|config encrypt-secrets|config disable-apprise|notify-test|notify-flush] [options]\n  pxu                      open the TUI\n  pxu list [--json] [--all-nodes]\n                           one line per LXC/VM (config read from /etc/pve, no processes)\n  pxu check [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]\n                           updates per LXC, one exec per CT; refreshes the package indexes by default\n                           ([check] refresh = false turns it off; --no-refresh = read-only check; --refresh kept)\n                           exit: 0 none · 10 updates · 12 a CT failed · 2 usage/config\n  pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
                            upgrade CTs one at a time (temporary backup, simulate, upgrade, verify; automatic rollback\n                           to the backup if it fails, then the backup is deleted). Only CTs with a
                            positive recent `pxu check`; default: CTs with auto_update. The only command that writes.
                            exit: 0 ok · 20 a CT failed · 30 stopped (2 failures in a row / Ctrl-C) · 3 busy · 2 usage
@@ -9,7 +9,7 @@ pub const USAGE: &str = "usage: pxu [--mock CASE] [list|check|update|config chec
   pxu config check         validate /etc/pxu/config.toml (TOML, values, mode 0600, owner root)
   pxu config encrypt-secrets
                            encrypt a plain-text [apprise] api_key / urls with systemd-creds (same as saving them in the TUI: Config → n)
-  pxu notify-test          send a test notice via [apprise] (exit 5 if the send fails)
+  pxu config disable-apprise\n                           set [apprise] transport = \"none\" and delete the encrypted failure-notice credential\n  pxu notify-test          send a test notice via [apprise] (exit 5 if the send fails)
   pxu notify-flush         resend the queued notices (/var/lib/pxu/outbox) and exit; no network if the queue is empty
                            (the pxu-notify-flush timer runs it every 15 min). exit: 0 queue empty · 5 notices still queued\n  pxu --version, -v        print the version and exit\n  pxu --help, -h           show this help\n";
 
@@ -20,6 +20,7 @@ pub enum Cmd {
     Update { only: Vec<u32>, json: bool, yes: bool, notify: bool, host: bool },
     ConfigCheck,
     ConfigEncryptSecrets,
+    ConfigDisableApprise,
     NotifyTest,
     NotifyFlush,
 }
@@ -33,7 +34,7 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
     let mut mock = std::env::var("PXU_MOCK").ok();
     let (mut json, mut all_nodes, mut cmd) = (false, false, None::<&'static str>);
     let (mut refresh, mut notify, mut only) = (None::<bool>, false, Vec::<u32>::new());
-    let (mut yes, mut no_notify, mut want_check, mut want_encrypt, mut host_flag) = (false, false, false, false, false);
+    let (mut yes, mut no_notify, mut want_check, mut want_encrypt, mut want_disable, mut host_flag) = (false, false, false, false, false, false);
     while let Some(a) = p.next()? {
         match a {
             Long("mock") => mock = Some(p.value()?.string()?),
@@ -69,6 +70,7 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
             },
             Value(v) if cmd == Some("config") && v.to_str() == Some("check") => want_check = true,
             Value(v) if cmd == Some("config") && v.to_str() == Some("encrypt-secrets") => want_encrypt = true,
+            Value(v) if cmd == Some("config") && v.to_str() == Some("disable-apprise") => want_disable = true,
             Value(v) if cmd == Some("check") || cmd == Some("update") => only.push(v.string()?.parse().map_err(|_| lexopt::Error::from("vmid must be a number".to_string()))?),
             _ => return Err(a.unexpected()),
         }
@@ -79,7 +81,8 @@ fn parse_from(mut p: lexopt::Parser) -> Result<(Cmd, Option<String>), lexopt::Er
         Some("update") => Cmd::Update { only, json, yes, notify: !no_notify, host: host_flag },
         Some("config") if want_check => Cmd::ConfigCheck,
         Some("config") if want_encrypt => Cmd::ConfigEncryptSecrets,
-        Some("config") => return Err(lexopt::Error::from("config: expected `check` or `encrypt-secrets`".to_string())),
+        Some("config") if want_disable => Cmd::ConfigDisableApprise,
+        Some("config") => return Err(lexopt::Error::from("config: expected `check`, `encrypt-secrets` or `disable-apprise`".to_string())),
         Some("notify-test") => Cmd::NotifyTest,
         Some("notify-flush") => Cmd::NotifyFlush,
         _ => Cmd::Tui,

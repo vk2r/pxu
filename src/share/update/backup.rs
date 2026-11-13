@@ -92,10 +92,31 @@ pub fn entry_check(e: &Entry) -> Result<(), String> {
 }
 
 impl Registry {
+    /// `None` si el directorio de estado y (si existe) el registro son de confianza. Un directorio o registro ausentes no son problema.
+    fn trust_problem(host: &dyn Host) -> Option<String> {
+        let dir = Path::new(REGISTRY_PATH).parent()?.to_str()?;
+        match host.file_meta(Path::new(dir)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            _ => {}
+        }
+        if let Some(p) = crate::share::config::dir_problem(host, dir) {
+            return Some(p);
+        }
+        match host.file_meta(Path::new(REGISTRY_PATH)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => Some(format!("{REGISTRY_PATH}: cannot stat: {e}")),
+            Ok(m) if m.is_dir || m.uid != 0 || m.mode & 0o022 != 0 => Some(format!("{REGISTRY_PATH}: must be a regular file owned by root without group/other write (uid {}, mode {:04o})", m.uid, m.mode & 0o777)),
+            Ok(_) => None,
+        }
+    }
     /// Ausente ⇒ vacío. Corrupto ⇒ se conserva una copia `backups.json.corrupt-<sello>` (el contenido original no se pierde
     /// al guardar), se avisa y `tainted` impide podar. Cada entrada se valida; la que no cuadre se descarta con aviso.
     pub fn load(host: &dyn Host) -> Registry {
         let path = Path::new(REGISTRY_PATH);
+        // A-10: el registro decide qué backups se podan; no se confía si su directorio o él mismo no son de root o admiten escritura ajena.
+        if let Some(why) = Self::trust_problem(host) {
+            return Registry { warnings: vec![format!("WARNING: {why}; the backup registry is not trusted and nothing will be pruned in this run")], tainted: true, ..Default::default() };
+        }
         let b = match host.read_file(path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Registry::default(),
@@ -284,5 +305,24 @@ mod tests {
         assert_eq!(rootfs_storage(&Conf::parse("rootfs: /dev/x,size=1G\n")), None);
         assert_eq!(rootfs_storage(&Conf::parse("rootfs: a;b:vm-1,size=1G\n")), None);
         assert!(is_pve_id("local-lvm") && is_pve_id("drive-14a") && !is_pve_id("-x") && !is_pve_id("x y") && !is_pve_id("1abc") && !is_pve_id(""));
+    }
+
+    #[test]
+    fn registry_is_not_trusted_from_an_unsafe_directory() {
+        use crate::share::mock::scenario::World;
+        let good = br#"{"schema":1,"entries":[]}"#;
+        for (meta, label) in [("0777 0 dir", "group/other"), ("0700 1000 dir", "must be root"), ("0700 0 symlink", "cannot stat")] {
+            let h = World::demo().file(REGISTRY_PATH, good).file("/exec/0/state-dirs.meta", meta.as_bytes()).build();
+            let r = Registry::load(&h);
+            assert!(r.tainted && r.warnings.iter().any(|w| w.contains(label) && w.contains("nothing will be pruned")), "{meta}: {:?}", r.warnings);
+            assert!(r.prune_plan(7, &[], 0).is_empty(), "a tainted registry never prunes");
+        }
+        // directorio de confianza: se carga normal
+        let h = World::demo().file(REGISTRY_PATH, good).build();
+        let r = Registry::load(&h);
+        assert!(!r.tainted && r.warnings.is_empty(), "{:?}", r.warnings);
+        // el propio registro con escritura ajena tampoco se usa
+        let h = World::demo().file(REGISTRY_PATH, good).build();
+        assert!(Registry::trust_problem(&h).is_none());
     }
 }

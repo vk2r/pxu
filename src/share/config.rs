@@ -336,8 +336,33 @@ impl Config {
     }
 }
 
+/// Directorios de pxu en los que se confía al leer config y estado: reales (sin symlink), de root y sin escritura de grupo/otros.
+pub const TRUSTED_DIRS: &[&str] = &["/etc/pxu", "/var/lib/pxu", "/var/log/pxu"];
+
+/// Problema de un directorio de confianza (A-10). Falla en cerrado: sin poder hacer `stat` (o con symlink) no se confía.
+pub fn dir_problem(host: &dyn Host, dir: &str) -> Option<String> {
+    let m = match host.file_meta(Path::new(dir)) {
+        Ok(m) => m,
+        Err(e) => return Some(format!("{dir}: cannot stat: {e}")),
+    };
+    if !m.is_dir {
+        return Some(format!("{dir} is not a real directory"));
+    }
+    if m.uid != 0 {
+        return Some(format!("{dir}: owner is uid {}, must be root", m.uid));
+    }
+    if m.mode & 0o022 != 0 {
+        return Some(format!("{dir}: mode is {:04o}, group/other must not be able to write (expected 0700)", m.mode & 0o777));
+    }
+    None
+}
+
 /// Problema de permisos del archivo de configuración (contiene secretos y define qué CT se tocan).
 pub fn perm_problem(host: &dyn Host) -> Option<String> {
+    // El directorio que lo contiene también debe ser de confianza: con escritura ajena podrían reemplazar el archivo entero.
+    if let Some(e) = dir_problem(host, "/etc/pxu") {
+        return Some(e);
+    }
     // Falla en cerrado: si no se puede ni hacer `stat` (o es un symlink), la config no se usa.
     let m = match host.file_meta(Path::new(CONFIG_PATH)) {
         Ok(m) => m,
@@ -394,6 +419,9 @@ pub fn validate(host: &dyn Host) -> Validation {
     if !host.exists(p) {
         v.notes.push(format!("{CONFIG_PATH} not found: defaults apply (read-only; nothing is auto-updated)"));
         return v;
+    }
+    if let Some(e) = dir_problem(host, "/etc/pxu") {
+        v.errors.push(e);
     }
     match host.file_meta(p) {
         Ok(m) => {
@@ -963,6 +991,24 @@ pub fn write_apprise(host: &dyn Host, edit: &AppriseEdit) -> Result<(), String> 
     host.write_config(plan.text.as_bytes()).map_err(|e| format!("{CONFIG_PATH}: {e}"))
 }
 
+/// Desactiva Apprise (`[apprise] transport = "none"`, el resto se conserva por si se reactiva) y BORRA la credencial del aviso de fallo.
+/// Esta se borra primero: si falla, la config no cambia; y sin ella `pxu-update-notify-failed.service` se omite (`ConditionPathExists`).
+pub fn disable_apprise(host: &dyn Host) -> Result<(), String> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+    let old = read_config_text(host)?;
+    let mut doc: DocumentMut = old.parse().map_err(|e| format!("TOML syntax: {e}"))?;
+    let t = doc.entry("apprise").or_insert_with(|| Item::Table(Table::new())).as_table_mut().ok_or("`apprise` is not a table ([apprise])")?;
+    t["transport"] = value("none");
+    let text = doc.to_string();
+    let v = validate_text(host, &text);
+    if let Some(e) = v.errors.iter().chain(v.typos.iter()).next() {
+        return Err(format!("the resulting config would be invalid ({e}): nothing was written"));
+    }
+    let new: Config = toml::from_str(&text).map_err(|e| format!("{CONFIG_PATH}: {e}"))?;
+    crate::share::notify::write_failure_cred(host, &new.apprise).map_err(|e| format!("failure-notice credential: {e}: nothing was written"))?;
+    host.write_config(text.as_bytes()).map_err(|e| format!("{CONFIG_PATH}: {e}"))
+}
+
 /// Cambia el auto-update de un CT en `/etc/pxu/config.toml` (crea el archivo si falta). Valida el TOML resultante ANTES de escribir.
 /// El host decide si la escritura está permitida (`ReadOnlyHost`) y la hace atómica (0600 root).
 pub fn write_auto_update(host: &dyn Host, vmid: u32, value: bool) -> Result<(), String> {
@@ -1171,5 +1217,18 @@ mod tests {
             write_nvidia_auto(&h, 0, true).unwrap();
         }
         assert!(text(&h).contains("host_nvidia_auto = true"));
+    }
+
+    #[test]
+    fn config_is_refused_when_its_directory_is_not_trusted() {
+        for (meta, why) in [("0777 0 dir", "group/other must not be able to write"), ("0700 1000 dir", "must be root"), ("0700 0 symlink", "cannot stat"), ("0700 0 file", "not a real directory")] {
+            let h = ReadOnlyHost::new(World::demo().config_raw("[check]\ntimeout_s = 30\n").file("/exec/0/state-dirs.meta", meta.as_bytes()).build());
+            let e = Config::load(&h).unwrap_err();
+            assert!(e.contains(why), "{meta}: {e}");
+            assert!(validate(&h).errors.iter().any(|x| x.contains(why)), "{meta}: config check must flag it too");
+        }
+        // el directorio normal (0700 root) sigue funcionando; 0755 de root (sin escritura ajena) también
+        let ok = ReadOnlyHost::new(World::demo().config_raw("[check]\ntimeout_s = 30\n").file("/exec/0/state-dirs.meta", b"0755 0 dir").build());
+        assert!(Config::load(&ok).is_ok());
     }
 }

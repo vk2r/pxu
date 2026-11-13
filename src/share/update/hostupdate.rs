@@ -398,9 +398,7 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
             };
             let detail = format!("{why}. Recovery on the host: {RECOVERY}");
             let at = now_s(host);
-            let mut st = state::load_state(host);
-            st.host = Some(HostInfo::errored(at, &format!("install failed ({why}); see the last run log in {LOG_DIR}; recover with: {RECOVERY}")));
-            let _ = state::save_state(host, &st);
+            let _ = state::update_state(host, |st| st.host = Some(HostInfo::errored(at, &format!("install failed ({why}); see the last run log in {LOG_DIR}; recover with: {RECOVERY}"))));
             return Ok(HostOutcome::Done(finish(&mut cx, started_at, Outcome::Failed, Step::Upgrade, detail, None, confirmed.len(), false, Some(backup))));
         }
     }
@@ -430,9 +428,7 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
     let reboot = info.as_ref().is_some_and(|i| i.reboot_pending());
     let remaining = info.as_ref().map(|i| i.updates());
     if let Some(i) = info {
-        let mut st = state::load_state(host);
-        st.host = Some(i);
-        let _ = state::save_state(host, &st);
+        let _ = state::update_state(host, |st| st.host = Some(i));
     }
     let mut detail = format!("{updated} packages updated ({security} security) · reboot required: {}", if reboot { "yes" } else { "no" });
     if let Some(w) = &warn {
@@ -669,6 +665,7 @@ pub fn notify_run(host: &dyn Host, c: &AppriseCfg, report: &RunReport) -> Vec<St
         match notify::notify(host, c, &m) {
             notify::Outcome::Sent(t) => lines.push(format!("{}: sent via {t}", m.event)),
             notify::Outcome::Queued(e) => lines.push(format!("{}: send failed ({e}); queued", m.event)),
+            notify::Outcome::Lost(e) => lines.push(format!("{}: send failed and NOT queued ({e})", m.event)),
             notify::Outcome::Disabled => {
                 lines.push("notifications disabled (no Apprise transport configured)".into());
                 break;

@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 pub const OUTBOX_DIR: &str = "/var/lib/pxu/outbox";
+/// Quien vacía la cola lo toma mientras envía (puede durar minutos).
+pub const OUTBOX_LOCK: &str = "pxu-outbox.lock";
+/// Protege solo las mutaciones de la cola (elegir nombre, podar, escribir): breve, nunca se mantiene durante la red.
+pub const OUTBOX_FILES_LOCK: &str = "pxu-outbox-files.lock";
+const OUTBOX_FILES_WAIT_MS: u64 = 5_000;
 const OUTBOX_MAX: usize = 50;
 const OUTBOX_MAX_AGE_S: u64 = 7 * 86400;
 
@@ -48,15 +53,25 @@ pub const MAX_RETRIES: usize = 6;
 pub const MAX_RETRY_TOTAL_MS: u64 = 600_000;
 /// Un intento de envío: `timeout_s` + 5 s de la orden + cola de SIGTERM/SIGKILL (30 s).
 pub const ATTEMPT_S: u64 = MAX_TIMEOUT_S + 5 + 30;
-/// Descifrar los secretos (como mucho `api_key_enc` y `urls_enc`): 20 s de `systemd-creds` + 30 s de cola cada uno.
+/// Secretos que se descifran como máximo (`api_key_enc` y `urls_enc`).
+pub const MAX_SECRETS: u64 = 2;
+/// Descifrar `secrets` secretos: 20 s de `systemd-creds` + 30 s de cola cada uno (con 0 no se descifra nada).
 /// Se hace una sola vez por envío (con todos sus reintentos) y una sola vez por pasada de la cola.
-pub const REVEAL_S: u64 = 2 * (20 + 30);
+pub const fn reveal_s(secrets: u64) -> u64 {
+    secrets * (20 + 30)
+}
+/// Peor caso con los dos secretos cifrados.
+pub const REVEAL_S: u64 = reveal_s(MAX_SECRETS);
 /// Avisos que se reenvían de la cola en una pasada (el resto espera a la siguiente).
 pub const MAX_FLUSH: usize = 10;
 
-/// Peor caso de un aviso con `retries` reintentos (con los máximos de arriba).
+/// Peor caso de un aviso con `retries` reintentos (con los máximos de arriba) y `secrets` secretos cifrados (1 o 2; 0 = en claro).
+pub const fn worst_send_s_with(retries: usize, secrets: u64) -> u64 {
+    reveal_s(secrets) + (1 + retries as u64) * ATTEMPT_S + MAX_RETRY_TOTAL_MS / 1000
+}
+/// Igual, con los dos secretos cifrados (el peor caso que se usa para los plazos).
 pub const fn worst_send_s(retries: usize) -> u64 {
-    REVEAL_S + (1 + retries as u64) * ATTEMPT_S + MAX_RETRY_TOTAL_MS / 1000
+    worst_send_s_with(retries, MAX_SECRETS)
 }
 
 /// Eventos que pueden avisar (`[apprise] on`).
@@ -99,6 +114,10 @@ impl AppriseCfg {
     /// ¿Hay URLs de destino (en claro o cifradas)?
     pub fn has_urls(&self) -> bool {
         !self.urls.is_empty() || !self.urls_enc.is_empty()
+    }
+    /// Secretos cifrados que `reveal` tendría que descifrar (0, 1 o 2): marca el tiempo máximo de cada aviso.
+    pub fn encrypted_secrets(&self) -> u64 {
+        u64::from(self.api_key.is_empty() && !self.api_key_enc.is_empty()) + u64::from(self.urls.is_empty() && !self.urls_enc.is_empty())
     }
     /// Secretos guardados en claro en el config (conviene guardarlos de nuevo en la TUI para cifrarlos).
     pub fn has_plain_secret(&self) -> bool {
@@ -271,12 +290,67 @@ pub fn curl_config(c: &AppriseCfg, m: &Message) -> String {
     let base = c.api_url.trim_end_matches('/');
     let url = if stateless { format!("{base}/notify/") } else { format!("{base}/notify/{}", c.api_key) };
     format!(
-        "url = {}\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\ndata = {}\nsilent\nshow-error\nfail\nproto = \"=http,https\"\nmax-filesize = 65536\nmax-time = {}\nconnect-timeout = {}\n",
+        "url = {}\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\ndata = {}\nsilent\nshow-error\nfail\nproto = \"=http,https\"\nproto-redir = \"=http,https\"\nmax-filesize = 65536\nmax-time = {}\nconnect-timeout = {}\n",
         curl_q(&url),
         curl_q(&body.to_string()),
         c.timeout_s,
         c.timeout_s.min(5)
     )
+}
+
+/// Desescapa un valor entre comillas de `curl --config` (solo `\\ \" \n \r \t`); `None` si está mal formado.
+fn curl_unq(v: &str) -> Option<String> {
+    let inner = v.strip_prefix('"')?.strip_suffix('"')?;
+    let mut o = String::new();
+    let mut it = inner.chars();
+    while let Some(c) = it.next() {
+        match c {
+            '"' => return None,
+            '\\' => o.push(match it.next()? {
+                '\\' => '\\',
+                '"' => '"',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                _ => return None,
+            }),
+            c => o.push(c),
+        }
+    }
+    Some(o)
+}
+
+/// A-11: ¿la configuración que llega por stdin a `curl --config -` es exactamente de la forma que genera `curl_config`?
+/// Lista cerrada de opciones con valores fijos o acotados; cualquier otra (`output`, `config`, `upload-file`, `next`, `cookie-jar`…),
+/// una URL que no sea http(s), un `data` que no sea JSON inline (`@archivo`) o un valor mal escapado se rechaza.
+pub fn curl_config_is_safe(cfg: &str) -> bool {
+    let num = |v: &str| !v.is_empty() && v.len() <= 9 && v.bytes().all(|b| b.is_ascii_digit());
+    let (mut urls, mut datas) = (0, 0);
+    for line in cfg.split('\n') {
+        if line.is_empty() || matches!(line, "silent" | "show-error" | "fail") {
+            continue;
+        }
+        let Some((k, v)) = line.split_once(" = ") else { return false };
+        let ok = match k {
+            "url" => {
+                urls += 1;
+                curl_unq(v).is_some_and(|u| (u.starts_with("http://") || u.starts_with("https://")) && !u.chars().any(char::is_control))
+            }
+            "data" => {
+                datas += 1;
+                curl_unq(v).is_some_and(|d| d.starts_with('{'))
+            }
+            "request" => v == "\"POST\"",
+            "header" => v == "\"Content-Type: application/json\"",
+            "proto" | "proto-redir" => v == "\"=http,https\"",
+            "max-filesize" | "max-time" | "connect-timeout" => num(v),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    urls == 1 && datas <= 1
 }
 
 /// Aviso que lanza `pxu-update-notify-failed.service` cuando el servicio falla (fijo: el script no conoce el contenido de la corrida).
@@ -300,9 +374,14 @@ pub fn failure_payload(c: &AppriseCfg, t: Transport) -> Option<String> {
     }
 }
 
-/// Cifra y guarda la credencial del aviso de fallo con las mismas URLs/clave que `c`. `Ok(false)` = sin transporte (no se escribe nada).
+/// Cifra y guarda la credencial del aviso de fallo con las mismas URLs/clave que `c`. `Ok(false)` = sin transporte (Apprise desactivado):
+/// no se escribe nada y se BORRA la credencial anterior, para que no quede un destino viejo que el servicio de fallo siga usando.
 pub fn write_failure_cred(host: &dyn Host, c: &AppriseCfg) -> Result<bool, String> {
     let t = resolve(host, c);
+    if t == Transport::None {
+        host.remove_failure_notice().map_err(|e| format!("{FAILURE_CRED_PATH}: {e}"))?;
+        return Ok(false);
+    }
     let revealed = c.reveal(host)?;
     let Some(plain) = failure_payload(&revealed, t) else { return Ok(false) };
     let enc = seal(host, &plain)?;
@@ -405,7 +484,13 @@ pub fn outbox_len(host: &dyn Host) -> usize {
 }
 
 /// Guarda el mensaje en la cola (máx. 50 / 7 días: se descartan los más viejos).
+/// Elegir el nombre, podar y escribir van bajo `pxu-outbox-files.lock`; sin el lock no se escribe nada y se devuelve el error.
 pub fn enqueue(host: &dyn Host, m: &Message) -> std::io::Result<()> {
+    enqueue_wait(host, m, OUTBOX_FILES_WAIT_MS)
+}
+
+fn enqueue_wait(host: &dyn Host, m: &Message, wait_ms: u64) -> std::io::Result<()> {
+    let _lock = state::lock_wait(host, OUTBOX_FILES_LOCK, wait_ms)?;
     let now = now_s(host);
     let mut files = outbox_files(host);
     files.sort();
@@ -441,14 +526,15 @@ pub fn flush_outbox(host: &dyn Host, c: &AppriseCfg) -> (usize, usize) {
 }
 
 /// Como `flush_outbox`, pero `None` si el lock de la cola está tomado por otro proceso (evita enviar el mismo aviso dos veces).
-/// Si el host no permite locks, se vacía igualmente (mejor un posible duplicado que perder el aviso).
+/// Si el lock no se puede abrir tampoco se vacía (los avisos quedan en la cola, no se pierden).
 fn try_flush_outbox(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
-    let _lock = match host.try_lock(&host.lock_dir().join("pxu-outbox.lock"), true) {
-        Ok(Some(g)) => Some(g),
+    let _lock = match host.try_lock(&host.lock_dir().join(OUTBOX_LOCK), true) {
+        Ok(Some(g)) => g,
         Ok(None) => return None,
         Err(e) => {
-            eprintln!("pxu: outbox lock unavailable: {e}; flushing without it");
-            None
+            // sin exclusión mutua no se vacía (dos procesos enviarían lo mismo): los avisos siguen en la cola
+            eprintln!("pxu: outbox lock unavailable: {e}; not flushing");
+            return None;
         }
     };
     let mut files = outbox_files(host);
@@ -499,6 +585,8 @@ pub fn notify_flush(host: &dyn Host, c: &AppriseCfg) -> Option<(usize, usize)> {
 pub enum Outcome {
     Sent(&'static str),
     Queued(String),
+    /// El envío falló y tampoco se pudo guardar en la cola: el aviso se perdió (el texto dice por qué).
+    Lost(String),
     Disabled,
 }
 
@@ -514,8 +602,10 @@ fn notify_with(host: &dyn Host, c: &AppriseCfg, m: &Message, delays: &[u64]) -> 
     match send_with(host, c, m, delays) {
         Ok(t) => Outcome::Sent(t.label()),
         Err(e) => {
-            let _ = enqueue(host, m);
-            Outcome::Queued(e)
+            match enqueue(host, m) {
+                Ok(()) => Outcome::Queued(e),
+                Err(q) => Outcome::Lost(format!("{e}; NOT queued: {q}")),
+            }
         }
     }
 }
@@ -585,7 +675,8 @@ pub fn check_messages(report: &Report, c: &AppriseCfg, st: &state::State) -> Vec
 
 /// Notifica el resultado de un chequeo y recuerda las huellas avisadas. Devuelve un resumen por línea.
 pub fn notify_check(host: &dyn Host, c: &AppriseCfg, report: &Report) -> Vec<String> {
-    let mut st = state::load_state(host);
+    let st = state::load_state(host);
+    let mut confirmed: Vec<(u32, String)> = Vec::new();
     let mut lines = Vec::new();
     let (sent, left) = flush_outbox(host, c);
     if sent + left > 0 {
@@ -595,16 +686,27 @@ pub fn notify_check(host: &dyn Host, c: &AppriseCfg, report: &Report) -> Vec<Str
         match notify_with(host, c, &m, &c.retry_delays_ms[..c.retry_delays_ms.len().min(2)]) {
             Outcome::Sent(t) => lines.push(format!("{}: sent via {t}", m.event)),
             Outcome::Queued(e) => lines.push(format!("{}: send failed ({e}); queued", m.event)),
+            Outcome::Lost(e) => {
+                // ni enviado ni encolado: la huella no se marca, el próximo chequeo lo reintenta
+                lines.push(format!("{}: send failed and NOT queued ({e}); will retry on the next check", m.event));
+                continue;
+            }
             Outcome::Disabled => {
                 lines.push("notifications disabled (no Apprise transport configured)".into());
                 break;
             }
         }
-        for (id, fp) in fps {
-            st.notified.insert(id.to_string(), fp);
+        confirmed.extend(fps);
+    }
+    if !confirmed.is_empty() {
+        if let Err(e) = state::update_state(host, |st| {
+            for (id, fp) in confirmed {
+                st.notified.insert(id.to_string(), fp);
+            }
+        }) {
+            lines.push(format!("state not saved ({e}): the next check may notify again"));
         }
     }
-    let _ = state::save_state(host, &st);
     lines
 }
 
@@ -1142,5 +1244,129 @@ mod tests {
         assert!(m3.iter().any(|m| m.0.title == "pxu: host review failed" && m.0.event == "check_error"));
         assert!(!m3.iter().any(|m| m.0.title == "pxu: host review"));
         assert!(m3.iter().any(|m| m.0.title.starts_with("pxu: updates in")), "CT updates are still announced");
+    }
+
+    /// Host que falla a voluntad: escritura de la cola, `curl` y lock (A-06/A-07).
+    struct Broken {
+        inner: MockHost,
+        fail_write: bool,
+        fail_curl: bool,
+        fail_lock: bool,
+    }
+    impl Broken {
+        fn ok() -> Broken {
+            Broken { inner: World::demo().build(), fail_write: false, fail_curl: false, fail_lock: false }
+        }
+    }
+    impl Host for Broken {
+        fn read_file(&self, p: &Path) -> io::Result<Vec<u8>> { self.inner.read_file(p) }
+        fn read_dir(&self, p: &Path) -> io::Result<Vec<PathBuf>> { self.inner.read_dir(p) }
+        fn exists(&self, p: &Path) -> bool { self.inner.exists(p) }
+        fn guest_exec(&self, v: u32, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> { self.inner.guest_exec(v, a, o, s) }
+        fn host_cmd(&self, a: &[&str], o: &ExecOpts, s: &mut dyn LineSink) -> io::Result<crate::share::host::ExitInfo> {
+            if self.fail_curl && a.first() == Some(&"curl") {
+                return Ok(crate::share::host::ExitInfo { code: 7 });
+            }
+            self.inner.host_cmd(a, o, s)
+        }
+        fn write_file(&self, p: &Path, d: &[u8]) -> io::Result<()> {
+            if self.fail_write && p.starts_with(OUTBOX_DIR) {
+                return Err(io::Error::other("No space left on device"));
+            }
+            self.inner.write_file(p, d)
+        }
+        fn remove_file(&self, p: &Path) -> io::Result<()> { self.inner.remove_file(p) }
+        fn lock_dir(&self) -> &Path { self.inner.lock_dir() }
+        fn try_lock(&self, p: &Path, c: bool) -> io::Result<Option<crate::share::host::LockGuard>> {
+            if self.fail_lock {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "lock dir not usable"));
+            }
+            self.inner.try_lock(p, c)
+        }
+        fn file_meta(&self, p: &Path) -> io::Result<crate::share::host::FileMeta> { self.inner.file_meta(p) }
+        fn now(&self) -> std::time::SystemTime { self.inner.now() }
+    }
+
+    #[test]
+    fn enqueue_two_writers_in_the_same_second_keep_both_messages() {
+        let h = World::demo().build();
+        enqueue(&h, &msg()).unwrap();
+        enqueue(&h, &Message { title: "second".into(), ..msg() }).unwrap();
+        assert_eq!(outbox_len(&h), 2, "same epoch second: distinct names, nothing overwritten");
+    }
+
+    #[test]
+    fn enqueue_needs_the_files_lock_and_never_writes_without_it() {
+        let h = World::demo().build();
+        let g = h.try_lock(&h.lock_dir().join(OUTBOX_FILES_LOCK), true).unwrap().expect("free");
+        assert_eq!(enqueue_wait(&h, &msg(), 0).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(outbox_len(&h), 0, "nothing written without the lock");
+        drop(g);
+        enqueue_wait(&h, &msg(), 0).unwrap();
+        assert_eq!(outbox_len(&h), 1);
+        let b = Broken { fail_lock: true, ..Broken::ok() };
+        assert!(enqueue(&b, &msg()).is_err(), "an unusable lock dir is an error, not a silent continue");
+        assert_eq!(outbox_len(&b), 0);
+    }
+
+    #[test]
+    fn failed_queue_write_is_reported_as_lost_not_queued() {
+        let b = Broken { fail_write: true, fail_curl: true, ..Broken::ok() };
+        let c = api("k");
+        match notify_with(&b, &c, &msg(), &[]) {
+            Outcome::Lost(e) => assert!(e.contains("NOT queued") && e.contains("No space left"), "{e}"),
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(outbox_len(&b), 0);
+    }
+
+    #[test]
+    fn check_does_not_mark_the_fingerprint_when_the_notice_was_neither_sent_nor_queued() {
+        let b = Broken { fail_write: true, fail_curl: true, ..Broken::ok() };
+        let inv = guests::load(&b);
+        let mut cfg = Config::load(&b).unwrap();
+        cfg.apprise.retry_delays_ms = vec![];
+        let rep = check::run(&b, &inv, &cfg, &CheckOpts::from_config(&cfg, Some(false)), &[], &AtomicBool::new(false), &mut |_| {});
+        let lines = notify_check(&b, &cfg.apprise, &rep);
+        assert!(lines.iter().any(|l| l.contains("NOT queued")), "{lines:?}");
+        assert!(state::load_state(&b).notified.is_empty(), "no fingerprint without a confirmed send or queue");
+        // con la cola escribible, el aviso fallido se encola y entonces sí se marca
+        let q = Broken { fail_curl: true, ..Broken::ok() };
+        let lines = notify_check(&q, &cfg.apprise, &rep);
+        assert!(lines.iter().any(|l| l.ends_with("; queued")), "{lines:?}");
+        assert!(!state::load_state(&q).notified.is_empty());
+    }
+
+    #[test]
+    fn flush_does_not_run_without_the_outbox_lock() {
+        let b = Broken { fail_lock: true, ..Broken::ok() };
+        b.inner.write_file(&Path::new(OUTBOX_DIR).join("1-000.json"), &serde_json::to_vec(&msg()).unwrap()).unwrap();
+        assert_eq!(flush_outbox(&b, &api("k")), (0, 1));
+        assert_eq!(outbox_len(&b), 1, "queue intact");
+        assert!(!host_argv(&b.inner).iter().any(|a| a[0] == "curl"), "nothing is sent without mutual exclusion");
+    }
+
+    #[test]
+    fn curl_config_filter_accepts_only_what_pxu_generates() {
+        // todo lo que genera pxu pasa, incluso con comillas, saltos y barras en los valores
+        let mut weird = api("k\"quoted\\back");
+        weird.tag = "a\\b".into();
+        for c in [api("pxu-key"), api(""), weird, AppriseCfg { tag: "system".into(), ..api("k") }] {
+            assert!(curl_config_is_safe(&curl_config(&c, &msg())), "{}", curl_config(&c, &msg()));
+            assert!(curl_config_is_safe(&curl_config(&c, &failure_message())));
+        }
+        assert!(curl_config(&api("k"), &msg()).contains("proto-redir = \"=http,https\""));
+        let good = curl_config(&api("k"), &msg());
+        // una clave con salto de línea (inyección) produce una URL con caracteres de control: se rechaza entera
+        assert!(!curl_config_is_safe(&curl_config(&api("k\noutput = \"/etc/cron.d/x"), &msg())));
+        // opciones que escriben o leen archivos, otra config, otra transferencia o URLs que no son http(s)
+        for bad in ["output = \"/etc/cron.d/x\"", "remote-name", "config = \"/tmp/c\"", "upload-file = \"/etc/shadow\"", "next", "cookie-jar = \"/tmp/j\"", "dump-header = \"/tmp/h\"", "trace = \"/tmp/t\"", "form = \"f=@/etc/shadow\"", "location", "unix-socket = \"/run/x\"", "url = \"file:///etc/shadow\"", "url = \"ftp://h/x\"", "proto = \"=file\"", "proto-redir = \"=all\"", "request = \"PUT\"", "max-time = 1; x", "data = \"@/etc/shadow\"", "data = \"{\"x\"}\"", "data = \"bad\\q\"", "url = no-quotes", "  output = \"/x\"", "output=\"/x\"", "OUTPUT = \"/x\""] {
+            assert!(!curl_config_is_safe(&format!("{good}{bad}\n")), "must refuse: {bad}");
+        }
+        // sin url, con dos urls o vacío
+        assert!(!curl_config_is_safe("silent\nfail\n") && !curl_config_is_safe(""));
+        assert!(!curl_config_is_safe(&format!("{good}url = \"http://other/\"\n")));
+        // un salto de línea sin escapar dentro de un valor lo rompería en otra línea: se rechaza
+        assert!(!curl_config_is_safe("url = \"http://a/\noutput = \"/x\"\"\ndata = \"{}\"\n"));
     }
 }
