@@ -156,7 +156,7 @@ impl Grant {
     pub fn mkdir(&self) -> Argv { a(&["install", "-d", "-m", "0700", "-o", "root", "-g", "root", WORK_DIR]) }
     pub fn df(&self) -> Argv { a(&["df", "-Pk", WORK_DIR]) }
     pub fn fetch_sha(&self) -> Argv { a(&["curl", "-fsS", "--proto", "=https", "--max-time", "30", &sha_url(&self.version)]) }
-    pub fn download(&self) -> Argv { a(&["curl", "-fSL", "--proto", "=https", "--retry", "3", "--max-time", "3600", "-o", &run_path(&self.version), &run_url(&self.version)]) }
+    pub fn download(&self) -> Argv { a(&["curl", "-fsSL", "--proto", "=https", "--retry", "3", "--max-time", "3600", "-o", &run_path(&self.version), &run_url(&self.version)]) }
     pub fn sha256sum(&self) -> Argv { a(&["sha256sum", &run_path(&self.version)]) }
     pub fn check(&self) -> Argv { a(&["sh", &run_path(&self.version), "--check"]) }
     pub fn extract(&self) -> Argv { a(&["sh", &run_path(&self.version), "--extract-only", "--target", &extract_dir(&self.version)]) }
