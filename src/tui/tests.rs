@@ -2640,3 +2640,24 @@ fn mock_badge_hidden_only_with_the_screenshot_option() {
     a.hide_mock_badge = true;
     assert!(!render(&a, 120, 40, false).0.contains("[MOCK]"));
 }
+
+#[test]
+fn n_in_the_update_modal_offers_to_reinstall_only_the_nvidia_libs_of_a_gpu_ct() {
+    let (mut a, h) = host_app_with(gpu_host(&["595.112.07"], true));
+    a.read_only = false;
+    a.view = View::Detail(134);
+    let Action::PrepareUpdate { only } = a.on_key(key(KeyCode::Char('u'))) else { panic!("CT 134 has updates in this fixture") };
+    let cfg = Config::load(&h).unwrap();
+    a.open_update_modal(super::app::UpdateModal::new(update::select(&h, &a.inv, &cfg, &only), &cfg));
+    assert_eq!(a.on_key(key(KeyCode::Char('n'))), Action::None);
+    assert!(a.modal.is_none());
+    let m = a.nvidia_libs.as_ref().expect("modal");
+    assert_eq!((m.vmid, m.version.as_deref()), (134, Some("595.112.07")));
+    // Esc no cambia nada
+    a.on_key(key(KeyCode::Esc));
+    assert!(a.nvidia_libs.is_none() && !a.update.running && a.view == View::Detail(134));
+    // Enter lanza solo ese CT
+    a.open_nvidia_libs_for_test(134);
+    assert_eq!(a.on_key(key(KeyCode::Enter)), Action::NvidiaCtLibs { vmid: 134 });
+    assert!(a.update.running && a.view == View::Update && a.nvidia_libs.is_none());
+}

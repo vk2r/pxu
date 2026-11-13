@@ -586,6 +586,40 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, opts: &Opts, cancel: 
     Ok(report)
 }
 
+/// Solo el driver NVIDIA, a mano: `pxu update --host --nvidia-reinstall` (`Mode::Reinstall`) o la opción del menú `u` de la TUI (`Mode::CtLibs`).
+/// Mismo lock global y mismo log que una corrida normal; nunca reinicia el host. El informe lleva solo la entrada `nvidia` (host y cada CT aparte).
+pub fn run_nvidia(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: nvidia::Mode, cancel: &AtomicBool, ev_out: &mut dyn FnMut(Event)) -> Result<RunReport, RunError> {
+    let started_at = now_s(host);
+    let rec = std::cell::RefCell::new(runlog::Recorder::default());
+    let live = std::cell::RefCell::new(None::<std::path::PathBuf>);
+    let mut ev_fn = |e: Event| {
+        runlog::feed_live(host, &rec, &live, now_s(host), &e);
+        ev_out(e)
+    };
+    let ev: &mut dyn FnMut(Event) = &mut ev_fn;
+    let _global = match host.try_lock(&host.lock_dir().join("pxu-run.lock"), true) {
+        Ok(Some(g)) => g,
+        Ok(None) => return Err(RunError::Locked),
+        Err(e) => return Err(RunError::Io(format!("global lock: {e}"))),
+    };
+    *live.borrow_mut() = runlog::begin_live(host, started_at, &inv.node);
+    rec.borrow_mut().begin("NVIDIA driver");
+    let reboot = host.exists(Path::new("/var/run/reboot-required")) || inv.host.as_ref().is_some_and(|h| h.reboot_pending());
+    let gpu_cts = inv.guests.iter().filter(|g| g.gpu.nvidia).count() as u64;
+    let step = if !fits(host, started_at, nvidia::worst_s(cfg, gpu_cts)) {
+        let why = "skipped: not started: run time limit (its worst case does not fit in the time left)";
+        ev(Event::Line(0, format!("NVIDIA driver: {why}")));
+        Some((nvidia::NvidiaRun::skipped(why), None))
+    } else {
+        nvidia::run_mode(host, inv, cfg, mode, reboot, cancel, ev)
+    };
+    let (nv, stop) = step.unwrap_or_else(|| (nvidia::NvidiaRun::skipped("skipped: nothing to do"), None));
+    let cancelled = nv.outcome == Outcome::Cancelled;
+    let mut report = RunReport { node: inv.node.clone(), started_at, finished_at: now_s(host), results: vec![], aborted: stop, cancelled, nvidia: Some(nv), log_path: None };
+    runlog::finalize(host, cfg.general.log_retention_days, live.borrow_mut().take(), &rec.borrow(), &mut report);
+    Ok(report)
+}
+
 /// Paso del host de la corrida programada (`host_auto`): el host va ANTES que cualquier CT. Devuelve su entrada del informe y, si los CT
 /// no deben tocarse (el host falló, abortó, venció su timeout o se canceló), el motivo de parar. Un host saltado antes de empezar
 /// (chequeo viejo, lock ocupado, bloqueado) no se tocó: los CT siguen.

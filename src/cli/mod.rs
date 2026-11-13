@@ -270,6 +270,9 @@ fn update_text(node: &str, rep: &update::RunReport) -> String {
         for c in &n.cts {
             let _ = writeln!(s, "  CT {} {}: {} · {}", c.vmid, c.name, format!("{:?}", c.outcome).to_lowercase(), c.detail);
         }
+        if n.reboot_needed {
+            let _ = writeln!(s, "  REBOOT the host: nvidia-smi does not confirm the new driver yet (pxu never reboots the host)");
+        }
     }
     let _ = writeln!(s, "\n{} ok · {} warn · {} failed · {} skipped · {} cancelled", rep.count(update::Outcome::Ok), rep.count(update::Outcome::Warn), rep.count(update::Outcome::Failed), rep.count(update::Outcome::Skipped), rep.count(update::Outcome::Cancelled));
     if let Some(a) = &rep.aborted {
@@ -400,9 +403,80 @@ pub fn cmd_update(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_f
 
 /// `pxu update --host`: instala las actualizaciones del host Proxmox, solo a mano. Mismos códigos que `update`
 /// (0 ok · 20 la instalación falló · 30 abortada antes de tocar nada · 3 ocupado · 2 uso). Sin terminal: 2, también con `--yes` (el host nunca se instala desatendido).
-pub fn cmd_update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool) -> i32 {
+pub fn cmd_update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool, nvidia_reinstall: bool) -> i32 {
     use std::io::IsTerminal;
-    update_host(host, only, json, yes, notify_flag, std::io::stdin().is_terminal())
+    let tty = std::io::stdin().is_terminal();
+    if nvidia_reinstall {
+        return nvidia_reinstall_host(host, only, json, yes, notify_flag, tty);
+    }
+    update_host(host, only, json, yes, notify_flag, tty)
+}
+
+/// `pxu update --host --nvidia-reinstall`: reinstala el driver NVIDIA del host (aunque la versión ya coincida) en lugar del apt. Solo a mano, con terminal
+/// y con `--yes` (sin él no se toca nada); el timer no pasa por aquí. Informa aparte el host y cada CT; nunca reinicia el host.
+fn nvidia_reinstall_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool, tty: bool) -> i32 {
+    use pxu::share::update::nvidia;
+    if !only.is_empty() {
+        eprintln!("pxu: --host cannot be combined with CT ids (the host is never part of a CT run)");
+        return update::EXIT_USAGE;
+    }
+    if !tty {
+        eprintln!("pxu: update --host --nvidia-reinstall needs a terminal (never unattended, not even with --yes)");
+        return update::EXIT_USAGE;
+    }
+    if !yes {
+        eprintln!("pxu: --nvidia-reinstall does nothing without --yes: it stops the GPU CTs, unloads and reinstalls the host driver; nothing was changed");
+        return update::EXIT_USAGE;
+    }
+    let mut cfg = match Config::load_checked(host) {
+        Ok((c, warnings)) => {
+            for w in warnings {
+                eprintln!("pxu: config warning: {w}");
+            }
+            c
+        }
+        Err(e) => {
+            eprintln!("pxu: {e}");
+            return update::EXIT_USAGE;
+        }
+    };
+    cfg.apprise.apply_env(std::env::var("APPRISE_URLS").ok().as_deref());
+    install_signal_handlers();
+    let inv = guests::load(host);
+    let optin = pxu::share::host::UpdateOptIn::new(host);
+    // sin `println!`: con el terminal cerrado (SIGHUP) fallaría y mataría a pxu a mitad de la instalación
+    let mut on_event = |e: update::Event| {
+        if json {
+            return;
+        }
+        if let update::Event::Line(_, l) = e {
+            let _ = std::io::Write::write_fmt(&mut std::io::stdout(), format_args!("  {l}\n"));
+        }
+    };
+    let res = update::run_nvidia(host, &inv, &cfg, nvidia::Mode::Reinstall, &INTERRUPTED, &mut on_event);
+    drop(optin);
+    let rep = match res {
+        Ok(r) => r,
+        Err(update::RunError::Locked) => {
+            eprintln!("pxu: another `pxu update` is running (lock {}/pxu-run.lock)", host.lock_dir().display());
+            return update::EXIT_LOCKED;
+        }
+        Err(update::RunError::Io(e)) => {
+            eprintln!("pxu: {e}");
+            return update::EXIT_USAGE;
+        }
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rep.to_json()).expect("serializable"));
+    } else {
+        print!("\n{}", update_text(&inv.node, &rep));
+    }
+    if notify_flag {
+        for l in update::notify_run(host, &cfg.apprise, &rep) {
+            eprintln!("pxu: notify: {l}");
+        }
+    }
+    rep.exit_code()
 }
 
 fn update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool, tty: bool) -> i32 {
@@ -706,6 +780,15 @@ mod tests {
             let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
             unsafe { libc::sigaction(sig, std::ptr::null(), &mut old) };
             assert_eq!(old.sa_sigaction, on_signal as extern "C" fn(libc::c_int) as usize, "signal {sig}");
+        }
+    }
+
+    #[test]
+    fn nvidia_reinstall_does_nothing_without_yes_a_tty_or_with_ct_ids() {
+        for (only, yes, tty) in [(vec![], false, true), (vec![], true, false), (vec![134u32], true, true)] {
+            let h = ReadOnlyHost::new(World::host_gpu().host_nvidia_auto().build());
+            assert_eq!(nvidia_reinstall_host(&h, &only, false, yes, false, tty), update::EXIT_USAGE, "only={only:?} yes={yes} tty={tty}");
+            assert!(h.inner().recorded().is_empty(), "nothing ran (only={only:?} yes={yes} tty={tty})");
         }
     }
 

@@ -2,22 +2,22 @@ pxu · Proxmox Updater [RO] [MOCK]                         node server · 37 gue
 [All 37]   Running 34    Stopped 3    Updates 13   / search name, tag, id…                                    sort: vmid
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
    ID  TYPE  NAME          STATE    OS               CPU  RAM         DISK     UPD all/sec  BACKUP  AUTO
-> 100  LXC   ct-100        run      debian 12          —  0.2/0.5 GB  2.0 GB   0            yes     —
-  101  LXC┌ help · any key closes ───────────────────────────────────────────────────────────────────────────┐
-  102  LXC│── Keys ──────────────────────────────────────────────────────────────────────────────────────────│
-  103  LXC│ ↑↓ / j k   move cursor                                                                           │
-  104  LXC│ PgUp PgDn  move 10 · Home End first/last                                                         │
-  105  LXC│ 1 2 3 4    filter All / Running / Stopped / Updates                                              │
-  106  LXC│ /          search name, tag or id (Esc clears)                                                   │
-  107  LXC│ s          cycle sort: vmid · name · updates · ram                                               │
-  108  LXC│ r          reload /etc/pve confs (files only)                                                    │
-  109  LXC│ Enter      guest detail                                                                          │
-  110  LXC│ c          check LXC updates (visible CTs, or all): refreshes the package indexes                │
-  111  LXC│ C          read-only check: does not refresh the indexes                                         │
-  112  LXC│ v          show the last check result                                                            │
-  113  LXC│ o          choose visible columns (Space toggles; saved in config.toml)                          │
-  114  LXC│ u          update the visible CTs with updates (asks first): temporary backup, verify,           │
-  115  LXC│            auto-rollback on failure                                                              │
+> 100  LXC┌ help · any key closes ───────────────────────────────────────────────────────────────────────────┐
+  101  LXC│── Keys ──────────────────────────────────────────────────────────────────────────────────────────│
+  102  LXC│ ↑↓ / j k   move cursor                                                                           │
+  103  LXC│ PgUp PgDn  move 10 · Home End first/last                                                         │
+  104  LXC│ 1 2 3 4    filter All / Running / Stopped / Updates                                              │
+  105  LXC│ /          search name, tag or id (Esc clears)                                                   │
+  106  LXC│ s          cycle sort: vmid · name · updates · ram                                               │
+  107  LXC│ r          reload /etc/pve confs (files only)                                                    │
+  108  LXC│ Enter      guest detail                                                                          │
+  109  LXC│ c          check LXC updates (visible CTs, or all): refreshes the package indexes                │
+  110  LXC│ C          read-only check: does not refresh the indexes                                         │
+  111  LXC│ v          show the last check result                                                            │
+  112  LXC│ o          choose visible columns (Space toggles; saved in config.toml)                          │
+  113  LXC│ u          update the visible CTs with updates (asks first): temporary backup, verify,           │
+  114  LXC│            auto-rollback on failure · a GPU CT with nothing to update (or n in the modal):       │
+  115  LXC│            reinstall its NVIDIA libs only                                                        │
   116  LXC│ a          toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU   │
   117  LXC│            CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)                      │
   118  LXC│ b          toggle the backup before updating the CT (asks first)                                 │

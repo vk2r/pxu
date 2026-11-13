@@ -81,6 +81,8 @@ pub enum Action {
     HostUpdate { confirmed: Vec<HostPkg> },
     /// Enter en el aviso de dpkg sucio: `dpkg --configure -a` (confirmación aparte).
     HostRepair,
+    /// `y`/Enter en el modal de librerías NVIDIA de un CT: reinstala solo las librerías de ese CT con la versión del host (host y otros CT intactos).
+    NvidiaCtLibs { vmid: u32 },
     /// Terminar el CT en curso y parar.
     CancelUpdate,
     /// `a`: el bucle lee la config (validada) y abre la ventana de opciones de auto-update (auto-update + driver NVIDIA).
@@ -251,6 +253,13 @@ impl AutoModal {
             }
         }
     }
+}
+
+/// Confirmación de `u` sobre un CT con GPU: reinstalar solo sus librerías NVIDIA con la versión del host.
+pub struct NvidiaLibsModal {
+    pub vmid: u32,
+    pub name: String,
+    pub version: Option<String>,
 }
 
 /// Modal de confirmación del backup previo al update de un CT (`b`).
@@ -465,6 +474,7 @@ pub struct App {
     pub modal: Option<UpdateModal>,
     pub auto_modal: Option<AutoModal>,
     pub backup_modal: Option<BackupModal>,
+    pub nvidia_libs: Option<NvidiaLibsModal>,
     pub backup_del: Option<BackupDelModal>,
     pub host_modal: Option<HostModal>,
     pub sched: Option<SchedModal>,
@@ -517,6 +527,7 @@ impl App {
             modal: None,
             auto_modal: None,
             backup_modal: None,
+            nvidia_libs: None,
             backup_del: None,
             host_modal: None,
             sched: None,
@@ -637,6 +648,9 @@ impl App {
         }
         if self.auto_modal.is_some() {
             return self.auto_modal_key(k);
+        }
+        if self.nvidia_libs.is_some() {
+            return self.nvidia_libs_key(k);
         }
         if self.backup_modal.is_some() {
             return self.backup_modal_key(k);
@@ -985,12 +999,48 @@ impl App {
             }
             return Action::None;
         }
+        let gpu: Vec<u32> = from.iter().copied().filter(|v| self.guest(*v).is_some_and(|g| g.kind == GuestKind::Lxc && g.gpu.nvidia)).collect();
         let only: Vec<u32> = from.into_iter().filter(|v| self.guest(*v).is_some_and(|g| g.kind == GuestKind::Lxc && g.updates() > 0)).collect();
+        if only.is_empty() && gpu.len() == 1 {
+            return self.ask_nvidia_libs(gpu[0]);
+        }
         if only.is_empty() {
             self.status = "no CT with a positive check here: run [c] first".into();
             return Action::None;
         }
         Action::PrepareUpdate { only }
+    }
+
+    /// Abre la confirmación de las librerías NVIDIA de un CT con GPU (necesita el driver del host cargado).
+    #[cfg(test)]
+    pub fn open_nvidia_libs_for_test(&mut self, vmid: u32) {
+        self.ask_nvidia_libs(vmid);
+    }
+
+    fn ask_nvidia_libs(&mut self, vmid: u32) -> Action {
+        let Some(g) = self.guest(vmid).filter(|g| g.kind == GuestKind::Lxc && g.gpu.nvidia) else { return Action::None };
+        let version = self.inv.host.as_ref().and_then(|h| h.nvidia_driver.clone());
+        self.nvidia_libs = Some(NvidiaLibsModal { vmid, name: g.name.clone(), version });
+        Action::None
+    }
+
+    fn nvidia_libs_key(&mut self, k: KeyEvent) -> Action {
+        let Some(m) = self.nvidia_libs.as_ref() else { return Action::None };
+        match k.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                let vmid = m.vmid;
+                self.nvidia_libs = None;
+                self.update = UpdateState { running: true, started: self.clock.clone(), ..Default::default() };
+                self.view = View::Update;
+                return Action::NvidiaCtLibs { vmid };
+            }
+            KeyCode::Esc | KeyCode::Char('n' | 'q') => {
+                self.nvidia_libs = None;
+                self.status = "NVIDIA libs unchanged".into();
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     /// `a`: alterna el auto-update del CT (el bucle abre el modal con la config leída).
@@ -1140,6 +1190,13 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => m.cursor = (m.cursor + 1).min(n.saturating_sub(1)),
             KeyCode::Up | KeyCode::Char('k') => m.cursor = m.cursor.saturating_sub(1),
+            KeyCode::Char('n') => {
+                if let Some(v) = m.cands.get(m.cursor).map(|c| c.vmid).filter(|v| self.guest(*v).is_some_and(|g| g.gpu.nvidia)) {
+                    self.modal = None;
+                    return self.ask_nvidia_libs(v);
+                }
+                self.status = "n: the selected CT has no NVIDIA GPU".into();
+            }
             KeyCode::Char(' ') => {
                 if let Some(c) = m.cands.get(m.cursor).filter(|c| c.skip.is_none()) {
                     if !m.excluded.remove(&c.vmid) {

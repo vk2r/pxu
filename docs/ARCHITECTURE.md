@@ -182,6 +182,8 @@ Results per CT: `ok`, `warn`, `failed`, `skipped`, `cancelled`.
 
 Only with `[update] host_nvidia_auto = true` (host) and `[[ct]] nvidia_auto = true` (CT), or from the «Include GPU driver update» box of the TUI window (`a`, next to «Automatic updates»; it saves only what changed; checking it on a CT also turns the host flag on, unchecking it on a CT only that CT, unchecking auto-update unchecks it; the GPU column shows `+drv` when it is on). It applies to a driver installed with the official `.run` (`/usr/bin/nvidia-uninstall` exists). It downloads the `.run` and its `.sha256sum` from `download.nvidia.com`, verifies, and only upgrades within the same major branch. CTs receive the libraries of the version the host has. It never reboots the host.
 
+**By hand (`Mode::Reinstall` / `Mode::CtLibs`).** `pxu update --host --nvidia-reinstall --yes` reinstalls the host driver even if the version matches (it does not need `host_nvidia_auto`, and the timer never uses it); in the TUI, `u` on a GPU CT with nothing to update (or `n` in the update window) reinstalls only that CT's libraries with the host's version, without touching the host or the other CTs. The host result and each CT result are reported separately: a failed CT does not mark the host as failed. A reboot is requested only if `nvidia-smi` does not confirm the new version at the end of the host step; in that case the CTs get no libraries (Skipped) and the NVIDIA step is Warn.
+
 ---
 
 ## 4. Notifications (Apprise)
@@ -327,7 +329,7 @@ pxu                                   # TUI
 pxu list   [--json] [--all-nodes]
 pxu check  [--json] [--no-refresh] [--notify] [--ct 101,103] [vmid...]
 pxu update [--json] [--yes] [--no-notify] [--ct 101,103] [vmid...]
-pxu update --host [--yes]
+pxu update --host [--yes] [--nvidia-reinstall]   # reinstall the NVIDIA driver even if the version matches (needs --yes; never from the timer)
 pxu config check
 pxu config encrypt-secrets
 pxu notify-test

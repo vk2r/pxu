@@ -13,12 +13,12 @@ px┌ help · ↑↓ scroll · any other key closes ─────────�
   │ v          show the last check result                                    │s
   │ o          choose visible columns (Space toggles; saved in config.toml)  │
   │ u          update the visible CTs with updates (asks first): temporary   │s
-  │            backup, verify, auto-rollback on failure                      │
-  │ a          toggle scheduled auto-update of the CT (asks first); host row:│
-  │            host_auto · host/GPU CT: also the NVIDIA driver checkbox      │
-▼ │            (Space toggles, Enter saves)                                  │
-──│ b          toggle the backup before updating the CT (asks first)         │──
-> │ g / S      config view + timer state · S change schedule (asks first)    │
+  │            backup, verify, auto-rollback on failure · a GPU CT with      │
+  │            nothing to update (or n in the modal): reinstall its NVIDIA   │
+  │            libs only                                                     │
+▼ │ a          toggle scheduled auto-update of the CT (asks first); host row:│
+──│            host_auto · host/GPU CT: also the NVIDIA driver checkbox      │──
+> │            (Space toggles, Enter saves)                                  │
 ──│                                                                          │──
 [↑│read-only: no command that writes can run                                 │ad
 [a└─────────────────────────────────────────────────────────────── pxu X.Y.Z ┘

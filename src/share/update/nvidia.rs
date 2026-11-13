@@ -305,12 +305,14 @@ pub struct NvidiaRun {
     pub detail: String,
     pub log_path: Option<String>,
     pub took_s: u64,
+    /// El instalador terminó pero `nvidia-smi` no confirma la versión nueva: el módulo nuevo se carga al reiniciar el host (pxu nunca lo reinicia).
+    pub reboot_needed: bool,
     pub cts: Vec<NvidiaCt>,
 }
 
 impl NvidiaRun {
     pub(super) fn skipped(why: &str) -> NvidiaRun {
-        NvidiaRun { outcome: Outcome::Skipped, from: None, to: None, detail: why.into(), log_path: None, took_s: 0, cts: vec![] }
+        NvidiaRun { outcome: Outcome::Skipped, from: None, to: None, detail: why.into(), log_path: None, took_s: 0, reboot_needed: false, cts: vec![] }
     }
 }
 
@@ -336,6 +338,7 @@ struct Cx<'a> {
     from: Option<String>,
     to: Option<String>,
     cts: Vec<NvidiaCt>,
+    reboot_needed: bool,
     /// Timeout de los comandos cortos (`[check] timeout_s`).
     qs: u64,
 }
@@ -343,18 +346,34 @@ struct Cx<'a> {
 /// El log de la corrida (`runlog`) recoge las líneas; aquí solo se arma la entrada del informe.
 fn finish(c: &mut Cx, outcome: Outcome, detail: String) -> NvidiaRun {
     let took_s = now_s(c.cx.host).saturating_sub(c.started_at);
-    NvidiaRun { outcome, from: c.from.clone(), to: c.to.clone(), detail, log_path: None, took_s, cts: std::mem::take(&mut c.cts) }
+    NvidiaRun { outcome, from: c.from.clone(), to: c.to.clone(), detail, log_path: None, took_s, reboot_needed: c.reboot_needed, cts: std::mem::take(&mut c.cts) }
+}
+
+/// Quién llama al paso y qué toca.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Corrida programada o `pxu update` «de todos»: solo con `host_nvidia_auto`; el host solo si hay una versión más nueva en su rama.
+    Scheduled,
+    /// `pxu update --host --nvidia-reinstall` (solo a mano): reinstala el driver del host aunque la versión ya coincida, sin exigir `host_nvidia_auto`.
+    Reinstall,
+    /// Menú `u` de la TUI: reinstala las librerías del driver, con la versión del host, en ESTE CT. El host y los demás CT no se tocan.
+    CtLibs(u32),
 }
 
 /// Paso del driver de la corrida programada. `None` = no hay nada que hacer (sin opt-in, o todo al día): ni entrada en el informe.
 /// `Some((informe, motivo))`: `motivo` = la corrida debe pararse (el sistema se tocó y falló).
 pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, reboot_pending: bool, cancel: &AtomicBool, ev: &mut dyn FnMut(Event)) -> Option<(NvidiaRun, Option<String>)> {
-    if !cfg.update.host_nvidia_auto {
+    run_mode(host, inv, cfg, Mode::Scheduled, reboot_pending, cancel, ev)
+}
+
+pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, reboot_pending: bool, cancel: &AtomicBool, ev: &mut dyn FnMut(Event)) -> Option<(NvidiaRun, Option<String>)> {
+    if mode == Mode::Scheduled && !cfg.update.host_nvidia_auto {
         return None;
     }
     let started_at = now_s(host);
     let skip = |why: &str| Some((NvidiaRun::skipped(why), None));
-    if reboot_pending {
+    // reinstalar las librerías de un CT no toca el host: un kernel nuevo pendiente no importa
+    if reboot_pending && !matches!(mode, Mode::CtLibs(_)) {
         return skip("skipped: a host reboot is pending (new kernel installed, not running); reboot first, pxu never reboots the host");
     }
     let Some((cur, flavor)) = host_driver(host) else { return skip("skipped: no NVIDIA driver is loaded in the host") };
@@ -362,21 +381,36 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, reboot_pending: bool,
         return skip("skipped: the host driver was not installed with the NVIDIA .run (no nvidia-uninstall): apt-managed drivers are updated with the host");
     }
     let kernel = crate::share::host::read_string(host, "/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_string();
-    let mut probe: Vec<String> = Vec::new();
-    let o = quick(cfg);
-    let versions = match host.host_cmd(INDEX_CURL, &o, &mut probe) {
-        Ok(e) if e.code == 0 => parse_index(&probe.join("\n")),
-        Ok(e) => return skip(&format!("skipped: cannot read the NVIDIA index (curl exit {})", e.code)),
-        Err(e) => return skip(&format!("skipped: cannot read the NVIDIA index: {e}")),
+    // las librerías de un CT usan la versión que el host YA tiene cargada: no hace falta mirar el índice
+    let newest = if matches!(mode, Mode::CtLibs(_)) {
+        None
+    } else {
+        let mut probe: Vec<String> = Vec::new();
+        let o = quick(cfg);
+        let versions = match host.host_cmd(INDEX_CURL, &o, &mut probe) {
+            Ok(e) if e.code == 0 => parse_index(&probe.join("\n")),
+            Ok(e) => return skip(&format!("skipped: cannot read the NVIDIA index (curl exit {})", e.code)),
+            Err(e) => return skip(&format!("skipped: cannot read the NVIDIA index: {e}")),
+        };
+        newest_in_branch(&versions, &cur)
     };
-    let newest = newest_in_branch(&versions, &cur);
-    let host_needs = newest.is_some();
+    let host_needs = match mode {
+        Mode::Scheduled => newest.is_some(),
+        Mode::Reinstall => true,
+        Mode::CtLibs(_) => false,
+    };
     let target = newest.clone().unwrap_or_else(|| cur.clone());
     // CT con GPU NVIDIA: en marcha → se paran con el módulo; con `nvidia_auto` → reciben las librerías si su versión no es la del destino
     let gpu_cts: Vec<&crate::share::model::Guest> = inv.guests.iter().filter(|g| g.kind == GuestKind::Lxc && !g.template && g.gpu.nvidia).collect();
     let stop_cts: Vec<u32> = if host_needs { gpu_cts.iter().filter(|g| lxc_running(host, g.vmid)).map(|g| g.vmid).collect() } else { vec![] };
     let ct_version = |vmid: u32| inv.host.as_ref().and_then(|h| h.ct_nvidia.get(&vmid.to_string())).and_then(|n| n.version.clone());
-    let libs: Vec<&crate::share::model::Guest> = gpu_cts.iter().copied().filter(|g| cfg.nvidia_auto(g.vmid) && (host_needs || ct_version(g.vmid).as_deref() != Some(target.as_str()))).collect();
+    let libs: Vec<&crate::share::model::Guest> = match mode {
+        Mode::CtLibs(id) => {
+            let Some(g) = gpu_cts.iter().copied().find(|g| g.vmid == id) else { return skip(&format!("skipped: CT {id} is not an LXC with an NVIDIA GPU")) };
+            vec![g]
+        }
+        _ => gpu_cts.iter().copied().filter(|g| cfg.nvidia_auto(g.vmid) && (host_needs || ct_version(g.vmid).as_deref() != Some(target.as_str()))).collect(),
+    };
     if !host_needs && libs.is_empty() {
         return None;
     }
@@ -388,12 +422,19 @@ pub fn run(host: &dyn Host, inv: &Inventory, cfg: &Config, reboot_pending: bool,
         from: Some(cur.clone()),
         to: Some(target.clone()),
         cts: vec![],
+        reboot_needed: false,
         qs: cfg.check.timeout_s,
     };
-    c.cx.say(&format!("pxu NVIDIA driver update · {} · host {cur} ({flavor}) → {target}{}", stamp(started_at), if host_needs { "" } else { " (libs only: host already current)" }));
+    let what = match mode {
+        Mode::CtLibs(id) => format!("driver libs in CT {id} only (host {cur} stays untouched)"),
+        Mode::Reinstall if newest.is_none() => format!("host {cur} ({flavor}) reinstalled (same version, forced)"),
+        _ if host_needs => format!("host {cur} ({flavor}) → {target}"),
+        _ => format!("host {cur} ({flavor}) → {target} (libs only: host already current)"),
+    };
+    c.cx.say(&format!("pxu NVIDIA driver update · {} · {what}", stamp(started_at)));
     // El permiso se deriva de las opciones del usuario y vale solo mientras dura este paso.
     let _optin = NvidiaOptIn::new(host, grant.clone());
-    let (res, stop) = body(&mut c, cfg, &grant, host_needs, &libs, cancel);
+    let (res, stop) = body(&mut c, cfg, &grant, mode, host_needs, &libs, cancel);
     let _ = c.cx.host_cmd(&grant.cleanup().iter().map(String::as_str).collect::<Vec<_>>(), &quick(cfg));
     let (outcome, detail) = res;
     let run = finish(&mut c, outcome, detail);
@@ -407,7 +448,7 @@ fn argv(v: &[String]) -> Vec<&str> {
 type Res = ((Outcome, String), Option<String>);
 
 /// Todo el trabajo bajo el permiso. `Err`-like: el segundo valor es el motivo de cortar la corrida (solo si ya se tocó el sistema).
-fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::share::model::Guest], cancel: &AtomicBool) -> Res {
+fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs: &[&crate::share::model::Guest], cancel: &AtomicBool) -> Res {
     let fail = |c: &mut Cx, why: String| -> Res {
         c.cx.say(&format!("!! {why}"));
         ((Outcome::Failed, why), None)
@@ -471,22 +512,30 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, host_needs: bool, libs: &[&crate::s
         // ---- a partir de aquí se toca el sistema
         c.cx.step(super::Step::Upgrade);
         if let Some(r) = host_install(c, g) {
+            if c.reboot_needed {
+                // el módulo nuevo aún no está cargado: instalar librerías de 595.x contra el módulo viejo no sirve; se informa por CT
+                for ct in libs {
+                    c.cts.push(NvidiaCt { vmid: ct.vmid, name: ct.name.clone(), outcome: Outcome::Skipped, detail: "libs not installed: reboot the host first".into() });
+                }
+            }
             return r;
         }
     }
-    // ---- librerías de los CT (el host ya está bien)
-    let mut bad = 0;
+    // ---- librerías de los CT (el host ya está bien). El resultado del host NO depende del de los CT: cada uno se informa aparte
     for ct in libs {
         let r = ct_libs(c, g, ct.vmid, &ct.name, host_needs && g.stop_cts.contains(&ct.vmid), &want);
-        if r.outcome == Outcome::Failed {
-            bad += 1;
-        }
         c.cts.push(r);
     }
     let n_ok = c.cts.iter().filter(|r| r.outcome == Outcome::Ok).count();
-    let what = if host_needs { format!("host driver {} → {}", c.from.as_deref().unwrap_or("?"), g.version) } else { format!("host driver already {}", g.version) };
-    let detail = format!("{what}; CT libs: {n_ok}/{} updated", libs.len());
-    ((if bad > 0 { Outcome::Warn } else { Outcome::Ok }, detail), None)
+    let n_bad = c.cts.iter().filter(|r| r.outcome == Outcome::Failed).count();
+    let what = match mode {
+        Mode::CtLibs(_) => format!("host untouched (driver {})", g.version),
+        _ if host_needs => format!("host driver {} → {}", c.from.as_deref().unwrap_or("?"), g.version),
+        _ => format!("host driver already {}", g.version),
+    };
+    let detail = format!("{what}; CT libs: {n_ok}/{} updated{}", libs.len(), if n_bad > 0 { format!(" ({n_bad} failed: see each CT)") } else { String::new() });
+    // en `CtLibs` el host no se tocó: no hay resultado del host que dar
+    ((if matches!(mode, Mode::CtLibs(_)) { Outcome::Skipped } else { Outcome::Ok }, detail), None)
 }
 
 /// `WORK_DIR` debe ser un directorio real (no symlink), de root y 0700. Ausente vale solo antes de crearlo (`may_be_missing`).
@@ -544,7 +593,7 @@ fn host_install(c: &mut Cx, g: &Grant) -> Option<Res> {
         _ => None,
     };
     if ver.as_deref() != Some(g.version.as_str()) {
-        return Some(recover(c, g, &stopped, format!("verification failed: nvidia-smi reports {} instead of {}", ver.as_deref().unwrap_or("nothing"), g.version)));
+        return Some(reboot_needed(c, g, &stopped, ver.as_deref()));
     }
     c.cx.say(&format!("nvidia-smi: driver {} OK", g.version));
     let _ = c.cx.host_cmd(&argv(&g.persistenced(true)), &q);
@@ -557,6 +606,20 @@ fn host_install(c: &mut Cx, g: &Grant) -> Option<Res> {
 
 fn long_s(s: u64) -> ExecOpts<'static> {
     ExecOpts { timeout_s: Some(s), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() }
+}
+
+/// El instalador terminó bien pero `nvidia-smi` no confirma la versión nueva: el módulo nuevo se carga al reiniciar. Único caso en que el driver pide reiniciar;
+/// el host queda en aviso (no fallido), los CT parados vuelven a arrancar y ninguno recibe librerías hasta entonces.
+fn reboot_needed(c: &mut Cx, g: &Grant, stopped: &[u32], seen: Option<&str>) -> Res {
+    let q = long_s(c.qs);
+    let _ = c.cx.host_cmd(&argv(&g.persistenced(true)), &q);
+    for &id in stopped {
+        let _ = c.cx.host_cmd(&argv(&g.ct_start(id)), &long_s(90));
+    }
+    c.reboot_needed = true;
+    let detail = format!("the installer finished but nvidia-smi reports {} instead of {}: REBOOT the host to load the new module (pxu never reboots it); no CT received libs", seen.unwrap_or("nothing"), g.version);
+    c.cx.say(&format!("!! {detail}"));
+    ((Outcome::Warn, detail), None)
 }
 
 /// Falló el driver del host: ningún CT recibe librerías; los CT parados vuelven a arrancar si el módulo viejo aún carga.

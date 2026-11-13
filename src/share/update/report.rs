@@ -142,6 +142,9 @@ pub fn rows(rep: &RunReport) -> Vec<Row> {
             if n.outcome == Outcome::Failed {
                 manual.push(GPU_HINT.into());
             }
+            if n.reboot_needed {
+                manual.push("reboot the host: nvidia-smi does not confirm the new driver".into());
+            }
         }
         if let Some(h) = host_run {
             if h.outcome == Outcome::Failed {
@@ -254,8 +257,10 @@ pub fn title(rep: &RunReport) -> String {
     }
     let parts: Vec<String> = count_parts(&rows).into_iter().filter(|p| !p.ends_with("skipped")).collect();
     t += &format!("{} · {}", if parts.is_empty() { "0 ok".to_string() } else { parts.join(", ") }, dur(total_s(rep)));
-    if nvidia_failed(rep) {
+    if rep.nvidia.as_ref().is_some_and(|n| n.outcome == Outcome::Failed) {
         t += " · NVIDIA failed";
+    } else if nvidia_failed(rep) {
+        t += " · NVIDIA libs failed"; // el host quedó bien: falló alguna librería de CT
     }
     t
 }
@@ -273,8 +278,10 @@ pub fn result_line(rep: &RunReport) -> String {
     }
     let rows = rows(rep);
     let mut parts = count_parts(&rows);
-    if nvidia_failed(rep) {
+    if rep.nvidia.as_ref().is_some_and(|n| n.outcome == Outcome::Failed) {
         parts.push("NVIDIA failed".into());
+    } else if nvidia_failed(rep) {
+        parts.push("NVIDIA libs failed".into());
     }
     let icon = if rep.aborted.is_some() {
         "⛔ STOPPED · "
@@ -314,6 +321,9 @@ pub fn body(rep: &RunReport) -> String {
     if rep.results.iter().any(|r| r.vmid == 0 && r.reboot_required) {
         b += "\n⚠️ The host needs a REBOOT (new kernel). pxu never reboots the host.\n";
     }
+    if rep.nvidia.as_ref().is_some_and(|n| n.reboot_needed) {
+        b += "\n⚠️ The host needs a REBOOT: nvidia-smi does not confirm the new NVIDIA driver. pxu never reboots the host.\n";
+    }
     if let Some(p) = &rep.log_path {
         b += &format!("\n📄 Full report: {p}");
     }
@@ -341,7 +351,7 @@ mod tests {
         RunReport { node: "server".into(), started_at: 1_794_000_000, finished_at: 1_794_001_122, results, aborted: None, cancelled: false, nvidia: None, log_path: Some("/var/log/pxu/run-20261110-0612.log".into()) }
     }
     fn nv(outcome: Outcome) -> NvidiaRun {
-        NvidiaRun { outcome, from: Some("595.112.07".into()), to: Some("595.120.01".into()), detail: "host driver 595.112.07 → 595.120.01; CT libs: 1/1 updated".into(), log_path: None, took_s: 120, cts: vec![] }
+        NvidiaRun { outcome, from: Some("595.112.07".into()), to: Some("595.120.01".into()), detail: "host driver 595.112.07 → 595.120.01; CT libs: 1/1 updated".into(), log_path: None, took_s: 120, reboot_needed: false, cts: vec![] }
     }
     fn row_of<'a>(b: &'a str, key: &str) -> &'a str {
         b.lines().find(|l| l.starts_with(&format!("| {key} "))).unwrap_or_else(|| panic!("no row {key}:\n{b}"))

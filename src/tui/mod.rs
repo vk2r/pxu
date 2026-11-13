@@ -105,6 +105,35 @@ fn spawn_update<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, canc
     rx
 }
 
+/// Un hilo que reinstala solo las librerías NVIDIA de un CT con la versión del host (host y otros CT intactos). Opt-in propio, retirado al acabar.
+fn spawn_nvidia_ct_libs<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, cancel: &'s AtomicBool, vmid: u32) -> Receiver<Msg> {
+    let (tx, rx) = mpsc::channel();
+    cancel.store(false, Ordering::SeqCst);
+    sc.spawn(move || {
+        let cfg = match Config::load_checked(host) {
+            Ok((c, _)) => c,
+            Err(e) => return drop(tx.send(Msg::UpdFailed(format!("config: {e}")))),
+        };
+        let mut ap = cfg.apprise.clone();
+        ap.apply_env(std::env::var("APPRISE_URLS").ok().as_deref());
+        let inv = guests::load(host);
+        let optin = pxu::share::host::UpdateOptIn::new(host);
+        let tx2 = tx.clone();
+        let res = update::run_nvidia(host, &inv, &cfg, update::nvidia::Mode::CtLibs(vmid), cancel, &mut |e| drop(tx2.send(Msg::Upd(e))));
+        let msg = match res {
+            Ok(rep) => {
+                let notes = update::notify_run(host, &ap, &rep);
+                Msg::UpdDone(rep, notes)
+            }
+            Err(RunError::Locked) => Msg::UpdFailed("another pxu update is running (global lock held)".into()),
+            Err(RunError::Io(e)) => Msg::UpdFailed(e),
+        };
+        drop(optin);
+        let _ = tx.send(msg);
+    });
+    rx
+}
+
 /// Un hilo para la instalación en el host (`repair` = `dpkg --configure -a`). Su opt-in es propio y se retira al acabar.
 fn spawn_host_update<'s>(sc: &'s std::thread::Scope<'s, '_>, host: &'s dyn Host, cancel: &'s AtomicBool, confirmed: Vec<pxu::share::proxmox::hostcheck::HostPkg>, repair: bool) -> Receiver<Msg> {
     use pxu::share::update::hostupdate::{self as hu, HostOutcome};
@@ -596,6 +625,7 @@ pub fn run(host: &dyn Host, force_read_only: bool) -> io::Result<()> {
                         Action::SaveApprise(e) => save_apprise(host, &mut app, &e),
                         Action::TestNotify => trx = Some(spawn_notify_test(sc, host)),
                         Action::Update { only } => rx = Some(spawn_update(sc, host, &ucancel, only)),
+                        Action::NvidiaCtLibs { vmid } => rx = Some(spawn_nvidia_ct_libs(sc, host, &ucancel, vmid)),
                         Action::HostUpdate { confirmed } => rx = Some(spawn_host_update(sc, host, &ucancel, confirmed, false)),
                         Action::HostRepair => rx = Some(spawn_host_update(sc, host, &ucancel, vec![], true)),
                         Action::CancelUpdate => {

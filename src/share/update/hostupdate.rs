@@ -1379,6 +1379,91 @@ mod tests {
         assert!(c.iter().any(|a| a.starts_with("ct134 rm -rf -- /var/lib/pxu-nvidia.")), "the temp dir is removed: {c:#?}");
     }
 
+    /// Entrada manual (`--nvidia-reinstall` o la opción del menú `u`): mismo opt-in de escritura que la corrida de CT, sin `host_nvidia_auto`.
+    fn manual_run(h: &ReadOnlyHost<MockHost>, mode: crate::share::update::nvidia::Mode) -> RunReport {
+        let _ct_optin = UpdateOptIn::new(h);
+        let cfg = Config::load(h).unwrap();
+        let inv = guests::load(h);
+        update::run_nvidia(h, &inv, &cfg, mode, &AtomicBool::new(false), &mut |_| {}).expect("no lock error")
+    }
+
+    #[test]
+    fn nvidia_reinstall_reinstalls_the_host_even_when_the_version_matches_and_the_timer_does_not() {
+        // el índice solo llega a la versión cargada (595.112.07): el timer no hace nada, el modo manual reinstala
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["auto_update = true", "nvidia_auto = true"]));
+        let n0 = h.inner().recorded().len();
+        assert!(timer_run(&h).nvidia.is_none(), "without host_nvidia_auto and with the same version the timer leaves the driver alone");
+        assert!(!argvs(&h, n0).iter().any(|a| a.contains("--dkms")), "{:?}", argvs(&h, n0));
+        let n1 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Reinstall);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (Some("595.112.07"), Some("595.112.07")));
+        let c = all_cmds(&h, n1);
+        assert!(c.iter().any(|a| a.starts_with("host ") && a.contains("--dkms")), "{c:#?}");
+        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "the CT with nvidia_auto gets its libs: {c:#?}");
+        assert!(!nv.reboot_needed && !c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "{c:?}");
+    }
+
+    #[test]
+    fn a_ct_libs_failure_does_not_mark_the_host_driver_as_failed() {
+        let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]).file("/exec/134/nvidia-ct-sha.out", b"deadbeef  x\n"));
+        let rep = timer_run(&h);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "host ok: {}", nv.detail);
+        let ct = nv.cts.iter().find(|c| c.vmid == 134).expect("ct entry");
+        assert_eq!(ct.outcome, Outcome::Failed, "{}", ct.detail);
+        assert!(nv.detail.contains("0/1") && nv.detail.contains("1 failed"), "{}", nv.detail);
+        assert_eq!(rep.exit_code(), update::EXIT_PARTIAL, "a failed CT still fails the run");
+        let b = update::report::body(&rep);
+        let host_row = b.lines().find(|l| l.starts_with("| host")).expect("host row");
+        assert!(host_row.contains("| ✅ ok |") && !host_row.contains("❌"), "{host_row}");
+        assert!(update::report::title(&rep).ends_with("· NVIDIA libs failed"), "{}", update::report::title(&rep));
+    }
+
+    #[test]
+    fn reboot_is_asked_only_when_nvidia_smi_does_not_confirm_the_new_version() {
+        // confirmada: sin aviso
+        let ok = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]));
+        let nv = timer_run(&ok).nvidia.expect("entry");
+        assert!(nv.outcome == Outcome::Ok && !nv.reboot_needed, "{}", nv.detail);
+        // el instalador sale bien pero el módulo nuevo no queda cargado: aviso, host en Warn (no Failed), ningún CT recibe librerías
+        let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]).file("/exec/0/nvidia-install.noeffect", b""));
+        let n0 = h.inner().recorded().len();
+        let rep = timer_run(&h);
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Warn, "{}", nv.detail);
+        assert!(nv.reboot_needed && nv.detail.contains("REBOOT"), "{}", nv.detail);
+        assert!(rep.aborted.is_none(), "not a failure: the run goes on");
+        assert_eq!(nv.cts.iter().find(|c| c.vmid == 134).map(|c| c.outcome), Some(Outcome::Skipped));
+        let c = all_cmds(&h, n0);
+        assert!(!c.iter().any(|a| a.starts_with("ct") && a.contains("--no-kernel-modules")), "{c:#?}");
+        assert!(!c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "pxu never reboots: {c:?}");
+        assert!(update::report::body(&rep).contains("needs a REBOOT"), "{}", update::report::body(&rep));
+    }
+
+    #[test]
+    fn ct_libs_only_touches_that_ct_with_the_host_version() {
+        let nv = "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file";
+        let h = gpu_world(|w| w.ct(crate::share::mock::scenario::Ct::new(136).conf(nv)).ct_config(134, &["nvidia_auto = true"]).ct_config(136, &["nvidia_auto = true"]));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::CtLibs(134));
+        let n = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(n.outcome, Outcome::Skipped, "the host is not touched: {}", n.detail);
+        assert_eq!((n.from.as_deref(), n.to.as_deref()), (Some("595.112.07"), Some("595.112.07")), "the version the host already has");
+        assert_eq!(n.cts.len(), 1);
+        assert_eq!((n.cts[0].vmid, n.cts[0].outcome), (134, Outcome::Ok), "{}", n.cts[0].detail);
+        let c = all_cmds(&h, n0);
+        for bad in ["--dkms", "modprobe", "nvidia-persistenced", "pct stop", "pct shutdown", "ct136", "pct reboot 136", "pct push 136"] {
+            assert!(!c.iter().any(|a| a.contains(bad)), "{bad} in {c:#?}");
+        }
+        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "{c:#?}");
+        assert_eq!(rep.exit_code(), update::EXIT_OK);
+        // un CT sin GPU no entra
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::CtLibs(113));
+        assert_eq!(rep.nvidia.unwrap().outcome, Outcome::Skipped);
+    }
+
     #[test]
     fn nvidia_ct_installer_runs_from_a_fresh_private_dir_and_it_is_removed() {
         let h = gpu_world(|w| w.host_nvidia_auto().ct_config(134, &["auto_update = true", "nvidia_auto = true"]));

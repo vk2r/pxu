@@ -138,6 +138,9 @@ pub fn draw(f: &mut Frame, app: &App, th: &Theme) {
     if app.auto_modal.is_some() {
         draw_auto_modal(f, app, th, area);
     }
+    if app.nvidia_libs.is_some() {
+        draw_nvidia_libs_modal(f, app, th, area);
+    }
     if app.backup_modal.is_some() {
         draw_backup_modal(f, app, th, area);
     }
@@ -1114,7 +1117,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
                 ("C", "read-only check: does not refresh the indexes"),
                 ("v", "show the last check result"),
                 ("o", "choose visible columns (Space toggles; saved in config.toml)"),
-                ("u", "update the visible CTs with updates (asks first): temporary backup, verify, auto-rollback on failure"),
+                ("u", "update the visible CTs with updates (asks first): temporary backup, verify, auto-rollback on failure · a GPU CT with nothing to update (or n in the modal): reinstall its NVIDIA libs only"),
                 ("a", "toggle scheduled auto-update of the CT (asks first); host row: host_auto · host/GPU CT: also the NVIDIA driver checkbox (Space toggles, Enter saves)"),
                 ("b", "toggle the backup before updating the CT (asks first)"),
                 ("g / S", "config view + timer state · S change schedule (asks first)"),
@@ -1528,6 +1531,25 @@ fn draw_auto_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
     }
     lines.push(Line::default());
     lines.push(mbar(th, &[("↑↓", "move"), ("Space", "check"), ("Enter", "save"), ("Esc", "cancel")], 2, w));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_nvidia_libs_modal(f: &mut Frame, app: &App, th: &Theme, area: Rect) {
+    let Some(m) = &app.nvidia_libs else { return };
+    let r = centered(area, 90, 9.min(area.height.saturating_sub(2)));
+    f.render_widget(Clear, r);
+    let blk = Block::default().borders(Borders::ALL).title(Span::styled(" confirm ", th.bold())).border_style(th.accent());
+    let inner = blk.inner(r);
+    f.render_widget(blk, r);
+    let w = inner.width as usize;
+    let v = m.version.as_deref().unwrap_or("the host's");
+    let lines = vec![
+        Line::styled(trunc(&format!(" Reinstall the NVIDIA libs in CT {} {} (driver {v})?", m.vmid, m.name), w), th.bold()),
+        Line::default(),
+        Line::raw(trunc(" Only this CT: the host driver and the other CTs are not touched; the CT is restarted.", w)),
+        Line::default(),
+        mbar(th, &[("y/Enter", "reinstall"), ("Esc/n", "cancel")], 2, w),
+    ];
     f.render_widget(Paragraph::new(lines), inner);
 }
 
