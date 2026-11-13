@@ -9,14 +9,14 @@ use pxu::share::update::{self, nvidia, Event, Outcome, RunReport, Step};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-const TAIL_CAP: usize = 200;
+const TAIL_CAP: usize = 2000;
 /// Ventana para la velocidad de descarga: más corta salta demasiado, más larga tarda en notar un corte.
 const SPEED_WINDOW: Duration = Duration::from_secs(5);
 
@@ -151,6 +151,10 @@ pub struct Live {
     cur: Option<usize>,
     doing: String,
     tail: VecDeque<String>,
+    /// Primera línea visible de `tail` mientras se lee hacia atrás; `None` sigue en vivo.
+    top: Option<usize>,
+    /// Alto útil del recuadro de salida en el último dibujo (para PgUp/PgDn y los límites).
+    view: std::cell::Cell<usize>,
     /// Dónde corre lo que se está viendo: `HOST` o `CT <id>` (lo fija cada orden `$ …`).
     origin: String,
     pub dl: Option<Download>,
@@ -176,7 +180,7 @@ pub enum CtrlC {
 
 impl Live {
     fn new(title: &str, nv: bool) -> Live {
-        Live { title: title.into(), rows: vec![], cur: None, doing: "Starting…".into(), tail: VecDeque::new(), origin: "HOST".into(), dl: None, plan: None, why: None, notice: None, end: None, nv }
+        Live { title: title.into(), rows: vec![], cur: None, doing: "Starting…".into(), tail: VecDeque::new(), top: None, view: std::cell::Cell::new(10), origin: "HOST".into(), dl: None, plan: None, why: None, notice: None, end: None, nv }
     }
     /// `pxu update --host --nvidia-reinstall`: la lista de pasos llega con el `Plan` del motor.
     pub fn nvidia() -> Live {
@@ -349,10 +353,32 @@ impl Live {
         if !l.starts_with("== ") {
             if self.tail.len() >= TAIL_CAP {
                 self.tail.pop_front();
+                // la vista sigue anclada a lo que se lee aunque el buffer descarte la línea más vieja
+                self.top = self.top.map(|t| t.saturating_sub(1));
             }
             let shown = if l.starts_with("$ ") { format!("$ {shown}") } else { shown.to_string() };
             self.tail.push_back(format!("{tag:<14}│ {shown}"));
         }
+    }
+
+    /// Mueve la vista de "Live output". Devuelve `true` si la tecla era de desplazamiento.
+    fn scroll(&mut self, code: crossterm::event::KeyCode) -> bool {
+        use crossterm::event::KeyCode::*;
+        let view = self.view.get().max(1);
+        let max_top = self.tail.len().saturating_sub(view);
+        let cur = self.top.unwrap_or(max_top).min(max_top);
+        let to = match code {
+            Up => cur.saturating_sub(1),
+            Down => cur + 1,
+            PageUp => cur.saturating_sub(view),
+            PageDown => cur + view,
+            Home => 0,
+            End => max_top,
+            _ => return false,
+        };
+        // llegar al fondo (o End) vuelve a seguir en vivo
+        self.top = if to >= max_top || code == End { None } else { Some(to) };
+        true
     }
 
     /// Qué paso corresponde a una orden `$ …` (las del motor: `Grant` y `ct_*`).
@@ -650,7 +676,7 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
             let pct = d.fraction().map_or(String::new(), |x| format!("{:>3.0}% · ", x * 100.0));
             let label = if done { format!("{of} · downloaded") } else { format!("{pct}{of} · {speed} · {eta}") };
             f.render_widget(
-                Gauge::default().block(Block::default().borders(Borders::ALL).title(" Download ")).gauge_style(Style::new().fg(Color::Cyan)).ratio(if done { 1.0 } else { d.fraction().unwrap_or(0.0) }).label(label),
+                Gauge::default().block(Block::default().borders(Borders::ALL).padding(Padding::horizontal(1)).title(" Download ")).gauge_style(Style::new().fg(Color::Cyan)).ratio(if done { 1.0 } else { d.fraction().unwrap_or(0.0) }).label(label),
                 dl,
             );
         }
@@ -659,9 +685,12 @@ pub fn draw(f: &mut Frame, m: &Live, at: Duration) {
     // salida en vivo
     let inner = out.height.saturating_sub(2) as usize;
     let w = out.width.saturating_sub(2) as usize;
-    let skip = m.tail.len().saturating_sub(inner);
-    let lines: Vec<Line> = m.tail.iter().skip(skip).map(|l| Line::raw(l.chars().take(w).collect::<String>())).collect();
-    f.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Live output ")), out);
+    m.view.set(inner);
+    let max_top = m.tail.len().saturating_sub(inner);
+    let skip = m.top.map_or(max_top, |t| t.min(max_top));
+    let title = if m.top.is_some() { format!(" Live output — line {}/{} · End to follow ", (skip + inner).min(m.tail.len()), m.tail.len()) } else { " Live output ".to_string() };
+    let lines: Vec<Line> = m.tail.iter().skip(skip).take(inner).map(|l| Line::raw(l.chars().take(w).collect::<String>())).collect();
+    f.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title).title_bottom(" ↑↓ PgUp/PgDn Home/End: scroll ")), out);
 
     // pie
     let hint = match (&m.notice, &m.end) {
@@ -786,6 +815,7 @@ fn ui_loop(term: &mut ratatui::DefaultTerminal, m: &mut Live, rx: Receiver<Msg>,
                             }
                             CtrlC::Close => return,
                         }
+                    } else if m.scroll(k.code) {
                     } else if m.end.is_some() && matches!(k.code, KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc) {
                         return;
                     }
@@ -848,6 +878,70 @@ mod tests {
         ev(m, 3, Event::Nv(Note::Size(423_000_000)));
         line(m, 3, 0, "download size: 423000000 bytes");
         line(m, 4, 0, "$ curl -fsSL --proto =https --retry 3 --max-time 3600 -o /var/lib/pxu-nvidia/NVIDIA-Linux-x86_64-595.112.07.run https://download.nvidia.com/…");
+    }
+
+    fn fill(m: &mut Live, n: usize) {
+        for i in 0..n {
+            line(m, 5, 0, &format!("row-{i:04}"));
+        }
+    }
+
+    #[test]
+    fn scrolling_up_and_down_stays_within_the_buffer() {
+        use crossterm::event::KeyCode::*;
+        let mut m = Live::new("t", false);
+        fill(&mut m, 50);
+        m.view.set(10);
+        assert!(!m.scroll(Char('x')));
+        assert!(m.scroll(Up));
+        assert_eq!(m.top, Some(39));
+        assert!(m.scroll(PageUp));
+        assert_eq!(m.top, Some(29));
+        m.scroll(Home);
+        m.scroll(Up);
+        assert_eq!(m.top, Some(0), "no se pasa por arriba");
+        m.scroll(PageDown);
+        assert_eq!(m.top, Some(10));
+        m.scroll(Down);
+        assert_eq!(m.top, Some(11));
+        m.scroll(End);
+        assert_eq!(m.top, None);
+        m.scroll(Down);
+        assert_eq!(m.top, None, "no se pasa por abajo");
+        m.scroll(Up);
+        m.scroll(PageDown);
+        assert_eq!(m.top, None, "bajar hasta el fondo vuelve a seguir en vivo");
+    }
+
+    #[test]
+    fn the_view_stays_put_when_new_lines_arrive() {
+        use crossterm::event::KeyCode::*;
+        let mut m = Live::new("t", false);
+        fill(&mut m, 50);
+        render(&m, 5);
+        m.scroll(Home);
+        m.scroll(PageDown);
+        let before = render(&m, 5);
+        assert!(before.contains("End to follow"), "{before}");
+        fill(&mut m, 20);
+        assert_eq!(render(&m, 5), before.replace("/50", "/70"));
+        m.scroll(End);
+        assert!(render(&m, 7).contains("row-0019"));
+    }
+
+    #[test]
+    fn a_full_buffer_keeps_the_anchor() {
+        use crossterm::event::KeyCode::*;
+        let mut m = Live::new("t", false);
+        fill(&mut m, TAIL_CAP);
+        m.view.set(10);
+        m.scroll(Home);
+        m.scroll(PageDown);
+        let top = m.tail[m.top.unwrap()].clone();
+        fill(&mut m, 5);
+        assert_eq!(m.tail[m.top.unwrap()], top);
+        fill(&mut m, TAIL_CAP);
+        assert_eq!(m.top, Some(0), "la línea anclada ya se descartó: se queda en lo más viejo");
     }
 
     #[test]
