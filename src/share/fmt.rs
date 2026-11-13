@@ -24,6 +24,12 @@ pub fn clean(s: &str) -> String {
         .collect()
 }
 
+/// Una línea con `\r` (barra de progreso que se redibuja en el mismo sitio) se queda con su último estado: cada `\r` descarta lo anterior.
+pub fn last_redraw(s: &str) -> &str {
+    let s = s.trim_end_matches(['\r', '\n']);
+    s.rsplit('\r').find(|p| !p.trim().is_empty()).unwrap_or(s)
+}
+
 /// Oculta `usuario:clave@` en URLs (`https://user:pass@host` → `https://***@host`) antes de guardar un log.
 pub fn mask_url_creds(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -84,6 +90,15 @@ pub fn upd(n: usize, sec: usize, checked: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_progress_bar_redrawn_with_cr_keeps_only_its_last_state() {
+        let l = "  [                              ]   0%\r  [###############               ]  50%\r  [##############################] 100%\r";
+        assert_eq!(last_redraw(l), "  [##############################] 100%");
+        assert_eq!(last_redraw("plain line"), "plain line");
+        assert_eq!(last_redraw(""), "");
+        assert_eq!(last_redraw("a\r\r"), "a");
+    }
 
     #[test]
     fn clean_strips_terminal_escapes() {

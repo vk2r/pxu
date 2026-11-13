@@ -466,6 +466,12 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
         _ => format!("host {cur} ({flavor}) → {target} (libs only: host already current)"),
     };
     c.cx.say(&format!("pxu NVIDIA driver update · {} · {what}", stamp(started_at)));
+    // un CT con GPU que no recibe librerías lo dice explícitamente (panel y log), también si está apagado
+    if !matches!(mode, Mode::CtLibs(_)) {
+        for g in gpu_cts.iter().filter(|g| !libs_cts.contains(&g.vmid)) {
+            c.cx.say(&skipped_libs_line(g.vmid, &g.name, cfg.nvidia_auto(g.vmid), lxc_running(host, g.vmid)));
+        }
+    }
     let named = |ids: &[u32]| -> Vec<(u32, String)> { ids.iter().map(|&id| (id, inv.guests.iter().find(|g| g.vmid == id).map(|g| g.name.clone()).unwrap_or_default())).collect() };
     (c.cx.ev)(Event::Nv(Note::Plan(Plan { from: cur.clone(), to: target.clone(), host: host_needs, stop: named(&stop_cts), libs: named(&libs_cts) })));
     // El permiso se deriva de las opciones del usuario y vale solo mientras dura este paso.
@@ -475,6 +481,13 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     let (outcome, detail) = res;
     let run = finish(&mut c, outcome, detail);
     Some((run, stop))
+}
+
+/// `CT 129 (llama-swap): no libraries (nvidia_auto = false)`: por qué un CT con GPU no recibe las librerías del driver.
+fn skipped_libs_line(vmid: u32, name: &str, auto: bool, running: bool) -> String {
+    let why = if auto { "already at the target version" } else { "nvidia_auto = false" };
+    let name = if name.is_empty() { String::new() } else { format!(" ({name})") };
+    format!("CT {vmid}{name}: no libraries ({why}{})", if running { "" } else { "; CT is stopped" })
 }
 
 fn argv(v: &[String]) -> Vec<&str> {
@@ -779,6 +792,13 @@ mod tests {
     use super::*;
 
     const HTML: &str = "<html><body><a href='../'>../</a>\n<span class='dir'><a href='590.48.01/'>590.48.01/</a></span>\n<span class='dir'><a href='595.58.03/'>595.58.03/</a></span>\n<span class='dir'><a href='595.80/'>595.80/</a></span>\n<span class='dir'><a href='595.112.07/'>595.112.07/</a></span>\n<span class='dir'><a href='596.10.01/'>596.10.01/</a></span>\n<a href='latest.txt'>latest.txt</a>\n<a href='1.0-9746/'>x</a>\n<a href=\"595.112.07/\">dup double quotes</a></body></html>";
+
+    #[test]
+    fn a_gpu_ct_without_libs_gets_an_explicit_line_with_the_reason() {
+        assert_eq!(skipped_libs_line(129, "llama-swap", false, true), "CT 129 (llama-swap): no libraries (nvidia_auto = false)");
+        assert_eq!(skipped_libs_line(120, "", false, false), "CT 120: no libraries (nvidia_auto = false; CT is stopped)");
+        assert_eq!(skipped_libs_line(7, "x", true, true), "CT 7 (x): no libraries (already at the target version)");
+    }
 
     #[test]
     fn index_lists_numeric_version_dirs_sorted_and_deduped() {

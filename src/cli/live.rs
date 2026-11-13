@@ -151,6 +151,8 @@ pub struct Live {
     cur: Option<usize>,
     doing: String,
     tail: VecDeque<String>,
+    /// Dónde corre lo que se está viendo: `HOST` o `CT <id>` (lo fija cada orden `$ …`).
+    origin: String,
     pub dl: Option<Download>,
     plan: Option<nvidia::Plan>,
     /// Primer `!! motivo` del motor: es lo que se muestra como causa si algo falla.
@@ -174,7 +176,7 @@ pub enum CtrlC {
 
 impl Live {
     fn new(title: &str, nv: bool) -> Live {
-        Live { title: title.into(), rows: vec![], cur: None, doing: "Starting…".into(), tail: VecDeque::new(), dl: None, plan: None, why: None, notice: None, end: None, nv }
+        Live { title: title.into(), rows: vec![], cur: None, doing: "Starting…".into(), tail: VecDeque::new(), origin: "HOST".into(), dl: None, plan: None, why: None, notice: None, end: None, nv }
     }
     /// `pxu update --host --nvidia-reinstall`: la lista de pasos llega con el `Plan` del motor.
     pub fn nvidia() -> Live {
@@ -311,7 +313,13 @@ impl Live {
     }
 
     fn line(&mut self, at: Duration, vmid: u32, l: &str) {
+        let mut tag = self.origin.clone();
+        let mut shown = l;
         if let Some(cmd) = l.strip_prefix("$ ") {
+            let (o, t, body) = origin_of(cmd);
+            self.origin = o;
+            tag = t;
+            shown = body;
             if self.nv {
                 if let Some(k) = self.classify(vmid, cmd) {
                     if let Some(i) = self.row_of(k) {
@@ -342,7 +350,8 @@ impl Live {
             if self.tail.len() >= TAIL_CAP {
                 self.tail.pop_front();
             }
-            self.tail.push_back(l.to_string());
+            let shown = if l.starts_with("$ ") { format!("$ {shown}") } else { shown.to_string() };
+            self.tail.push_back(format!("{tag:<14}│ {shown}"));
         }
     }
 
@@ -442,6 +451,23 @@ impl Live {
     fn states(&self) -> Vec<St> {
         self.rows.iter().map(|r| r.st).collect()
     }
+}
+
+/// De una orden `$ …` del motor: dónde corre (`HOST` o `CT <id>`), la etiqueta de su línea y la orden sin el prefijo `[CT n]`.
+/// `pct shutdown|start|stop <id>` corre en el HOST pero actúa sobre el CT: la etiqueta lo dice (`HOST → CT 129`) y lo que sigue sigue siendo HOST.
+fn origin_of(cmd: &str) -> (String, String, &str) {
+    if let Some(rest) = cmd.strip_prefix("[CT ") {
+        if let Some((id, body)) = rest.split_once("] ") {
+            if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+                let o = format!("CT {id}");
+                return (o.clone(), o, body);
+            }
+        }
+    }
+    let mut t = cmd.split_whitespace();
+    let target = (t.next() == Some("pct")).then(|| t.skip(1).find(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()))).flatten();
+    let tag = target.map_or("HOST".to_string(), |id| format!("HOST → CT {id}"));
+    ("HOST".into(), tag, cmd)
 }
 
 fn ids(v: &[(u32, String)]) -> String {
@@ -930,6 +956,52 @@ mod tests {
         ev(&mut m, 590, Event::Nv(Note::Ct { vmid: 101, outcome: Outcome::Ok, detail: "libs 595.112.07 installed, CT restarted".into() }));
         line(&mut m, 600, 103, "$ [CT 103] df -Pk /var/lib");
         assert!(render(&m, 601).contains("CT 103: checking free space in the container."));
+    }
+
+    #[test]
+    fn every_block_says_whether_it_runs_on_the_host_or_in_a_ct() {
+        let mut m = Live::nvidia();
+        line(&mut m, 1, 0, "$ pct shutdown 129 --timeout 60");
+        line(&mut m, 2, 0, "$ sh /var/lib/pxu-nvidia/NVIDIA-Linux-x86_64-595.112.07.run --no-questions --dkms");
+        line(&mut m, 3, 0, "Welcome to the NVIDIA Software Installer for Unix/Linux");
+        line(&mut m, 4, 129, "$ [CT 129] sh /var/lib/x/nvidia.run --no-kernel-modules");
+        line(&mut m, 5, 129, "Installing driver");
+        line(&mut m, 6, 129, "$ pct start 129");
+        line(&mut m, 7, 129, "started");
+        let t: Vec<&str> = m.tail.iter().map(String::as_str).collect();
+        assert!(t[0].starts_with("HOST → CT 129") && t[0].ends_with("$ pct shutdown 129 --timeout 60"), "{t:?}");
+        assert!(t[1].starts_with("HOST ") && t[1].contains("$ sh /var/lib/pxu-nvidia/"), "{t:?}");
+        assert!(t[2].starts_with("HOST ") && t[2].ends_with("Welcome to the NVIDIA Software Installer for Unix/Linux"), "{t:?}");
+        assert!(t[3].starts_with("CT 129 ") && t[3].ends_with("$ sh /var/lib/x/nvidia.run --no-kernel-modules") && !t[3].contains("[CT 129]"), "{t:?}");
+        assert!(t[4].starts_with("CT 129 ") && t[4].ends_with("Installing driver"), "{t:?}");
+        assert!(t[5].starts_with("HOST → CT 129"), "{t:?}");
+        assert!(t[6].starts_with("HOST ") && !t[6].starts_with("HOST →"), "{t:?}");
+        // la │ cae en la misma columna (en caracteres) para las tres etiquetas
+        let cols: Vec<usize> = t.iter().map(|l| l.chars().position(|c| c == '│').unwrap()).collect();
+        assert!(cols.iter().all(|&c| c == cols[0]), "{cols:?}\n{t:?}");
+    }
+
+    #[test]
+    fn the_separator_column_fits_a_four_digit_ct_id() {
+        let mut m = Live::nvidia();
+        line(&mut m, 1, 0, "$ pct shutdown 1234");
+        line(&mut m, 2, 0, "$ modprobe -r nvidia");
+        line(&mut m, 3, 1234, "$ [CT 1234] nvidia-smi");
+        let cols: Vec<usize> = m.tail.iter().map(|l| l.chars().position(|c| c == '│').unwrap()).collect();
+        assert!(m.tail[0].starts_with("HOST → CT 1234│"), "{:?}", m.tail);
+        assert!(cols.iter().all(|&c| c == cols[0]), "{cols:?}");
+    }
+
+    #[test]
+    fn the_skipped_ct_line_and_a_redrawn_progress_bar_reach_the_panel_clean() {
+        let mut m = Live::nvidia();
+        line(&mut m, 1, 0, "CT 129 (llama-swap): no libraries (nvidia_auto = false)");
+        // lo que llega ya pasó por el motor: solo el último estado de la barra
+        let bar = pxu::share::fmt::last_redraw("[                              ]   0%\r[#                             ]   0%\r[##############################] 100%\r");
+        line(&mut m, 2, 0, bar);
+        let t = m.tail.iter().cloned().collect::<Vec<_>>().join("\n");
+        assert!(t.contains("CT 129 (llama-swap): no libraries (nvidia_auto = false)"), "{t}");
+        assert!(t.ends_with("│ [##############################] 100%") && !t.contains("  0%"), "{t}");
     }
 
     fn ok_summary() -> Summary {

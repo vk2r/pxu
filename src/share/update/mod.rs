@@ -318,7 +318,7 @@ struct Ctx<'a> {
 
 impl LineSink for Ctx<'_> {
     fn line(&mut self, l: &str) {
-        let l = crate::share::fmt::clean(l);
+        let l = crate::share::fmt::clean(crate::share::fmt::last_redraw(l));
         self.say(&l);
         // A-04: la captura también tiene tope (el host ya recorta, pero un host/mocks distinto no debe poder crecer sin límite)
         if self.capture.len() < crate::share::host::MAX_OUTPUT_LINES + 1 {
@@ -330,7 +330,7 @@ impl LineSink for Ctx<'_> {
 impl Ctx<'_> {
     fn say(&mut self, l: &str) {
         // Frontera de confianza: lo que dice un CT nunca llega crudo a la TUI, al log ni a los avisos.
-        let l = crate::share::fmt::mask_url_creds(&crate::share::fmt::clean(l.trim_end_matches(['\r', '\n'])));
+        let l = crate::share::fmt::mask_url_creds(&crate::share::fmt::clean(crate::share::fmt::last_redraw(l)));
         let l = l.as_str();
         if self.log.len() >= LOG_CAP {
             self.dropped += 1;
