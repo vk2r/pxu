@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "pxu"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "crossterm",
  "lexopt",
