@@ -8,6 +8,20 @@ fn stub(dir: &std::path::Path, name: &str, body: &str) {
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// Herramientas del sistema que `install.sh` usa: el PATH del test solo ve estas (enlazadas), nunca un `gh` o `curl` reales del equipo.
+const SYSTEM_TOOLS: &[&str] = &[
+    "sh", "awk", "basename", "cat", "chmod", "cut", "dirname", "grep", "gzip", "head", "id", "install", "ln", "mkdir", "mktemp", "mv", "readlink", "rm", "sed", "sha256sum", "tar", "tr", "uname",
+];
+
+/// Enlaza en `bin` las herramientas de `SYSTEM_TOOLS` que existan en /usr/bin o /bin.
+fn link_system_tools(bin: &std::path::Path) {
+    for name in SYSTEM_TOOLS {
+        if let Some(src) = ["/usr/bin", "/bin"].iter().map(|d| std::path::Path::new(d).join(name)).find(|p| p.exists()) {
+            std::os::unix::fs::symlink(src, bin.join(name)).unwrap();
+        }
+    }
+}
+
 /// Corre `install.sh --release v9.9.9` con un curl que "descarga" archivos válidos de SHA-256 y el `gh` indicado (None = sin gh).
 fn run(tag: &str, gh: Option<&str>, skip: bool) -> (bool, String, bool) {
     let base = std::env::temp_dir().join(format!("pxu-ins-{tag}-{}", std::process::id()));
@@ -15,14 +29,15 @@ fn run(tag: &str, gh: Option<&str>, skip: bool) -> (bool, String, bool) {
     let (bin, root) = (base.join("bin"), base.join("root"));
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(&root).unwrap();
+    link_system_tools(&bin);
     let h = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"; // sha256("x")
     stub(&bin, "curl", &format!(r#"while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
 case "$out" in */SHA256SUMS) echo "{h}  pxu-9.9.9-x86_64-linux.tar.gz" > "$out";; */provenance*) echo '{{}}' > "$out";; *) printf x > "$out";; esac"#));
     if let Some(body) = gh {
         stub(&bin, "gh", body);
     }
-    let mut c = Command::new("sh");
-    c.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh")).args(["--release", "v9.9.9"]).env("DESTDIR", &root).env("PATH", format!("{}:/usr/bin:/bin", bin.display())).env_remove("PXU_SKIP_ATTESTATION");
+    let mut c = Command::new("/bin/sh");
+    c.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh")).args(["--release", "v9.9.9"]).env("DESTDIR", &root).env("PATH", &bin).env_remove("PXU_SKIP_ATTESTATION");
     if skip {
         c.env("PXU_SKIP_ATTESTATION", "1");
     }
