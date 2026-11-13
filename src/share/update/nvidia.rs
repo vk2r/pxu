@@ -21,7 +21,7 @@ use crate::share::proxmox::guests::{lxc_running, Inventory};
 use crate::share::proxmox::hostcheck;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
@@ -104,6 +104,20 @@ pub fn parse_index(html: &str) -> Vec<String> {
 pub fn newest_in_branch(versions: &[String], current: &str) -> Option<String> {
     let m = major(current)?;
     versions.iter().filter(|v| major(v) == Some(m) && version_cmp(v, current) == Ordering::Greater).max_by(|a, b| version_cmp(a, b)).cloned()
+}
+
+/// La rama mayor MÁS NUEVA que `current` cuya versión más alta pasa `supports` (p. ej. «la GPU del host está en su supportedchips»): de las ramas
+/// mayores > la actual se prueba la mejor versión de cada una, de la rama más alta a la más baja, y se devuelve la primera que `supports` acepta.
+pub fn newest_major(versions: &[String], current: &str, mut supports: impl FnMut(&str) -> bool) -> Option<String> {
+    let m = major(current)?;
+    let mut best: BTreeMap<u64, &String> = BTreeMap::new();
+    for v in versions.iter().filter(|v| major(v).is_some_and(|x| x > m)) {
+        let x = major(v)?;
+        if best.get(&x).is_none_or(|b| version_cmp(v, b) == Ordering::Greater) {
+            best.insert(x, v);
+        }
+    }
+    best.values().rev().find(|v| supports(v)).map(|v| (*v).clone())
 }
 
 /// `open` si el módulo cargado es el de código abierto (`NVIDIA UNIX Open Kernel Module`); si no, `proprietary`.
@@ -475,6 +489,9 @@ pub enum Mode {
     /// `pxu update --host --nvidia` (solo a mano), sin exigir `host_nvidia_auto`: con el driver `.run` cargado lo reinstala aunque la versión ya coincida;
     /// sin driver en el host lo instala desde cero.
     Nvidia,
+    /// `pxu update --host --nvidia` tras decir que SÍ en la ventana del salto de rama: sube a la versión más alta de esa rama mayor (> la actual),
+    /// con la comprobación de GPU en modo estricto (sin poder confirmarla, no se toca nada). Nunca lo usan el timer ni una corrida sin terminal.
+    Branch(u64),
     /// Menú `u` de la TUI: reinstala las librerías del driver, con la versión del host, en ESTE CT. El host y los demás CT no se tocan.
     CtLibs(u32),
 }
@@ -524,11 +541,26 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
             Ok(e) => return skip(&format!("skipped: cannot read the NVIDIA index (curl exit {})", e.code)),
             Err(e) => return skip(&format!("skipped: cannot read the NVIDIA index: {e}")),
         };
-        newest_in_branch(&versions, &cur)
+        match mode {
+            // el salto de rama lo pidió una persona: la versión más alta de ESA rama, que debe ser mayor que la actual
+            Mode::Branch(m) => match versions.iter().filter(|v| major(v) == Some(m)).max_by(|a, b| version_cmp(a, b)).filter(|_| Some(m) > major(&cur)) {
+                Some(v) => Some(v.clone()),
+                None => return skip(&format!("skipped: no driver in branch {m}.x newer than {cur} in the NVIDIA index; nothing was changed")),
+            },
+            _ => {
+                // el timer (o cualquier corrida sin ventana) NUNCA salta de rama: solo lo deja dicho en el log
+                if mode == Mode::Scheduled {
+                    if let Some(n) = newest_major(&versions, &cur, |_| true) {
+                        ev(Event::Line(0, branch_note(&n)));
+                    }
+                }
+                newest_in_branch(&versions, &cur)
+            }
+        }
     };
     let host_needs = match mode {
         Mode::Scheduled => newest.is_some(),
-        Mode::Nvidia => true,
+        Mode::Nvidia | Mode::Branch(_) => true,
         Mode::CtLibs(_) => false,
     };
     let target = picked.or_else(|| newest.clone()).unwrap_or_else(|| cur.clone());
@@ -581,6 +613,53 @@ pub fn run_mode(host: &dyn Host, inv: &Inventory, cfg: &Config, mode: Mode, rebo
     let (outcome, detail) = res;
     let run = finish(&mut c, outcome, detail);
     Some((run, stop))
+}
+
+/// Línea de log de la corrida programada cuando existe una rama mayor más nueva (nunca salta sola).
+pub fn branch_note(newest: &str) -> String {
+    let m = major(newest).unwrap_or_default();
+    format!("NVIDIA driver: a newer driver branch {m}.x exists ({newest}); pxu never changes branch by itself: run `pxu update --host --nvidia --yes` to upgrade")
+}
+
+/// Salto de rama que se ofrece en la ventana de `--nvidia`: versión actual, versión nueva (la más alta de su rama) y sabor del módulo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchOffer {
+    pub from: String,
+    pub to: String,
+    pub flavor: &'static str,
+}
+
+/// ¿Hay una rama mayor más nueva que el driver `.run` cargado y que SOPORTE la GPU del host? Solo lecturas (lspci, índice y `supportedchips`, sin opt-in).
+/// `None` = no hay oferta (sin driver `.run`, sin red, sin GPU legible o ninguna rama nueva la lista): la corrida sigue como siempre.
+pub fn branch_offer(host: &dyn Host, cfg: &Config) -> Option<BranchOffer> {
+    let (cur, flavor) = host_driver(host)?;
+    if !host.exists(Path::new(UNINSTALL)) {
+        return None;
+    }
+    let o = quick(cfg);
+    let mut out: Vec<String> = Vec::new();
+    let ids = match host.host_cmd(hostcheck::LSPCI, &o, &mut out) {
+        Ok(e) if e.code == 0 => host_nvidia_ids(&out.join("\n")),
+        _ => return None,
+    };
+    // el módulo abierto no sirve para una GPU anterior a Turing
+    if ids.is_empty() || (flavor == "open" && flavor_for_ids(&ids) != "open") {
+        return None;
+    }
+    let mut idx: Vec<String> = Vec::new();
+    let versions = match host.host_cmd(INDEX_CURL, &o, &mut idx) {
+        Ok(e) if e.code == 0 => parse_index(&idx.join("\n")),
+        _ => return None,
+    };
+    let po = ExecOpts { timeout_s: Some(CHIPS_PROBE_S), env: vec![("LC_ALL".into(), "C".into())], ..Default::default() };
+    let to = newest_major(&versions, &cur, |v| {
+        let mut page: Vec<String> = Vec::new();
+        matches!(host.host_cmd(&argv(&chips_curl(v)), &po, &mut page), Ok(e) if e.code == 0) && {
+            let ok = parse_supported_ids(&page.join("\n"));
+            !ok.is_empty() && ids.iter().all(|i| ok.contains(i))
+        }
+    })?;
+    Some(BranchOffer { from: cur, to, flavor })
 }
 
 /// Instalación desde cero: la GPU NVIDIA del host (`lspci`) y la versión MÁS NUEVA del índice cuyo `supportedchips` la lista. Solo lecturas (sin opt-in).
@@ -667,7 +746,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
     // ---- ¿la versión nueva soporta TODAS las GPUs del host? Antes de bajar el `.run`; si la lista no está disponible se avisa y se sigue
     // (una instalación desde cero ya eligió la versión por esa lista)
     if host_needs && !g.fresh {
-        if let Err(why) = check_gpu_support(c, g, &q) {
+        if let Err(why) = check_gpu_support(c, g, &q, matches!(mode, Mode::Branch(_))) {
             return fail(c, why);
         }
     }
@@ -819,38 +898,45 @@ fn fresh_setup(c: &mut Cx, g: &Grant) -> Option<Res> {
 }
 
 /// `Err` solo si una GPU NVIDIA de video del host NO está en la lista de `version`; sin lista legible o sin GPUs que comprobar, avisa y sigue.
-fn check_gpu_support(c: &mut Cx, g: &Grant, q: &ExecOpts) -> Result<(), String> {
-    let ids = match c.cx.host_cmd(hostcheck::LSPCI, q) {
-        Ok(0) => host_nvidia_ids(&c.cx.capture.join("\n")),
-        r => {
-            c.cx.say(&format!("warning: cannot read the GPU list (lspci: {}); the supported-GPU check was skipped", describe(&r)));
-            return Ok(());
+/// Con `strict` (salto de rama mayor) NADA se da por bueno: sin GPU, sin lista legible o con un módulo `open` que no sirve para la GPU, falla sin tocar nada.
+fn check_gpu_support(c: &mut Cx, g: &Grant, q: &ExecOpts, strict: bool) -> Result<(), String> {
+    let version = g.version.as_str();
+    // en modo estricto, el motivo de no poder confirmar; si no, un aviso y se sigue
+    let unconfirmed = |c: &mut Cx, what: String| -> Result<(), String> {
+        if strict {
+            Err(format!("cannot confirm that the GPU is supported by {version}: {what}; nothing was downloaded or installed"))
+        } else {
+            c.cx.say(&format!("warning: {what}; the supported-GPU check was skipped"));
+            Ok(())
         }
     };
+    let ids = match c.cx.host_cmd(hostcheck::LSPCI, q) {
+        Ok(0) => host_nvidia_ids(&c.cx.capture.join("\n")),
+        r => return unconfirmed(c, format!("cannot read the GPU list (lspci: {})", describe(&r))),
+    };
     if ids.is_empty() {
-        c.cx.say("warning: no NVIDIA video GPU found in lspci; the supported-GPU check was skipped");
-        return Ok(());
+        return unconfirmed(c, "no NVIDIA video GPU found in lspci".into());
     }
-    let (version, url) = (g.version.as_str(), chips_url(&g.version));
+    // el módulo abierto de NVIDIA no soporta GPUs anteriores a Turing
+    if strict && g.flavor == "open" && flavor_for_ids(&ids) != "open" {
+        return Err(format!("the open kernel module does not support every GPU of this host (a pre-Turing one is present); not changing to {version}; nothing was downloaded or installed"));
+    }
+    let url = chips_url(version);
     let path = chips_path(version);
     let html = match c.cx.host_cmd(&argv(&g.fetch_chips()), q) {
         Ok(0) => match c.cx.host.read_file(Path::new(&path)) {
             Ok(b) => String::from_utf8_lossy(&b).into_owned(),
             Err(e) => {
-                c.cx.say(&format!("warning: cannot read the downloaded {url} ({e}); the supported-GPU check was skipped"));
+                unconfirmed(c, format!("cannot read the downloaded {url} ({e})"))?;
                 String::new()
             }
         },
-        r => {
-            c.cx.say(&format!("warning: cannot download {url} ({}); the supported-GPU check was skipped", describe(&r)));
-            return Ok(());
-        }
+        r => return unconfirmed(c, format!("cannot download {url} ({})", describe(&r))),
     };
     let _ = c.cx.host.remove_file(Path::new(&path));
     let supported = parse_supported_ids(&html);
     if supported.is_empty() {
-        c.cx.say(&format!("warning: {url} has no GPU rows; the supported-GPU check was skipped"));
-        return Ok(());
+        return unconfirmed(c, format!("{url} has no GPU rows"));
     }
     let missing: Vec<&String> = ids.iter().filter(|i| !supported.contains(*i)).collect();
     if !missing.is_empty() {
@@ -1104,6 +1190,17 @@ mod tests {
     fn sha_parses_the_real_two_space_format() {
         let real = "8c0d4f967b7932c4ab5714272aee8103392b0a702c92afa555176d36205829f9  NVIDIA-Linux-x86_64-595.58.03.run\n";
         assert_eq!(parse_sha(real, "NVIDIA-Linux-x86_64-595.58.03.run").as_deref(), Some("8c0d4f967b7932c4ab5714272aee8103392b0a702c92afa555176d36205829f9"));
+    }
+
+    #[test]
+    fn newest_major_picks_the_best_version_of_the_highest_supported_newer_branch() {
+        let v: Vec<String> = ["590.48.01", "595.58.03", "595.112.07", "600.10.01", "600.12.01", "610.1.02"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(newest_major(&v, "610.1.02", |_| true), None, "no branch above the current one");
+        assert_eq!(newest_major(&v, "garbage", |_| true), None);
+        assert_eq!(newest_major(&v, "595.58.03", |_| true).as_deref(), Some("610.1.02"), "the highest branch wins");
+        assert_eq!(newest_major(&v, "590.48.01", |x| x.starts_with("600")).as_deref(), Some("600.12.01"), "the newest branch that lists the GPU, and its best version");
+        assert_eq!(newest_major(&v, "595.58.03", |_| false), None, "the GPU is not supported by any newer branch");
+        assert_eq!(newest_major(&v, "595.58.03", |x| x.starts_with("595")), None, "the same branch is not a jump");
     }
 
     #[test]

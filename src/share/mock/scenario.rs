@@ -700,7 +700,7 @@ impl World {
     // ---- servidores predefinidos (demo del binario `--mock` y tests que necesitan "un servidor poblado") ----
 
     pub fn preset_names() -> &'static [&'static str] {
-        &["demo", "demo-scheduled", "update-ok", "update-fail", "distros", "cluster", "failures", "vms", "host", "host-nvidia", "host-nvidia-fresh"]
+        &["demo", "demo-scheduled", "update-ok", "update-fail", "distros", "cluster", "failures", "vms", "host", "host-nvidia", "host-nvidia-fresh", "host-nvidia-branch"]
     }
 
     pub fn preset(name: &str) -> Option<World> {
@@ -712,6 +712,8 @@ impl World {
             // host GPU con el driver instalado con el .run y la lista de versiones: para la captura de `update --host --nvidia`
             "host-nvidia" => World::host_gpu().nvidia_run_driver(&["595.112.07"]).line_delay_ms(120).file("/lib/modules/6.17.9-1-pve/build/.keep", b"").file("/exec/0/nvidia-download.slow", b"423000000").file("/exec/0/nvidia-head.out", b"HTTP/1.1 200 OK\nContent-Length: 423000000\n").file("/exec/0/nvidia-sha.out", b"9f92a1398253d66ef008599b8ecdc1c67b4f99de856c4cd0acef3e0be56221fb  NVIDIA-Linux-x86_64-595.112.07.run\n").file("/exec/0/nvidia-sha256sum.out", b"9f92a1398253d66ef008599b8ecdc1c67b4f99de856c4cd0acef3e0be56221fb  /var/lib/pxu-nvidia/nvidia.run\n").file("/exec/134/nvidia-ct-sha.out", b"9f92a1398253d66ef008599b8ecdc1c67b4f99de856c4cd0acef3e0be56221fb  /nvidia.run\n").file("/exec/135/nvidia-ct-sha.out", b"9f92a1398253d66ef008599b8ecdc1c67b4f99de856c4cd0acef3e0be56221fb  /nvidia.run\n").file("/exec/0/nvidia-chips.out", b"<tr id=\"devid24B0\"><td>RTX A4000</td></tr>\n"),
             // host GPU sin driver NVIDIA (ni cabeceras del kernel): `update --host --nvidia` lo instala desde cero
+            // como `host-nvidia`, con una rama mayor más nueva (600.x) en el índice; los hashes salen de los valores por defecto del mock (el nombre del `.run` cambia)
+            "host-nvidia-branch" => World::preset("host-nvidia")?.nvidia_run_driver(&["595.112.07", "600.12.01"]).without_file("/exec/0/nvidia-sha.out").without_file("/exec/0/nvidia-sha256sum.out").without_file("/exec/134/nvidia-ct-sha.out").without_file("/exec/135/nvidia-ct-sha.out"),
             "host-nvidia-fresh" => World::preset("host-nvidia")?.without_file("/proc/driver/nvidia/version").without_file("/usr/bin/nvidia-uninstall").without_file("/lib/modules/6.17.9-1-pve/build/.keep"),
             "update-ok" => World::new()
                 .ct(Ct::new(401).tags("auto").std_updates().checked_minutes_ago(5))

@@ -10,7 +10,11 @@ command -v freeze >/dev/null || { echo "falta freeze (mise install)"; exit 1; }
 [ -x "$BIN" ] || { echo "falta $BIN (mise run mock)"; exit 1; }
 
 shot() { # nombre: captura el panel con colores y lo pasa a PNG
-  $S capture-pane -ep -t 0 | freeze --language ansi --config user --theme dracula --font.family "JetBrainsMono Nerd Font" \
+  # freeze recorta la imagen a la línea más larga: se rellena cada línea al ancho del panel para no perder el centrado
+  $S capture-pane -ep -t 0 | python3 -c 'import re,sys
+for l in sys.stdin.read().split("\n"):
+    l = l.replace("\x1b[39m", "\x1b[0m")  # freeze deja gris el borde que sigue a un texto atenuado
+    print(l + " " * max(0, 120 - len(re.sub(r"\x1b\[[0-9;]*m", "", l))))' | freeze --language ansi --config user --theme dracula --font.family "JetBrainsMono Nerd Font" \
     --font.size 14 --line-height 1.2 --padding 20 --margin 0 --window=false --border.radius 8 -o "$OUT/$1.png" >/dev/null
   # opcional: paleta reducida (PNG8) para que cada captura pese ~10x menos; el texto sigue nítido
   if command -v magick >/dev/null; then magick "$OUT/$1.png" -colors 96 -define png:compression-level=9 "PNG8:$OUT/$1.png"; fi
@@ -39,3 +43,5 @@ keys Enter; shot 10-notifications-confirm
 run demo-scheduled; keys S; shot 11-schedule
 # 12: `pxu update --host --nvidia --yes` (mini TUI «Live output» a media descarga, con la barra de progreso; caso mock host-nvidia)
 run "host-nvidia update --host --nvidia --yes"; sleep 2; shot 12-nvidia
+# 13: ventana del salto de rama mayor de `pxu update --host --nvidia --yes` (caso mock host-nvidia-branch: 595.x instalado, 600.x en el índice)
+run "host-nvidia-branch update --host --nvidia --yes"; sleep 1; shot 13-nvidia-branch

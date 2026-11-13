@@ -792,6 +792,88 @@ impl Ui {
     }
 }
 
+/// Respuesta de la ventana del salto de rama mayor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchAnswer {
+    Yes,
+    No,
+    /// Ctrl-C o terminal cerrado: no se hace nada, ni siquiera el apt.
+    Abort,
+}
+
+/// «600» de `600.12.01`.
+fn branch_of(o: &nvidia::BranchOffer) -> String {
+    nvidia::major(&o.to).map_or_else(|| o.to.clone(), |m| m.to_string())
+}
+
+/// El texto de la ventana (también el de la pregunta en texto plano): versión actual, nueva y lo que implica el salto.
+pub fn branch_lines(o: &nvidia::BranchOffer) -> Vec<Line<'static>> {
+    let dim = Style::new().fg(Color::DarkGray);
+    let b = Style::new().add_modifier(Modifier::BOLD);
+    vec![
+        Line::from(vec![Span::styled("Installed  ", dim), Span::styled(format!("{} ({})", o.from, o.flavor), b)]),
+        Line::from(vec![Span::styled("Available  ", dim), Span::styled(o.to.clone(), b), Span::raw(format!("  (branch {}.x, lists your GPU)", branch_of(o)))]),
+        Line::from(""),
+        Line::from("A new major branch can change driver behavior. If you upgrade:"),
+        Line::from("  • GPU containers are stopped and receive the new driver libraries"),
+        Line::from("  • the host may need a reboot to load the new module (pxu never reboots it)"),
+        Line::from("  • pxu checks again that the new version supports your GPU and module type"),
+        Line::from("  • if it cannot confirm that, nothing is changed"),
+        Line::from(""),
+        Line::from("If you decline, the driver is left alone and only the host's apt packages are updated."),
+        Line::from(""),
+        Line::from(vec![Span::styled(format!("Upgrade to the {} branch? ", branch_of(o)), b), Span::styled("[y/N]", dim)]),
+    ]
+}
+
+/// La ventana, centrada y con el mismo estilo de bordes que la pantalla en vivo.
+pub fn draw_branch(f: &mut Frame, o: &nvidia::BranchOffer) {
+    let area = f.area();
+    let lines = branch_lines(o);
+    // ancho = línea más larga + borde y 1 de margen a cada lado, con tope en el terminal (si no cabe, la línea se parte)
+    let longest = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let w = (longest + 4).min(area.width);
+    let inner = w.saturating_sub(4).max(1) as usize;
+    let h = (lines.iter().map(|l| l.width().div_ceil(inner).max(1) as u16).sum::<u16>() + 2).min(area.height);
+    let r = ratatui::layout::Rect::new(area.x + (area.width - w) / 2, area.y + area.height.saturating_sub(h) / 2, w, h);
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(" Newer NVIDIA driver branch ", Style::new().add_modifier(Modifier::BOLD))).padding(Padding::horizontal(1));
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block), r);
+}
+
+/// Pregunta el salto de rama en una ventana (antes de abrir la pantalla en vivo). `None` = no se pudo abrir el terminal: quien llama pregunta en texto plano.
+/// Por defecto No: Enter, `n` y Esc dicen no; solo `y` dice sí; Ctrl-C (o el terminal cerrado) aborta todo.
+pub fn ask_branch(o: &nvidia::BranchOffer) -> Option<BranchAnswer> {
+    use crossterm::event::{self, Event as Ct, KeyCode, KeyEventKind, KeyModifiers};
+    let mut term = ratatui::try_init().ok()?;
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = ratatui::try_restore();
+        }
+    }
+    let _r = Restore;
+    let _ = term.hide_cursor();
+    loop {
+        let _ = term.draw(|f| draw_branch(f, o));
+        match wait_tty(200) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(_) => return Some(BranchAnswer::Abort),
+        }
+        match event::read() {
+            Ok(Ct::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Some(BranchAnswer::Abort),
+                KeyCode::Char('y' | 'Y') => return Some(BranchAnswer::Yes),
+                KeyCode::Char('n' | 'N') | KeyCode::Esc | KeyCode::Enter => return Some(BranchAnswer::No),
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(_) => return Some(BranchAnswer::Abort),
+        }
+    }
+}
+
 /// Espera hasta `ms` a que el terminal tenga algo que leer. Con el terminal cerrado `event::poll` de crossterm gira sin respetar el plazo (HUP permanente en el epoll), así que la espera la hace poll(2) y el HUP se ve aquí.
 fn wait_tty(ms: i32) -> std::io::Result<bool> {
     let mut p = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
@@ -927,6 +1009,19 @@ mod tests {
         t.draw(|f| draw(f, m, s(at))).unwrap();
         let b = t.backend().buffer().clone();
         (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol().to_string()).collect::<String>().trim_end().to_string()).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn the_branch_window_shows_both_versions_the_consequences_and_the_default_answer() {
+        let o = nvidia::BranchOffer { from: "595.112.07".into(), to: "600.12.01".into(), flavor: "open" };
+        let mut t = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        t.draw(|f| draw_branch(f, &o)).unwrap();
+        let b = t.backend().buffer().clone();
+        let out = (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol().to_string()).collect::<String>().trim_end().to_string()).collect::<Vec<_>>().join("\n");
+        for want in ["Newer NVIDIA driver branch", "595.112.07 (open)", "600.12.01", "GPU containers are stopped", "reboot", "nothing is changed", "only the host's apt packages", "Upgrade to the 600 branch? [y/N]"] {
+            assert!(out.contains(want), "{want} missing in:\n{out}");
+        }
+        assert_eq!(branch_of(&o), "600");
     }
 
     fn plan() -> Plan {

@@ -1412,6 +1412,104 @@ mod tests {
         assert!(!nv.reboot_needed && !c.iter().any(|a| a == "host reboot" || a.starts_with("host systemctl reboot")), "{c:?}");
     }
 
+    /// Mundo con la rama 600.x en el índice (la GPU del host, 24B0, está en su supportedchips salvo que `chips` diga otra cosa).
+    fn branch_world(chips: Option<&[u8]>) -> ReadOnlyHost<MockHost> {
+        gpu_world(|w| {
+            let w = w.nvidia_run_driver(&["595.112.07", "595.120.01", "600.12.01"]);
+            match chips {
+                Some(c) => w.file("/exec/0/nvidia-chips.out", c),
+                None => w,
+            }
+        })
+    }
+    const CHIPS_OK: &[u8] = b"<tr id=\"devid24B0\"><td>RTX A4000</td></tr>\n";
+
+    #[test]
+    fn nvidia_branch_offer_needs_a_newer_branch_that_lists_the_gpu() {
+        use crate::share::update::nvidia::{branch_offer, BranchOffer};
+        let cfg = |h: &ReadOnlyHost<MockHost>| Config::load(h).unwrap();
+        let h = branch_world(Some(CHIPS_OK));
+        let o = branch_offer(&h, &cfg(&h)).expect("offer");
+        assert_eq!((o.from.as_str(), o.to.as_str()), ("595.112.07", "600.12.01"));
+        let _: BranchOffer = o;
+        // la GPU no está en la lista de la rama nueva → no se ofrece
+        let h = branch_world(Some(b"<tr id=\"devid1B80\"><td>GTX 1080</td></tr>\n"));
+        assert_eq!(branch_offer(&h, &cfg(&h)), None);
+        // sin red para el supportedchips → no se ofrece
+        let h = branch_world(None);
+        assert_eq!(branch_offer(&h, &cfg(&h)), None);
+        // sin rama mayor nueva en el índice
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07", "595.120.01"]).file("/exec/0/nvidia-chips.out", CHIPS_OK));
+        assert_eq!(branch_offer(&h, &cfg(&h)), None);
+    }
+
+    #[test]
+    fn nvidia_branch_jump_installs_the_chosen_branch_and_gives_the_cts_its_libs() {
+        let h = branch_world(Some(CHIPS_OK));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Branch(600));
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Ok, "{}", nv.detail);
+        assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (Some("595.112.07"), Some("600.12.01")));
+        let c = all_cmds(&h, n0);
+        assert!(c.iter().any(|a| a.starts_with("host ") && a.contains("--dkms") && a.contains("600.12.01")), "{c:#?}");
+        assert!(c.iter().any(|a| a.starts_with("ct134 ") && a.contains("--no-kernel-modules")), "the GPU CTs get the new libs: {c:#?}");
+    }
+
+    #[test]
+    fn nvidia_branch_jump_fails_closed_when_supportedchips_cannot_be_read() {
+        let h = branch_world(None);
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Branch(600));
+        let nv = rep.nvidia.as_ref().expect("entry");
+        assert_eq!(nv.outcome, Outcome::Failed, "{}", nv.detail);
+        assert!(nv.detail.contains("cannot confirm that the GPU is supported"), "{}", nv.detail);
+        let c = all_cmds(&h, n0);
+        assert!(!c.iter().any(|a| a.contains("--dkms") || a.contains("--no-kernel-modules") || a.contains(".run") && a.contains("-o ") || a.contains("pct stop") || a.contains("modprobe")), "nothing was touched: {c:#?}");
+        // …mientras que `--nvidia` normal (misma rama) solo avisa y sigue
+        let h = branch_world(None);
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Ok, "{}", rep.nvidia.as_ref().unwrap().detail);
+    }
+
+    #[test]
+    fn nvidia_branch_jump_stops_when_the_gpu_is_not_listed_or_the_branch_is_not_newer() {
+        let h = branch_world(Some(b"<tr id=\"devid1B80\"><td>GTX 1080</td></tr>\n"));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Branch(600));
+        assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Failed);
+        assert!(!all_cmds(&h, n0).iter().any(|a| a.contains("--dkms")));
+        let h = branch_world(Some(CHIPS_OK));
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Branch(595));
+        let nv = rep.nvidia.as_ref().unwrap();
+        assert_eq!(nv.outcome, Outcome::Skipped, "{}", nv.detail);
+        assert!(!all_cmds(&h, 0).iter().any(|a| a.contains("--dkms")));
+    }
+
+    #[test]
+    fn the_timer_never_changes_branch_and_only_leaves_a_note() {
+        use crate::share::update::nvidia;
+        let h = gpu_world(|w| w.host_nvidia_auto().nvidia_run_driver(&["595.112.07", "595.120.01", "600.12.01"]).file("/exec/0/nvidia-chips.out", CHIPS_OK));
+        let n0 = h.inner().recorded().len();
+        let _ct_optin = UpdateOptIn::new(&h);
+        let (cfg, inv) = (Config::load(&h).unwrap(), guests::load(&h));
+        let mut lines: Vec<String> = vec![];
+        let r = nvidia::run(&h, &inv, &cfg, false, &AtomicBool::new(false), &mut |e| if let Event::Line(_, l) = e { lines.push(l) });
+        let (nv, _) = r.expect("a newer version in the same branch exists");
+        assert_eq!((nv.from.as_deref(), nv.to.as_deref()), (Some("595.112.07"), Some("595.120.01")), "stays in 595.x");
+        assert!(lines.iter().any(|l| l.contains("newer driver branch 600.x") && l.contains("pxu update --host --nvidia --yes")), "{lines:?}");
+        assert!(!all_cmds(&h, n0).iter().any(|a| a.contains("600.12.01") && !a.contains("supportedchips")), "{:#?}", all_cmds(&h, n0));
+        // ya al día en su rama: sigue sin saltar y deja la misma nota
+        let h = gpu_world(|w| w.host_nvidia_auto().nvidia_run_driver(&["595.112.07", "600.12.01"]));
+        let _o = UpdateOptIn::new(&h);
+        let (cfg, inv) = (Config::load(&h).unwrap(), guests::load(&h));
+        let mut lines: Vec<String> = vec![];
+        let n1 = h.inner().recorded().len();
+        assert!(nvidia::run(&h, &inv, &cfg, false, &AtomicBool::new(false), &mut |e| if let Event::Line(_, l) = e { lines.push(l) }).is_none());
+        assert!(lines.iter().any(|l| l.contains("newer driver branch 600.x")), "{lines:?}");
+        assert!(!all_cmds(&h, n1).iter().any(|a| a.contains("--dkms")));
+    }
+
     /// Host con GPU, sin driver NVIDIA y sin cabeceras del kernel en marcha (el caso de `--nvidia` que instala desde cero).
     fn fresh_world(f: impl FnOnce(World) -> World) -> ReadOnlyHost<MockHost> {
         gpu_world(|w| f(w.nvidia_run_driver(&["595.112.07", "595.120.01"]).without_file("/usr/bin/nvidia-uninstall").without_file("/proc/driver/nvidia/version").without_file("/lib/modules/6.17.13-2-pve/build/.keep").file("/exec/0/nvidia-chips.out", b"<tr id=\"devid24B0\"><td>RTX A4000</td></tr>\n")))

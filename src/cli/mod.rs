@@ -467,6 +467,20 @@ fn live_ui(json: bool, m: live::Live) -> Option<live::Ui> {
     live::wanted(std::io::stdin().is_terminal(), std::io::stdout().is_terminal(), json, std::env::var("TERM").ok().as_deref()).then(|| live::Ui::start(m, &INTERRUPTED)).flatten()
 }
 
+/// La pregunta del salto de rama en texto plano (con `--json` o si el terminal no admite la ventana). Por defecto No; el terminal cerrado aborta.
+fn ask_branch_plain(o: &pxu::share::update::nvidia::BranchOffer) -> live::BranchAnswer {
+    use std::io::BufRead;
+    eprintln!("Newer NVIDIA driver branch: installed {} ({}), available {}.", o.from, o.flavor, o.to);
+    eprintln!("Upgrading stops the GPU containers, gives them the new libraries and may need a reboot; GPU support is checked again and nothing is changed if it cannot be confirmed.");
+    eprint!("Upgrade to the {}.x branch? [y/N] ", pxu::share::update::nvidia::major(&o.to).unwrap_or_default());
+    let mut a = String::new();
+    match std::io::stdin().lock().read_line(&mut a) {
+        Ok(0) | Err(_) => live::BranchAnswer::Abort,
+        Ok(_) if matches!(a.trim(), "y" | "Y" | "yes") => live::BranchAnswer::Yes,
+        Ok(_) => live::BranchAnswer::No,
+    }
+}
+
 /// `pxu update --host --nvidia`: instala el driver NVIDIA del host si no tiene (o lo reinstala aunque la versión ya coincida) en lugar del apt. Solo a mano, con terminal
 /// y con `--yes` (sin él no se toca nada); el timer no pasa por aquí. Informa aparte el host y cada CT; nunca reinicia el host.
 fn nvidia_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag: bool, tty: bool) -> i32 {
@@ -499,6 +513,24 @@ fn nvidia_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
     install_signal_handlers();
     let inv = guests::load(host);
     let optin = pxu::share::host::UpdateOptIn::new(host);
+    // ¿hay una rama mayor más nueva que soporta la GPU? (solo lecturas) Se pregunta en una ventana ANTES de la pantalla en vivo; `--yes` NO la responde
+    let mut mode = nvidia::Mode::Nvidia;
+    if let Some(offer) = nvidia::branch_offer(host, &cfg) {
+        let answer = if json { None } else { live::ask_branch(&offer) }.unwrap_or_else(|| ask_branch_plain(&offer));
+        match answer {
+            live::BranchAnswer::Yes => mode = nvidia::Mode::Branch(nvidia::major(&offer.to).unwrap_or_default()),
+            live::BranchAnswer::No => {
+                // sin tocar el driver: solo el apt del host, por la misma ruta que `pxu update --host --yes`
+                drop(optin);
+                return update_host(host, only, json, true, notify_flag, tty);
+            }
+            live::BranchAnswer::Abort => {
+                drop(optin);
+                eprintln!("pxu: aborted: nothing was changed");
+                return update::EXIT_ABORTED;
+            }
+        }
+    }
     // con terminal: mini TUI en vivo; sin él (o con --json) el texto plano de siempre
     let ui = live_ui(json, live::Live::nvidia());
     // sin pantalla (modo de líneas) el aviso de cancelación sale en stderr; con ella lo da la propia pantalla
@@ -516,7 +548,7 @@ fn nvidia_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
             let _ = std::io::Write::write_fmt(&mut std::io::stdout(), format_args!("  {l}\n"));
         }
     };
-    let res = update::run_nvidia(host, &inv, &cfg, nvidia::Mode::Nvidia, &INTERRUPTED, &mut on_event);
+    let res = update::run_nvidia(host, &inv, &cfg, mode, &INTERRUPTED, &mut on_event);
     drop(optin);
     if let Some(u) = ui {
         u.finish(res.as_ref().ok().map(live::summarize));
