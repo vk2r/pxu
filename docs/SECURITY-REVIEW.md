@@ -69,12 +69,3 @@ Statuses: **fixed** (the cause no longer exists), **mitigated** (the risk is red
 | L13 | Low | `write_atomic` opened the `.tmp` without `O_NOFOLLOW` and did not check the directory | fixed | `write_atomic` (`real.rs:158-170`): real directory, owned by the current user and `0700`; `.tmp` with `O_EXCL\|O_NOFOLLOW`. Test: `write_atomic_refuses_unsafe_state_dirs_and_symlinked_tmp` |
 | L14 | Low | vzdump's `--storage` validated with a lax `safe_name` and `numeric` accepted `0` | fixed | The `vzdump` branch requires `is_pve_id(st)` (`readonly.rs:130`, `backup.rs:195`); `numeric` rejects `0` and leading zeros (`readonly.rs:97`). Test: `backup_commands_have_exact_shapes_even_with_the_update_opt_in` |
 | L15 | Low | The `update` opt-in unlocked the refresh probe of any CT | fixed | In `guest_exec` the opt-in only applies if the vmid is the CT in progress (`readonly.rs:168`); the TUI blocks `c`/`C`/`R` while an update runs (`tui/app.rs:1107-1110`). Test: `tui/tests.rs:349` |
-
----
-
-## 3. Remaining risks
-
-- **L10 (fixed).** `pxu-state.lock` serialises every `state.json` update.
-- **L3 (fixed).** pxu's locks are in the private `/run/pxu`; an unprivileged user can no longer hold them. `pxu-outbox-files.lock` is a short, separate lock for queueing notices, so a slow send under the flush lock does not block queueing.
-- **L2 and M4 (mitigated).** They depend on `/etc/pxu` and `/var/lib/pxu` being owned by root with no access for others; the installer creates them `0700`, but only `/var/lib/pxu` is re-checked on write.
-- **L6 (fixed).** `ReadOnlyHost` checks what `curl --config -` receives on stdin, not only its argv.
