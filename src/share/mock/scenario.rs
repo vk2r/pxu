@@ -489,6 +489,11 @@ impl World {
         self.scenario.storage_total_gb = Some(total);
         self
     }
+    /// Aviso que `pvesh get` imprime antes del JSON (otro storage, p. ej. un PBS remoto, caído); el comando sigue saliendo con 0.
+    pub fn pvesh_warning(mut self, w: &str) -> World {
+        self.scenario.pvesh_warning = Some(w.into());
+        self
+    }
     /// Sección `[backup]` con `mode` (`auto`/`snapshot`/`vzdump`/`none`).
     pub fn backup_mode(mut self, m: &str) -> World {
         self.backup_mode = Some(m.into());

@@ -189,7 +189,8 @@ fn pvesh(host: &dyn Host, path: &str) -> Result<String, String> {
     let mut out: Vec<String> = Vec::new();
     let o = ExecOpts { timeout_s: Some(30), ..ExecOpts::default() };
     match host.host_cmd(&["pvesh", "get", path, "--output-format", "json"], &o, &mut out) {
-        Ok(h) if h.code == 0 => Ok(out.join("\n")),
+        // los avisos de otros storages se descartan: solo cuenta el JSON
+        Ok(h) if h.code == 0 => crate::share::host::json_answer(&out).map(|(v, _)| v.to_string()),
         Ok(h) => Err(format!("pvesh exit {}", h.code)),
         Err(e) => Err(e.to_string()),
     }
@@ -783,6 +784,13 @@ mod tests {
 
     fn g(d: &StorageData, id: u32) -> &GuestUse {
         d.guests.iter().find(|g| g.vmid == id).unwrap()
+    }
+
+    #[test]
+    fn warning_before_the_json_does_not_break_the_storage_page() {
+        let h = ReadOnlyHost::new(World::demo().pvesh_warning("remote-backup-3: error fetching datastores - fingerprint 'F3' not verified, abort!").build());
+        let raw = read_base(&h, "server");
+        assert!(raw.storages.as_ref().unwrap().is_ok(), "{:?}", raw.storages);
     }
 
     #[test]

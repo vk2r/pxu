@@ -76,6 +76,30 @@ pub struct ExitInfo {
     pub code: i32,
 }
 
+/// Lee la respuesta JSON de `pvesh` entre las líneas capturadas. `pvesh` sale con 0 aunque OTRO storage falle y antes del JSON
+/// imprime avisos (p. ej. «remote-backup-3: error fetching datastores…»): se ignora todo lo anterior al primer `{`/`[` que
+/// da un JSON válido y esas líneas se devuelven como avisos. Sin JSON válido → `Err` (falla cerrado).
+pub fn json_answer(lines: &[String]) -> Result<(serde_json::Value, Vec<String>), String> {
+    let whole = lines.join("\n");
+    if let Ok(v) = serde_json::from_str(&whole) {
+        return Ok((v, Vec::new()));
+    }
+    for (i, l) in lines.iter().enumerate() {
+        if !l.trim_start().starts_with(['{', '[']) {
+            continue;
+        }
+        let rest = lines[i..].join("\n");
+        // el primer valor del texto; lo que venga detrás (avisos tardíos) se ignora
+        if let Some(Ok(v)) = serde_json::Deserializer::from_str(&rest).into_iter::<serde_json::Value>().next() {
+            if v.is_object() || v.is_array() {
+                return Ok((v, lines[..i].iter().filter(|w| !w.trim().is_empty()).cloned().collect()));
+            }
+        }
+    }
+    let first = whole.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+    Err(format!("no JSON in the pvesh answer (first line: {first:?})"))
+}
+
 pub trait LineSink {
     fn line(&mut self, line: &str);
     /// Línea de stderr cuando `ExecOpts::split_stderr`; por omisión se descarta.
@@ -258,5 +282,42 @@ impl<'a> NvidiaOptIn<'a> {
 impl Drop for NvidiaOptIn<'_> {
     fn drop(&mut self) {
         self.0.set_nvidia_update(None);
+    }
+}
+
+#[cfg(test)]
+mod json_answer_tests {
+    use super::json_answer;
+
+    fn v(l: &[&str]) -> Vec<String> {
+        l.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn plain_json_has_no_warnings() {
+        let (j, w) = json_answer(&v(&["{\"avail\":5}"])).unwrap();
+        assert_eq!(j["avail"], 5);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn warning_before_json_is_returned_aside() {
+        let (j, w) = json_answer(&v(&["remote-backup-3: error fetching datastores - fingerprint 'F3' not verified, abort!", "{\"avail\":74015944704}"])).unwrap();
+        assert_eq!(j["avail"], 74015944704u64);
+        assert_eq!(w.len(), 1);
+    }
+
+    #[test]
+    fn warning_before_pretty_array_and_trailing_text() {
+        let (j, w) = json_answer(&v(&["[warn] x", "[", "  {\"a\":1}", "]", "late warning"])).unwrap();
+        assert_eq!(j[0]["a"], 1);
+        assert_eq!(w, v(&["[warn] x"]));
+    }
+
+    #[test]
+    fn no_json_fails_closed() {
+        assert!(json_answer(&v(&["remote-backup-3: error", "ok"])).is_err());
+        assert!(json_answer(&[]).is_err());
+        assert!(json_answer(&v(&["warning", "42"])).is_err());
     }
 }

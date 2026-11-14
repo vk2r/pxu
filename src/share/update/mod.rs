@@ -1026,6 +1026,15 @@ fn create_backup(cx: &mut Ctx, g: &Guest, cfg: &Config, mode: &str) -> Result<En
     Ok(entry)
 }
 
+/// JSON de la última orden `pvesh` capturada; los avisos que lo precedan (otro storage caído) quedan en el log del CT, sin fallar.
+fn pvesh_json(cx: &mut Ctx) -> Result<serde_json::Value, String> {
+    let (v, warnings) = crate::share::host::json_answer(&cx.capture)?;
+    for w in warnings {
+        cx.say(&format!("pvesh warning: {w}"));
+    }
+    Ok(v)
+}
+
 /// `pvesh get /nodes/<nodo>/lxc/<id>/feature --feature snapshot` → `{"hasFeature":0|1}`. Solo lectura: no deja nada a medias.
 fn snapshot_supported(cx: &mut Ctx, g: &Guest) -> Result<bool, String> {
     if !backup::is_pve_id(&g.node) {
@@ -1037,7 +1046,7 @@ fn snapshot_supported(cx: &mut Ctx, g: &Guest) -> Result<bool, String> {
         Ok(c) => return Err(format!("pvesh exit {c}")),
         Err(e) => return Err(e),
     }
-    let v: serde_json::Value = serde_json::from_str(&cx.capture.join("\n")).map_err(|e| format!("unreadable pvesh answer: {e}"))?;
+    let v = pvesh_json(cx).map_err(|e| format!("unreadable pvesh answer: {e}"))?;
     match v.get("hasFeature") {
         Some(serde_json::Value::Number(n)) => Ok(n.as_i64() == Some(1)),
         Some(serde_json::Value::Bool(b)) => Ok(*b),
@@ -1120,7 +1129,7 @@ fn check_backup_space(cx: &mut Ctx, g: &Guest, cfg: &Config) -> Result<(), Strin
         Ok(c) => return Err(unread(format!("pvesh exit {c}"))),
         Err(e) => return Err(unread(e)),
     }
-    let v: serde_json::Value = serde_json::from_str(&cx.capture.join("\n")).map_err(|e| unread(format!("unreadable answer: {e}")))?;
+    let v = pvesh_json(cx).map_err(|e| unread(format!("unreadable answer: {e}")))?;
     let num = |k: &str| v.get(k).and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)));
     let (Some(avail), total) = (num("avail"), num("total").unwrap_or(0)) else { return Err(unread("no avail in the answer".into())) };
     let spare = (cfg.backup.min_free_gb * GIB).max(total / 10);
@@ -1413,6 +1422,9 @@ mod tests {
             "update-no-backup" => fleet(&[481]).backup_mode("none"),
             "update-cancel-backup" => fleet(&[501, 502]).backup_mode("vzdump").hang(501, FailAt::Vzdump),
             "update-low-space" => fleet(&[503, 504]).backup_mode("vzdump").storage_gb(3.0, 94.0),
+            // un PBS remoto caído avisa antes del JSON de cada `pvesh get`: el backup en `local` no debe fallar por eso
+            "update-pbs-down" => fleet(&[511]).backup_mode("vzdump").pvesh_warning("remote-backup-3: error fetching datastores - fingerprint 'F3:2D:6C:44' not verified, abort!"),
+            "update-pbs-down-snapshot" => fleet(&[512]).backup_mode("snapshot").pvesh_warning("remote-backup-3: error fetching datastores - fingerprint 'F3:2D:6C:44' not verified, abort!"),
             "update-cancel-install" => fleet(&[505, 506, 507]),
             "update-timeout-backup" => fleet(&[471, 472]).backup_mode("vzdump").hang(471, FailAt::Upgrade),
             "update-timeout-stopped" => World::new()
@@ -1965,6 +1977,31 @@ mod tests {
         assert!(r.detail.starts_with("backup skipped: needs ~") && r.detail.contains("storage local has 3.0 GB free") && r.detail.ends_with("CT untouched"), "{}", r.detail);
         assert!(host_cmds(&h).iter().all(|c| !c.starts_with("vzdump")), "{:?}", host_cmds(&h));
         assert!(guest_cmds(&h, 503).iter().all(|c| !c.contains("upgrade")));
+    }
+
+    #[test]
+    fn warning_from_another_storage_does_not_fail_the_vzdump_backup() {
+        let h = host("update-pbs-down");
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        let rep = go_cancel(&h, &[511], |e| {
+            if let Event::Line(_, l) = e {
+                lines.lock().unwrap().push(l.clone());
+            }
+            false
+        });
+        let r = by(&rep, 511);
+        assert_eq!(r.outcome, Outcome::Ok, "{r:?}");
+        assert!(host_cmds(&h).iter().any(|c| c.starts_with("vzdump")), "{:?}", host_cmds(&h));
+        assert!(lines.lock().unwrap().iter().any(|l| l.starts_with("pvesh warning: remote-backup-3")), "{:?}", lines.lock().unwrap());
+    }
+
+    #[test]
+    fn warning_from_another_storage_does_not_fail_the_snapshot_feature_check() {
+        let h = host("update-pbs-down-snapshot");
+        let rep = go_cancel(&h, &[512], |_| false);
+        let r = by(&rep, 512);
+        assert_eq!(r.outcome, Outcome::Ok, "{r:?}");
+        assert!(host_cmds(&h).iter().any(|c| c.starts_with("pct snapshot")), "{:?}", host_cmds(&h));
     }
 
     #[test]

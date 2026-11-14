@@ -27,6 +27,8 @@ pub struct Scenario {
     /// Espacio libre / total del storage de backups (GB) que informa `pvesh get …/storage/<s>/status` (por defecto 800 / 1000).
     pub storage_avail_gb: Option<f64>,
     pub storage_total_gb: Option<f64>,
+    /// Aviso que `pvesh get` imprime ANTES del JSON (otro storage caído, p. ej. un PBS remoto); el real sale con código 0.
+    pub pvesh_warning: Option<String>,
     /// Datos de la página Storage (`pvesh get …/storage`, `…/content`, `lvs`); sin esto esas lecturas fallan.
     pub storage: Option<storage::Fixture>,
 }
@@ -555,6 +557,9 @@ impl Host for MockHost {
             s.line(l);
             Ok(ExitInfo { code: 0 })
         };
+        if let (["pvesh", "get", ..], Some(w)) = (argv, &self.scenario.pvesh_warning) {
+            s.line(w);
+        }
         match argv {
             a if a == crate::share::storage::LVS => match &self.scenario.storage {
                 Some(f) => ok(s, &f.lvs),
