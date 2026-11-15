@@ -124,6 +124,9 @@ pub struct UpdateCfg {
     /// "dist-upgrade" | "upgrade"
     #[serde(default = "d_dist")]
     pub apt_mode: String,
+    /// `true` ⇒ tras un upgrade apt verificado en un CT: `apt-get autoremove` (simulado antes) y `apt-get clean`.
+    #[serde(default = "d_true")]
+    pub ct_autoremove: bool,
     /// "continue" | "stop"
     #[serde(default = "d_continue")]
     pub on_failure: String,
@@ -150,6 +153,9 @@ fn d_free() -> u64 {
 fn d_never() -> String {
     "never".into()
 }
+fn d_true() -> bool {
+    true
+}
 fn d_dist() -> String {
     "dist-upgrade".into()
 }
@@ -171,6 +177,7 @@ impl Default for UpdateCfg {
             min_free_mb: d_free(),
             reboot: d_never(),
             apt_mode: d_dist(),
+            ct_autoremove: true,
             on_failure: d_continue(),
             max_consecutive_failures: d_maxfail(),
             timeout_min: d_upd_timeout(),
@@ -369,7 +376,7 @@ pub fn perm_problem(host: &dyn Host) -> Option<String> {
 const KEYS: &[(&str, &[&str])] = &[
     ("general", &["nice", "io_class", "log_retention_days", "logs_per_ct"]),
     ("check", &["refresh", "refresh_min_age_hours", "timeout_s", "index_stale_days"]),
-    ("update", &["auto_update_tags", "stopped", "require_fresh_check_minutes", "min_free_mb", "reboot", "apt_mode", "on_failure", "max_consecutive_failures", "timeout_min", "host_auto", "host_nvidia_auto"]),
+    ("update", &["auto_update_tags", "stopped", "require_fresh_check_minutes", "min_free_mb", "reboot", "apt_mode", "ct_autoremove", "on_failure", "max_consecutive_failures", "timeout_min", "host_auto", "host_nvidia_auto"]),
     ("backup", &["mode", "storage", "keep", "space_ratio", "min_free_gb"]),
     ("ui", &["columns"]),
     ("apprise", &["transport", "api_url", "api_key", "urls", "api_key_enc", "urls_enc", "tag", "on", "timeout_s", "retry_delays_ms"]),

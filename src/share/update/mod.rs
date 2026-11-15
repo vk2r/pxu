@@ -93,6 +93,14 @@ pub fn is_upgrade_argv(argv: &[&str]) -> bool {
         || ["apk", "pacman", "dnf", "zypper"].iter().any(|pm| upgrade_argv(pm, "").is_some_and(|a| a == argv))
 }
 
+/// Limpieza posterior (solo CT apt): simulación (la misma del host), autoremove sin `--purge` y vaciado de la caché de `.deb`.
+pub const CT_AUTOREMOVE: &[&str] = &["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-y", "autoremove"];
+pub const CT_APT_CLEAN: &[&str] = &["apt-get", "clean"];
+
+pub fn is_cleanup_argv(argv: &[&str]) -> bool {
+    argv == hostupdate::AUTOREMOVE_SIM || argv == CT_AUTOREMOVE || argv == CT_APT_CLEAN
+}
+
 pub fn is_verify_argv(argv: &[&str]) -> bool {
     matches!(argv, ["dpkg", "--audit"] | ["systemctl", "--failed", "--no-legend", "--plain"] | ["df", "-Pk", "/"])
 }
@@ -109,6 +117,7 @@ pub enum Step {
     Refresh,
     Upgrade,
     Verify,
+    Cleanup,
     Rollback,
     Restore,
     Done,
@@ -128,6 +137,7 @@ impl Step {
             Step::Refresh => "refresh+simulate",
             Step::Upgrade => "upgrade",
             Step::Verify => "verify",
+            Step::Cleanup => "cleanup",
             Step::Rollback => "rollback",
             Step::Restore => "restore",
             Step::Done => "done",
@@ -397,6 +407,8 @@ pub struct Opts {
 // ---- límites de tiempo de `update`: ninguna operación espera sin cota (systemd ya no corta la corrida a las 4 h)
 /// Consultas cortas (`df`, `systemctl --failed`, `dpkg --audit`, `pvesh get`).
 const T_QUERY_S: u64 = 120;
+/// `apt-get autoremove` dentro de un CT tras el upgrade.
+const T_CT_AUTOREMOVE_S: u64 = 900;
 /// `pct start|stop|shutdown|reboot`.
 const T_PCT_S: u64 = 300;
 /// `pct snapshot`.
@@ -440,7 +452,7 @@ const CUT_S: u64 = 30;
 const SLEEPS_S: u64 = 5 + 5 + 3;
 
 /// Peor caso de un CT, orden por orden (cada una con su límite y su cola de señal): arrancar/parar/reiniciar (6 `pct`), consultas, snapshot, vzdump,
-/// borrados (`MAX_PRUNE` de la poda + 1 del backup propio), sondas del chequeo (con refresco `3 ×`), upgrade y autoremove con su margen,
+/// borrados (`MAX_PRUNE` de la poda + 1 del backup propio), sondas del chequeo (con refresco `3 ×`), upgrade y autoremove con su margen, la limpieza posterior del CT (simulación, autoremove, clean),
 /// rollback/restore (dos intentos) y las esperas fijas.
 fn ct_worst_s(cfg: &Config) -> u64 {
     let upgrade = cfg.update.timeout_min * 60 + NO_KILL_TAIL_S;
@@ -451,6 +463,8 @@ fn ct_worst_s(cfg: &Config) -> u64 {
         + (MAX_PRUNE as u64 + 1) * (T_PRUNE_S + CUT_S)
         + 4 * (3 * cfg.check.timeout_s + CUT_S)
         + 2 * upgrade
+        + (T_CT_AUTOREMOVE_S + NO_KILL_TAIL_S)
+        + 2 * (T_QUERY_S + CUT_S)
         + 2 * (T_RESTORE_S + CUT_S)
         + SLEEPS_S
 }
@@ -951,6 +965,12 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
     }
     let mut detail = format!("{} → {} package(s) pending", run.packages_before, run.packages_after.unwrap_or(0));
     let mut outcome = Outcome::Ok;
+    if info.pm == "apt" && cfg.update.ct_autoremove {
+        if let Some(w) = ct_cleanup(cx, cfg) {
+            outcome = Outcome::Warn;
+            detail += &format!("; {w}");
+        }
+    }
     if run.reboot_required {
         if cfg.update.reboot == "if-required" {
             match cx.host_cmd(&["pct", "reboot", &id], &limit(T_PCT_S)) {
@@ -967,6 +987,38 @@ fn update_body(cx: &mut Ctx, g: &Guest, cfg: &Config, run: &mut CtRun, gr: &Gues
         }
     }
     Done { outcome, step: Step::Done, detail }
+}
+
+/// Autoremove + `apt-get clean` tras un upgrade verificado. Simula antes; un fallo aquí nunca falla la actualización: devuelve el aviso.
+fn ct_cleanup(cx: &mut Ctx, cfg: &Config) -> Option<String> {
+    cx.step(Step::Cleanup);
+    let quick = ExecOpts { nice: Some(cfg.general.nice), ionice: Some(io(cfg)), timeout_s: Some(T_QUERY_S), ..Default::default() };
+    let long = ExecOpts { timeout_s: Some(T_CT_AUTOREMOVE_S), no_kill_on_timeout: true, ..quick.clone() };
+    match cx.guest(hostupdate::AUTOREMOVE_SIM, &quick) {
+        Ok(0) => {}
+        _ => {
+            let w = "cleanup skipped: the autoremove simulation failed".to_string();
+            cx.say(&format!("WARNING: {w}"));
+            return Some(w);
+        }
+    }
+    let removals = hostupdate::parse_removals(&cx.capture.join("\n"));
+    let mut warn = None;
+    if removals.is_empty() {
+        cx.say("autoremove: nothing to remove");
+    } else if matches!(cx.guest(CT_AUTOREMOVE, &long), Ok(0)) {
+        cx.say(&format!("autoremove: removed {} package(s): {}", removals.len(), removals.join(", ")));
+    } else {
+        let w = "apt-get autoremove failed (the upgrade itself succeeded)".to_string();
+        cx.say(&format!("WARNING: {w}"));
+        warn = Some(w);
+    }
+    if !matches!(cx.guest(CT_APT_CLEAN, &quick), Ok(0)) {
+        let w = "apt-get clean failed (the upgrade itself succeeded)".to_string();
+        cx.say(&format!("WARNING: {w}"));
+        warn.get_or_insert(w);
+    }
+    warn
 }
 
 fn io(cfg: &Config) -> IoPrio {
@@ -1609,8 +1661,8 @@ mod tests {
         assert_eq!(rep.exit_code(), 0);
         assert_eq!(rep.count(Outcome::Ok), 3, "{rep:?}");
         let g = guest_cmds(&h, 401);
-        let kinds: Vec<&str> = g.iter().map(|c| if c.starts_with("df") { "df" } else if c.starts_with("systemctl") { "units" } else if c.contains("pxu-probe") { "probe" } else if c.contains("dist-upgrade") { "upgrade" } else if c.starts_with("dpkg") { "audit" } else { "?" }).collect();
-        assert_eq!(kinds, ["df", "units", "probe", "upgrade", "audit", "units", "probe"], "{g:?}");
+        let kinds: Vec<&str> = g.iter().map(|c| if c.starts_with("df") { "df" } else if c.starts_with("systemctl") { "units" } else if c.contains("pxu-probe") { "probe" } else if c.contains("dist-upgrade") { "upgrade" } else if c.starts_with("dpkg") { "audit" } else if c.contains("-s -o Debug::NoLocking=1 autoremove") { "sim" } else if c.ends_with("-y autoremove") { "autoremove" } else if c == "apt-get clean" { "clean" } else { "?" }).collect();
+        assert_eq!(kinds, ["df", "units", "probe", "upgrade", "audit", "units", "probe", "sim", "clean"], "{g:?}");
         assert!(g[2].ends_with("pxu-probe 1 0"), "refresh+simulate forces a refresh: {}", g[2]);
         assert!(g[6].ends_with("pxu-probe 0"), "post-verify probe does not refresh");
         let hc = host_cmds(&h);
@@ -1625,6 +1677,80 @@ mod tests {
         assert!(rep.log_path.as_deref().is_some_and(|p| runlog::is_run_log_path(std::path::Path::new(p))));
         assert_eq!(rep.results[0].log_path, rep.log_path);
         assert!(h.inner().read_file(std::path::Path::new(rep.log_path.as_ref().unwrap())).is_ok());
+    }
+
+    fn cleanup_cmds(h: &ReadOnlyHost<MockHost>, vmid: u32) -> Vec<String> {
+        guest_cmds(h, vmid).into_iter().filter(|c| c.contains("autoremove") || c == "apt-get clean").collect()
+    }
+    fn run_log(h: &ReadOnlyHost<MockHost>, rep: &RunReport) -> String {
+        String::from_utf8_lossy(&h.inner().read_file(std::path::Path::new(rep.log_path.as_ref().unwrap())).unwrap()).into_owned()
+    }
+
+    #[test]
+    fn ct_cleanup_removes_unused_packages_then_cleans_the_cache_and_logs_them() {
+        let h = ReadOnlyHost::new(fleet(&[601]).file("/exec/601/autoremove-sim.out", b"Remv libfoo1 [1.0]\nRemv libbar2 [2.0]\n").build());
+        let rep = go(&h, &[]);
+        assert_eq!(rep.results[0].outcome, Outcome::Ok, "{:?}", rep.results);
+        let c = cleanup_cmds(&h, 601);
+        assert_eq!(c, ["apt-get -s -o Debug::NoLocking=1 autoremove", "env DEBIAN_FRONTEND=noninteractive apt-get -y autoremove", "apt-get clean"], "{c:?}");
+        assert!(c.iter().all(|c| !c.contains("purge")));
+        assert!(run_log(&h, &rep).contains("autoremove: removed 2 package(s): libfoo1, libbar2"));
+    }
+
+    #[test]
+    fn ct_cleanup_with_a_failing_simulation_is_skipped_and_only_warns() {
+        let h = ReadOnlyHost::new(fleet(&[602]).fail(602, FailAt::AutoremoveSim, 100).build());
+        let rep = go(&h, &[]);
+        let r = &rep.results[0];
+        assert_eq!(r.outcome, Outcome::Warn, "{r:?}");
+        assert!(r.detail.contains("cleanup skipped"), "{}", r.detail);
+        assert_eq!(cleanup_cmds(&h, 602), ["apt-get -s -o Debug::NoLocking=1 autoremove"], "no autoremove and no clean after a failed simulation");
+        assert!(run_log(&h, &rep).contains("WARNING: cleanup skipped"));
+        assert_eq!(rep.exit_code(), EXIT_OK);
+    }
+
+    #[test]
+    fn ct_cleanup_failure_does_not_fail_a_good_upgrade() {
+        let h = ReadOnlyHost::new(fleet(&[603]).file("/exec/603/autoremove-sim.out", b"Remv libfoo1 [1.0]\n").fail(603, FailAt::Autoremove, 100).build());
+        let rep = go(&h, &[]);
+        assert_eq!(rep.results[0].outcome, Outcome::Warn, "{:?}", rep.results);
+        assert!(rep.results[0].detail.contains("autoremove failed"));
+        assert_eq!(rep.exit_code(), EXIT_OK);
+    }
+
+    #[test]
+    fn failed_upgrade_does_not_clean() {
+        let h = ReadOnlyHost::new(fleet(&[604]).fail(604, FailAt::Upgrade, 100).build());
+        let rep = go(&h, &[]);
+        assert_eq!(rep.results[0].outcome, Outcome::Failed);
+        assert!(cleanup_cmds(&h, 604).is_empty(), "{:?}", guest_cmds(&h, 604));
+    }
+
+    #[test]
+    fn apk_ct_is_not_cleaned() {
+        use crate::share::mock::scenario::Distro;
+        let h = ReadOnlyHost::new(World::new().backup_mode("auto").require_fresh_minutes(60).ct(Ct::new(605).tags("auto").distro(Distro::Alpine).updates(std_updates()).checked_minutes_ago(5)).build());
+        let rep = go(&h, &[]);
+        assert_eq!(rep.results[0].outcome, Outcome::Ok, "{:?}", rep.results);
+        assert!(cleanup_cmds(&h, 605).is_empty(), "{:?}", guest_cmds(&h, 605));
+    }
+
+    #[test]
+    fn ct_autoremove_false_does_not_clean() {
+        let h = ReadOnlyHost::new(fleet(&[606]).ct_autoremove(false).build());
+        let rep = go(&h, &[]);
+        assert_eq!(rep.results[0].outcome, Outcome::Ok);
+        assert!(cleanup_cmds(&h, 606).is_empty(), "{:?}", guest_cmds(&h, 606));
+    }
+
+    #[test]
+    fn cleanup_argvs_are_recognised_and_nothing_else() {
+        for a in [hostupdate::AUTOREMOVE_SIM, CT_AUTOREMOVE, CT_APT_CLEAN] {
+            assert!(is_cleanup_argv(a), "{a:?}");
+        }
+        for a in [&["apt-get", "autoremove"][..], &["apt-get", "-y", "autoremove"], &["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-y", "autoremove", "--purge"], &["apt-get", "clean", "-y"], &["apt-get", "autoclean"], &["apt-get", "purge", "x"]] {
+            assert!(!is_cleanup_argv(a), "{a:?}");
+        }
     }
 
     #[test]

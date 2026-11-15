@@ -648,8 +648,8 @@ pub fn check_messages(report: &Report, c: &AppriseCfg, st: &state::State) -> Vec
             if h.reboot_pending() {
                 body += &format!("- reboot needed: {}\n", h.reboot_reason);
             }
-            if let Some(k) = &h.nvidia_missing_for {
-                body += &format!("- NVIDIA: no module for kernel {k}\n");
+            if let Some(d) = h.nvidia_missing_detail() {
+                body += &format!("- NVIDIA: {d}\n");
             }
             if !cts.is_empty() {
                 body += &format!("- CT with outdated NVIDIA driver: {}\n", cts.iter().map(u32::to_string).collect::<Vec<_>>().join(", "));

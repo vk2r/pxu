@@ -884,6 +884,9 @@ fn host_lines(h: &HostInfo, inv: &pxu::share::proxmox::guests::Inventory) -> Vec
     if h.has_nvidia() {
         let mut n: Vec<String> = Vec::new();
         n.push(format!("  driver {} · module for {}: {}", h.nvidia_driver.as_deref().unwrap_or("not loaded"), if h.newest_kernel.is_empty() { "newest kernel" } else { &h.newest_kernel }, if h.nvidia_missing_for.is_none() { "yes" } else { "MISSING" }));
+        if h.nvidia_headers_missing {
+            n.push(format!("  headers for {} missing: install proxmox-default-headers", h.nvidia_missing_for.as_deref().unwrap_or("the newest kernel")));
+        }
         let on = inv.guests.iter().any(|g| g.kind == GuestKind::Host && g.nvidia_auto);
         n.push(format!("  driver update: {} (n)", if on { "in scheduled updates" } else { "not in updates" }));
         for d in h.dkms.iter().filter(|d| d.module.starts_with("nvidia")) {

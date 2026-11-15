@@ -66,6 +66,10 @@ pub enum FailAt {
     Vzdump,
     Upgrade,
     Rollback,
+    /// Simulación, autoremove y `apt-get clean` dentro del CT.
+    AutoremoveSim,
+    Autoremove,
+    Clean,
 }
 
 impl FailAt {
@@ -77,6 +81,9 @@ impl FailAt {
             FailAt::Vzdump => "vzdump",
             FailAt::Upgrade => "upgrade",
             FailAt::Rollback => "rollback",
+            FailAt::AutoremoveSim => "autoremove-sim",
+            FailAt::Autoremove => "autoremove",
+            FailAt::Clean => "clean",
         }
     }
 }
@@ -353,6 +360,8 @@ pub struct World {
     host_auto: bool,
     /// `[update] host_nvidia_auto = true`.
     host_nvidia_auto: bool,
+    /// `[update] ct_autoremove` explícito.
+    ct_autoremove: Option<bool>,
     /// Datos de la página Storage generados a partir de los discos de los CT (`storage_demo`).
     storage_demo: bool,
 }
@@ -384,6 +393,7 @@ impl World {
             host_state: None,
             host_auto: false,
             host_nvidia_auto: false,
+            ct_autoremove: None,
             storage_demo: false,
         }
     }
@@ -527,6 +537,10 @@ impl World {
         self.scenario.timer = crate::share::mock::MockTimer { installed, enabled, calendar: calendar.into(), ..Default::default() };
         self
     }
+    pub fn ct_autoremove(mut self, on: bool) -> World {
+        self.ct_autoremove = Some(on);
+        self
+    }
     /// Reemplaza todo el `config.toml` (casos de validación).
     pub fn config_raw(mut self, toml: &str) -> World {
         self.config_raw = Some(toml.into());
@@ -544,6 +558,9 @@ impl World {
         }
         if self.host_nvidia_auto {
             s += "host_nvidia_auto = true\n";
+        }
+        if let Some(b) = self.ct_autoremove {
+            s += &format!("ct_autoremove = {b}\n");
         }
         if let Some(p) = &self.stopped_policy {
             s += &format!("stopped = \"{p}\"\n");

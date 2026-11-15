@@ -420,6 +420,9 @@ pub struct HostInfo {
     /// `Some(kernel)`: el host tiene GPU NVIDIA y no hay módulo para ese kernel (el más nuevo instalado).
     #[serde(default)]
     pub nvidia_missing_for: Option<String>,
+    /// Con `nvidia_missing_for`: faltan las cabeceras de ese kernel (`/lib/modules/<k>/build`), la causa habitual de que DKMS no compile.
+    #[serde(default)]
+    pub nvidia_headers_missing: bool,
     /// vmid → versión NVIDIA del CT.
     #[serde(default)]
     pub ct_nvidia: BTreeMap<String, CtNvidia>,
@@ -447,6 +450,15 @@ impl HostInfo {
     /// `Some(true)` = módulo OK para el kernel más nuevo · `Some(false)` = falta (`NV ↑`) · `None` = el host no tiene NVIDIA.
     pub fn nvidia_ok(&self) -> Option<bool> {
         self.has_nvidia().then(|| self.nvidia_missing_for.is_none())
+    }
+    /// Qué decir cuando falta el módulo NVIDIA del kernel más nuevo: con la causa si faltan sus cabeceras.
+    pub fn nvidia_missing_detail(&self) -> Option<String> {
+        let k = self.nvidia_missing_for.as_deref()?;
+        Some(if self.nvidia_headers_missing {
+            format!("no module for kernel {k}: headers for {k} missing: install proxmox-default-headers")
+        } else {
+            format!("no module for kernel {k}")
+        })
     }
     /// CTs cuyo driver NVIDIA difiere del host o dio «version mismatch».
     pub fn outdated_cts(&self) -> Vec<u32> {
@@ -593,7 +605,7 @@ pub fn worst_s(timeout_s: u64, guests: u64) -> u64 {
 }
 
 /// ¿Hay módulo nvidia para `kernel`? Por `dkms status` (installed) o por el archivo del módulo.
-fn nvidia_module_for(host: &dyn Host, dkms: &[Dkms], kernel: &str) -> bool {
+pub fn nvidia_module_for(host: &dyn Host, dkms: &[Dkms], kernel: &str) -> bool {
     if dkms.iter().any(|d| d.module.starts_with("nvidia") && d.kernel == kernel && d.status.starts_with("installed")) {
         return true;
     }
@@ -651,6 +663,7 @@ pub fn check_host(host: &dyn Host, inv: &Inventory, o: &CheckOpts) -> Option<Hos
         }
         if !info.newest_kernel.is_empty() && !nvidia_module_for(host, &info.dkms, &info.newest_kernel) {
             info.nvidia_missing_for = Some(info.newest_kernel.clone());
+            info.nvidia_headers_missing = !host.exists(&PathBuf::from("/lib/modules").join(&info.newest_kernel).join("build"));
         }
         for g in inv.guests.iter().filter(|g| g.kind == GuestKind::Lxc && g.gpu.nvidia && g.state != RunState::Remote && !g.template) {
             info.ct_nvidia.insert(g.vmid.to_string(), ct_nvidia(host, g, o));
@@ -922,6 +935,25 @@ c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI]
         assert_eq!(i.nvidia_ok(), Some(false));
         let hg = Guest { kind: GuestKind::Host, ..crate::share::proxmox::guests::load(&ReadOnlyHost::new(gpu_world().build())).guests[0].clone() };
         assert_eq!(gpu_label(&hg, Some(&i)).map(|l| (l.text, l.warn)), Some(("NV ↑".into(), true)));
+    }
+
+    #[test]
+    fn missing_module_detail_names_the_missing_headers_as_the_cause() {
+        let stale = "nvidia/595.112.07, 6.17.9-1-pve, x86_64: installed\n";
+        // cabeceras del kernel más nuevo ausentes: la causa y el remedio
+        let (_, i, _) = review(gpu_world().host_out("dkms", stale));
+        let i = i.unwrap();
+        assert!(i.nvidia_headers_missing);
+        assert_eq!(i.nvidia_ok(), Some(false), "the meaning of NV ↑ does not change");
+        assert_eq!(i.nvidia_missing_detail().as_deref(), Some("no module for kernel 6.17.13-2-pve: headers for 6.17.13-2-pve missing: install proxmox-default-headers"));
+        // con cabeceras pero sin módulo: sin causa de cabeceras
+        let (_, i, _) = review(gpu_world().host_out("dkms", stale).file("/lib/modules/6.17.13-2-pve/build/.keep", b""));
+        let i = i.unwrap();
+        assert!(!i.nvidia_headers_missing);
+        assert_eq!(i.nvidia_missing_detail().as_deref(), Some("no module for kernel 6.17.13-2-pve"));
+        // módulo presente: sin detalle
+        let (_, i, _) = review(gpu_world());
+        assert_eq!(i.unwrap().nvidia_missing_detail(), None);
     }
 
     #[test]

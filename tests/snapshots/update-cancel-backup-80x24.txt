@@ -5,7 +5,7 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ● 402   ct-402           backup            00:00
 · 403   ct-403           pending
 ── live log · 402 ct-402 ───────────────────────────────────────────────────────
- 00:16:00  401 failed units: 0 before, 0 after
+ 00:16:00  401 $ [CT 401] apt-get clean
  00:16:┌ Cancel run? ───────────────────────────────────────────────────┐
  00:16:│ [Enter] stop now: abort CT 402's backup, clean up              │
  00:16:│ [Esc] keep running                                             │

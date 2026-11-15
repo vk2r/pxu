@@ -3,14 +3,12 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/1 · finished
 ── queue ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ✓ 0     host             ok                0m00s  7 packages updated (2 security) · reboot required: yes
 ── live log ────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 00:16:00    0 $ dpkg-query -W -f=${Package} ${Version}\n
- 00:16:00    0 pve-manager 9.1.1
- 00:16:00    0 proxmox-kernel-6.17 6.17.9-1
- 00:16:00    0 proxmox-default-kernel 2.0.1
- 00:16:00    0 pve-firmware 3.16-1
- 00:16:00    0 libc6 2.36-9+deb12u9
- 00:16:00    0 openssl 3.0.16-1
  00:16:00    0 htop 3.4.0-1
+ 00:16:00    0 $ dkms status
+ 00:16:00    0 nvidia/595.112.07, 6.17.13-2-pve, x86_64: installed
+ 00:16:00    0 $ env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get -y install proxmox-default-he…
+ 00:16:00    0 Setting up proxmox-default-headers ...
+ 00:16:00    0 proxmox-default-headers installed (every new kernel comes with its headers)
  00:16:00    0 $ env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get -y -o Dpkg::Options::=--force…
  00:16:00    0 Reading package lists...
  00:16:00    0 Setting up packages ...
@@ -33,6 +31,8 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/1 · finished
  00:16:00    0 == verify
  00:16:00    0 $ apt-get -s -o Debug::NoLocking=1 autoremove
  00:16:00    0 autoremove: nothing to remove
+ 00:16:00    0 $ dkms status
+ 00:16:00    0 nvidia/595.112.07, 6.17.13-2-pve, x86_64: installed
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 notify: run_summary: sent via apprise-api (curl)
 step times update on log lines or state changes · log: /var/log/pxu/run-*.log

@@ -50,6 +50,9 @@ pub const INSTALL: &[&str] = &[
     "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "full-upgrade",
 ];
 pub const AUTOREMOVE: &[&str] = &["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "autoremove"];
+/// Cabeceras de todos los kernels `-pve` futuros (lo que Proxmox recomienda para DKMS): solo con driver NVIDIA/DKMS.
+pub const DEFAULT_HEADERS: &[&str] = &["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", "proxmox-default-headers"];
+pub const DEFAULT_HEADERS_PKG: &str = "proxmox-default-headers";
 
 fn ts14(s: &str) -> bool {
     s.len() == 14 && s.bytes().all(|b| b.is_ascii_digit())
@@ -73,7 +76,8 @@ fn snapshot_ok(s: &str) -> bool {
 
 pub fn is_write_argv(argv: &[&str]) -> bool {
     match argv {
-        a if a == BACKUP_MKDIR || a == DPKG_CONFIGURE || a == INSTALL || a == AUTOREMOVE => true,
+        a if a == BACKUP_MKDIR || a == DPKG_CONFIGURE || a == INSTALL || a == AUTOREMOVE || a == DEFAULT_HEADERS => true,
+        ["dkms", "autoinstall", "-k", k] => super::nvidia::kernel_ok(k),
         ["tar", "--zstd", "-cpf", f, "-C", "/", "etc"] => f.ends_with(".tar.zst") && is_backup_path(Path::new(f)),
         ["tar", "-czpf", f, "-C", "/", "etc"] => f.ends_with(".tar.gz") && is_backup_path(Path::new(f)),
         ["chmod", "0600", f] => is_backup_path(Path::new(f)),
@@ -390,6 +394,18 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
     // instalación
     cx.step(Step::Upgrade);
     let before = versions(&mut cx, cfg);
+    let mut warn: Option<String> = None;
+    // con driver NVIDIA/DKMS: `proxmox-default-headers` antes del full-upgrade, para que el kernel nuevo llegue con sus cabeceras y DKMS compile en su hook
+    let nv_dkms = host_has_nvidia_dkms(&mut cx, cfg, &pre.running);
+    if nv_dkms && !before.contains_key(DEFAULT_HEADERS_PKG) {
+        if matches!(cx.host_cmd(DEFAULT_HEADERS, &long(INSTALL_TIMEOUT_S)), Ok(0)) {
+            cx.say(&format!("{DEFAULT_HEADERS_PKG} installed (every new kernel comes with its headers)"));
+        } else {
+            let w = format!("{DEFAULT_HEADERS_PKG} could not be installed: a new kernel may arrive without headers (no NVIDIA module until you install them)");
+            cx.say(&format!("WARNING: {w}"));
+            warn = Some(w);
+        }
+    }
     let rc = cx.host_cmd(INSTALL, &long(INSTALL_TIMEOUT_S));
     let after = versions(&mut cx, cfg);
     let changed: Vec<&String> = after.iter().filter(|(n, v)| before.get(*n).is_some_and(|b| b != *v)).map(|(n, _)| n).collect();
@@ -410,7 +426,6 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
         }
     }
     // autoremove, solo si no toca el kernel en uso ni el anterior
-    let mut warn = None;
     let installed = after;
     cx.step(Step::Verify);
     match cx.host_cmd(AUTOREMOVE_SIM, &quick(cfg)) {
@@ -420,14 +435,19 @@ fn core(host: &dyn Host, inv: &Inventory, cfg: &Config, mut confirmed: Vec<HostP
             if let Some(k) = autoremove_conflict(&text, &prot) {
                 let w = format!("autoremove skipped: it would remove {k} (the running or previous kernel); left installed");
                 cx.say(&format!("WARNING: {w}"));
-                warn = Some(w);
+                add_warn(&mut warn, w);
             } else if parse_removals(&text).is_empty() {
                 cx.say("autoremove: nothing to remove");
             } else if !matches!(cx.host_cmd(AUTOREMOVE, &long(INSTALL_TIMEOUT_S)), Ok(0)) {
-                warn = Some("apt-get autoremove failed (the install itself succeeded)".into());
+                add_warn(&mut warn, "apt-get autoremove failed (the install itself succeeded)".into());
             }
         }
-        _ => warn = Some("autoremove skipped: its simulation failed".into()),
+        _ => add_warn(&mut warn, "autoremove skipped: its simulation failed".into()),
+    }
+    if nv_dkms {
+        if let Some(w) = nvidia_catch_up(&mut cx, cfg) {
+            add_warn(&mut warn, w);
+        }
     }
     // nueva revisión: la fila refleja el estado real y el reinicio pendiente
     let opts_check = crate::share::update::check::CheckOpts::from_config(cfg, Some(false));
@@ -614,6 +634,47 @@ fn drop_partial(cx: &mut Ctx, file: &str, why: String) -> String {
     why
 }
 
+fn add_warn(warn: &mut Option<String>, w: String) {
+    *warn = Some(match warn.take() {
+        Some(p) => format!("{p}; {w}"),
+        None => w,
+    });
+}
+
+/// ¿El host tiene un módulo NVIDIA gestionado por DKMS (`dkms status`) y corre un kernel `-pve`? Sin `dkms` o sin salida: no.
+fn host_has_nvidia_dkms(cx: &mut Ctx, cfg: &Config, running: &str) -> bool {
+    running.ends_with("-pve") && matches!(cx.host_cmd(hostcheck::DKMS, &quick(cfg)), Ok(0)) && hostcheck::parse_dkms(&cx.capture.join("\n")).iter().any(|d| d.module.starts_with("nvidia"))
+}
+
+/// Tras el full-upgrade: si el kernel más nuevo no tiene módulo NVIDIA pero ya tiene cabeceras, lo compila (`dkms autoinstall -k`, lo mismo que haría el hook
+/// del kernel) y lo verifica. Sin cabeceras no compila nada. `Some` = aviso (el kernel en uso no se toca, el host sigue como estaba).
+fn nvidia_catch_up(cx: &mut Ctx, cfg: &Config) -> Option<String> {
+    let names: Vec<String> = cx.host.read_dir(Path::new("/lib/modules")).unwrap_or_default().iter().filter_map(|p| p.file_name()?.to_str().map(String::from)).collect();
+    let newest = hostcheck::newest_kernel(&names).filter(|k| super::nvidia::kernel_ok(k))?;
+    let dkms = |cx: &mut Ctx| match cx.host_cmd(hostcheck::DKMS, &quick(cfg)) {
+        Ok(0) => Some(hostcheck::parse_dkms(&cx.capture.join("\n"))),
+        _ => None,
+    };
+    let has_module = |cx: &mut Ctx| dkms(cx).is_some_and(|d| hostcheck::nvidia_module_for(cx.host, &d, &newest));
+    if has_module(cx) {
+        return None;
+    }
+    if !cx.host.exists(&Path::new("/lib/modules").join(&newest).join("build")) {
+        let w = format!("no NVIDIA module for kernel {newest}: its headers are missing (install {DEFAULT_HEADERS_PKG}); reboot only after fixing it");
+        cx.say(&format!("WARNING: {w}"));
+        return Some(w);
+    }
+    cx.say(&format!("no NVIDIA module for kernel {newest}: building it (dkms autoinstall)"));
+    let rc = cx.host_cmd(&["dkms", "autoinstall", "-k", &newest], &long(INSTALL_TIMEOUT_S));
+    if matches!(rc, Ok(0)) && has_module(cx) {
+        cx.say(&format!("NVIDIA module for kernel {newest}: built OK"));
+        return None;
+    }
+    let w = format!("the NVIDIA module for kernel {newest} could not be built (dkms autoinstall); reboot only after fixing it");
+    cx.say(&format!("WARNING: {w}"));
+    Some(w)
+}
+
 fn versions(cx: &mut Ctx, cfg: &Config) -> BTreeMap<String, String> {
     match cx.host_cmd(DPKG_QUERY, &quick(cfg)) {
         Ok(0) => parse_versions(&cx.capture),
@@ -720,7 +781,7 @@ mod tests {
 
     #[test]
     fn happy_path_runs_the_exact_write_argv_in_order() {
-        let h = host_with(|w| w);
+        let h = host_with(|w| w.host_out("dkms", ""));
         let r = report(go(&h, confirmed()));
         let run = &r.results[0];
         assert_eq!((run.vmid, run.outcome), (0, Outcome::Ok), "{}", run.detail);
@@ -827,6 +888,84 @@ mod tests {
             assert!(matches!(go(&h, confirmed()), Err(RunError::Locked)), "{name}");
             assert_eq!(cmds(&h).len(), n, "no command ran while {name} was held");
         }
+    }
+
+    // ---- proxmox-default-headers + DKMS catch-up (host con driver NVIDIA/DKMS)
+
+    fn pos_in(w: &[String], p: &str) -> Option<usize> {
+        w.iter().position(|c| c.contains(p))
+    }
+
+    #[test]
+    fn host_with_nvidia_dkms_installs_default_headers_before_the_full_upgrade_and_logs_it() {
+        let h = host_with(|w| w);
+        let r = report(go(&h, confirmed()));
+        let run = &r.results[0];
+        assert_eq!(run.outcome, Outcome::Ok, "{}", run.detail);
+        let w = writes(&h);
+        let hd = pos_in(&w, "install proxmox-default-headers").expect("headers installed");
+        assert!(hd < pos_in(&w, "full-upgrade").unwrap(), "{w:?}");
+        let log = crate::share::host::read_string(&h, run.log_path.as_ref().unwrap()).unwrap();
+        assert!(log.contains("proxmox-default-headers installed"), "{log}");
+    }
+
+    #[test]
+    fn host_without_nvidia_dkms_does_not_install_default_headers() {
+        let h = host_with(|w| w.host_out("dkms", ""));
+        assert_eq!(report(go(&h, confirmed())).results[0].outcome, Outcome::Ok);
+        assert!(pos_in(&writes(&h), "proxmox-default-headers").is_none(), "{:?}", writes(&h));
+        // dkms con otro módulo que no es nvidia: tampoco
+        let h = host_with(|w| w.host_out("dkms", "zfs/2.3.4, 6.17.13-2-pve, x86_64: installed\n"));
+        report(go(&h, confirmed()));
+        assert!(pos_in(&writes(&h), "proxmox-default-headers").is_none());
+    }
+
+    #[test]
+    fn default_headers_already_installed_is_not_installed_again() {
+        let h = host_with(|w| w.host_out("dpkg-query", "proxmox-default-headers 1.2.1\nlibc6 1\n"));
+        assert_eq!(report(go(&h, confirmed())).results[0].outcome, Outcome::Ok);
+        assert!(pos_in(&writes(&h), "proxmox-default-headers").is_none(), "{:?}", writes(&h));
+    }
+
+    #[test]
+    fn a_failing_default_headers_install_warns_and_the_upgrade_goes_on() {
+        let h = host_with(|w| w.file("/exec/0/default-headers.exit", b"100"));
+        let r = report(go(&h, confirmed()));
+        let run = &r.results[0];
+        assert_eq!(run.outcome, Outcome::Warn, "{}", run.detail);
+        assert!(run.detail.contains("proxmox-default-headers could not be installed"), "{}", run.detail);
+        assert!(writes(&h).iter().any(|c| c.ends_with("full-upgrade")), "{:?}", writes(&h));
+        assert_eq!(r.exit_code(), 0, "a warning is not a failure");
+    }
+
+    #[test]
+    fn a_newest_kernel_without_module_but_with_headers_gets_dkms_autoinstall_and_is_verified() {
+        let h = host_with(|w| w.host_out("dkms", "nvidia/595.112.07, 6.17.9-1-pve, x86_64: installed\n").file("/lib/modules/6.17.13-2-pve/build/.keep", b""));
+        let r = report(go(&h, confirmed()));
+        let run = &r.results[0];
+        assert_eq!(run.outcome, Outcome::Ok, "{}", run.detail);
+        let w = writes(&h);
+        let auto = pos_in(&w, "dkms autoinstall -k 6.17.13-2-pve").expect("autoinstall ran");
+        assert!(auto > pos_in(&w, "full-upgrade").unwrap(), "{w:?}");
+        let log = crate::share::host::read_string(&h, run.log_path.as_ref().unwrap()).unwrap();
+        assert!(log.contains("built OK"), "{log}");
+        // la revisión posterior ya ve el módulo
+        assert_eq!(state::load_state(&h).host.unwrap().nvidia_missing_for, None);
+    }
+
+    #[test]
+    fn dkms_autoinstall_that_leaves_no_module_warns_and_without_headers_it_does_not_run() {
+        let dk = "nvidia/595.112.07, 6.17.9-1-pve, x86_64: installed\n";
+        let h = host_with(|w| w.host_out("dkms", dk).file("/lib/modules/6.17.13-2-pve/build/.keep", b"").file("/exec/0/dkms-autoinstall.noeffect", b""));
+        let run = report(go(&h, confirmed())).results.remove(0);
+        assert_eq!(run.outcome, Outcome::Warn, "{}", run.detail);
+        assert!(run.detail.contains("could not be built"), "{}", run.detail);
+        // sin cabeceras no se intenta compilar: solo avisa
+        let h = host_with(|w| w.host_out("dkms", dk));
+        let run = report(go(&h, confirmed())).results.remove(0);
+        assert_eq!(run.outcome, Outcome::Warn, "{}", run.detail);
+        assert!(run.detail.contains("headers are missing"), "{}", run.detail);
+        assert!(pos_in(&writes(&h), "dkms autoinstall").is_none(), "{:?}", writes(&h));
     }
 
     #[test]
@@ -1054,6 +1193,8 @@ mod tests {
             vec!["tar", "-czpf", "/var/backups/pxu/etc-20261109120000.tar.gz", "-C", "/", "etc"],
             vec!["chmod", "0600", "/var/backups/pxu/etc-20261109120000.tar.gz"],
             vec!["zfs", "snapshot", "rpool/ROOT/pve-1@pxu-20261109120000"],
+            vec!["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", "proxmox-default-headers"],
+            vec!["dkms", "autoinstall", "-k", "7.0.14-29-pve"],
         ] {
             assert!(is_write_argv(&ok), "{ok:?}");
         }
@@ -1072,6 +1213,14 @@ mod tests {
             vec!["zfs", "snapshot", "rpool/ROOT/pve-1@manual"],
             vec!["reboot"],
             vec!["pct", "exec", "100", "--", "apt-get", "upgrade"],
+            vec!["apt-get", "-y", "install", "proxmox-default-headers"],
+            vec!["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", "proxmox-default-headers", "htop"],
+            vec!["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", "proxmox-headers-6.17.13-2-pve"],
+            vec!["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "remove", "proxmox-default-headers"],
+            vec!["dkms", "autoinstall"],
+            vec!["dkms", "autoinstall", "-k", "../../x;rm"],
+            vec!["dkms", "autoinstall", "-k", "7.0.14-29-pve", "--force"],
+            vec!["dkms", "remove", "nvidia/595.112.07", "--all"],
         ] {
             assert!(!is_write_argv(&bad), "{bad:?}");
         }
@@ -1162,7 +1311,7 @@ mod tests {
 
     #[test]
     fn with_host_auto_the_host_goes_before_the_first_ct_with_the_same_safeguards() {
-        let h = sched_world(|w| w.host_auto());
+        let h = sched_world(|w| w.host_auto().host_out("dkms", ""));
         let n0 = h.inner().recorded().len();
         let rep = timer_run(&h);
         assert_eq!(rep.results[0].vmid, 0, "the host is the first entry");
@@ -1423,6 +1572,22 @@ mod tests {
         })
     }
     const CHIPS_OK: &[u8] = b"<tr id=\"devid24B0\"><td>RTX A4000</td></tr>\n";
+
+    #[test]
+    fn nvidia_install_also_installs_proxmox_default_headers_before_building() {
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).ct_config(134, &["auto_update = true", "nvidia_auto = true"]));
+        let n0 = h.inner().recorded().len();
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        assert_eq!(rep.nvidia.as_ref().expect("entry").outcome, Outcome::Ok);
+        let c = all_cmds(&h, n0);
+        let hd = c.iter().position(|a| a.starts_with("host ") && a.ends_with("install proxmox-default-headers")).expect("default headers installed");
+        assert!(hd < c.iter().position(|a| a.starts_with("host make")).unwrap(), "{c:#?}");
+        // un fallo solo avisa y el driver se instala igual
+        let h = gpu_world(|w| w.nvidia_run_driver(&["595.112.07"]).file("/exec/0/default-headers.exit", b"100"));
+        let rep = manual_run(&h, crate::share::update::nvidia::Mode::Nvidia);
+        assert_eq!(rep.nvidia.as_ref().unwrap().outcome, Outcome::Ok);
+        assert!(all_cmds(&h, 0).iter().any(|a| a.contains("--dkms")));
+    }
 
     #[test]
     fn nvidia_branch_offer_needs_a_newer_branch_that_lists_the_gpu() {

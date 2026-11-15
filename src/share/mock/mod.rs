@@ -126,6 +126,8 @@ impl MockHost {
             }
             a if a == hu::INSTALL => ("install", "Reading package lists...\nSetting up packages ...\n".into()),
             a if a == hu::AUTOREMOVE => ("autoremove", "Removing old packages ...\n".into()),
+            a if a == hu::DEFAULT_HEADERS => ("default-headers", "Setting up proxmox-default-headers ...\n".into()),
+            ["dkms", "autoinstall", "-k", _] => ("dkms-autoinstall", "Building module nvidia ...\n".into()),
             a if a == hu::DPKG_CONFIGURE => ("dpkg-configure", "Setting up pending packages ...\n".into()),
             ["tar", ..] => {
                 let dst = argv.iter().find(|a| a.contains("/etc-")).copied().unwrap_or("");
@@ -155,6 +157,13 @@ impl MockHost {
             // un kernel nuevo exige reiniciar
             if file("apt-list.out").is_some_and(|t| t.contains("kernel")) {
                 self.overlay.lock().unwrap().insert(PathBuf::from("/var/run/reboot-required"), Some(b"*** System restart required ***\n".to_vec()));
+            }
+        }
+        // `/exec/0/dkms-autoinstall.noeffect`: sale bien pero no deja módulo (para probar la verificación posterior)
+        if let ["dkms", "autoinstall", "-k", k] = argv {
+            if rc == 0 && file("dkms-autoinstall.noeffect").is_none() {
+                let text = format!("{}nvidia/595.112.07, {k}, x86_64: installed\n", file("dkms.out").unwrap_or_default());
+                self.write_file(Path::new("/exec/0/dkms.out"), text.as_bytes())?;
             }
         }
         if rc == 0 && argv == hu::DPKG_CONFIGURE {
@@ -481,6 +490,16 @@ impl Host for MockHost {
                 let out = read("upgrade.out").unwrap_or_else(|| "Reading package lists...\nCalculating upgrade... Done\nUnpacking packages ...\nSetting up packages ...\nProcessing triggers ...\n".into());
                 emit(sink, &out, true);
                 self.upgraded.lock().unwrap().insert(vmid);
+                Ok(ExitInfo { code: 0 })
+            }
+            a if crate::share::update::is_cleanup_argv(a) => {
+                // `/exec/<vmid>/autoremove-sim.out` lleva las líneas `Remv …`; FailAt::{AutoremoveSim,Autoremove,Clean} fallan cada orden
+                let name = if a == crate::share::update::hostupdate::AUTOREMOVE_SIM { "autoremove-sim" } else if a == crate::share::update::CT_AUTOREMOVE { "autoremove" } else { "clean" };
+                if let Some(f) = fail(name) {
+                    emit(sink, "E: Could not get lock /var/lib/dpkg/lock-frontend", true);
+                    return Ok(ExitInfo { code: if f.exit == 0 { 100 } else { f.exit } });
+                }
+                emit(sink, &read(&format!("{name}.out")).unwrap_or_default(), false);
                 Ok(ExitInfo { code: 0 })
             }
             a if a == crate::share::update::nvidia::CT_MKTEMP => {

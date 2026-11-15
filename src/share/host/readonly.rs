@@ -160,7 +160,7 @@ pub fn host_cmd_is_update(argv: &[&str], vmid: u32) -> bool {
 
 /// Dentro del CT: los upgrades constantes del binario y las verificaciones (`crate::share::update`), más el sondeo con refresco.
 pub fn guest_cmd_is_update(argv: &[&str]) -> bool {
-    crate::share::update::is_upgrade_argv(argv) || crate::share::update::is_verify_argv(argv) || guest_cmd_is_read_only(argv, true)
+    crate::share::update::is_upgrade_argv(argv) || crate::share::update::is_verify_argv(argv) || crate::share::update::is_cleanup_argv(argv) || guest_cmd_is_read_only(argv, true)
 }
 
 /// Locks propios (`pxu-*.lock`, con creación) y el de ProxMenux solo si ya existe (sin `O_CREAT`).
@@ -509,6 +509,14 @@ mod tests {
         assert!(h.guest_exec(103, &["sh", "-c", crate::share::update::check::PROBE_SH, "pxu-probe", "1", "0"], &o, &mut sink).is_err(), "refresh probe of another CT refused");
         assert!(h.host_cmd(&["pct", "start", "104"], &o, &mut sink).is_ok());
         assert!(h.guest_exec(104, &up, &o, &mut sink).is_ok());
+        // limpieza posterior: solo los argv exactos y solo en el CT en curso; sin `--purge`, sin variantes
+        for a in [crate::share::update::hostupdate::AUTOREMOVE_SIM, crate::share::update::CT_AUTOREMOVE, crate::share::update::CT_APT_CLEAN] {
+            assert!(h.guest_exec(103, a, &o, &mut sink).is_err(), "{a:?} refused for another CT");
+            assert!(h.guest_exec(104, a, &o, &mut sink).is_ok(), "{a:?} allowed for the CT in progress");
+        }
+        for a in [&["apt-get", "autoremove"][..], &["apt-get", "-y", "autoremove"], &["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-y", "autoremove", "--purge"], &["apt-get", "autoclean"], &["apt-get", "clean", "-y"]] {
+            assert!(h.guest_exec(104, a, &o, &mut sink).is_err(), "{a:?} must stay refused");
+        }
         h.set_update_enabled(false);
         assert!(h.host_cmd(&["pct", "start", "104"], &o, &mut sink).is_err(), "opt-in withdrawn also clears the target");
     }

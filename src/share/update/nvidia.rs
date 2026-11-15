@@ -125,7 +125,7 @@ pub fn flavor_of(nvrm: &str) -> &'static str {
     if nvrm.contains("Open Kernel Module") { "open" } else { "proprietary" }
 }
 
-fn kernel_ok(k: &str) -> bool {
+pub fn kernel_ok(k: &str) -> bool {
     !k.is_empty() && k.len() <= 64 && k.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
 }
 
@@ -238,6 +238,10 @@ impl Grant {
     pub fn apt_headers(&self) -> Option<Argv> {
         self.kernel.ends_with("-pve").then(|| a(&["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "-y", "install", &format!("proxmox-headers-{}", self.kernel)]))
     }
+    /// `apt-get install proxmox-default-headers`: el metapaquete que hace que cada kernel `-pve` nuevo traiga sus cabeceras (y DKMS compile el módulo).
+    pub fn apt_default_headers(&self) -> Option<Argv> {
+        self.kernel.ends_with("-pve").then(|| a(super::hostupdate::DEFAULT_HEADERS))
+    }
     pub fn initramfs(&self) -> Argv { a(&["update-initramfs", "-u"]) }
     /// La única escritura fuera de las carpetas de pxu: el bloqueo de `nouveau`, con ese contenido y solo en una instalación desde cero.
     pub fn allows_write(&self, p: &Path, data: &[u8]) -> bool {
@@ -277,6 +281,7 @@ impl Grant {
             self.mkdir(), self.df(), self.head(), self.fetch_chips(), self.fetch_sha(), self.download(), self.sha256sum(), self.check(), self.extract(), self.make(), self.persistenced(true), self.persistenced(false),
             self.unload(), self.load(), self.install(), self.cleanup(), self.smi(), a(hostcheck::DKMS),
         ];
+        v.extend(self.apt_default_headers());
         if self.fresh {
             v.push(self.initramfs());
             v.extend(self.apt_headers());
@@ -809,6 +814,7 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
         if !c.cx.host.exists(Path::new(&format!("/lib/modules/{}/build", g.kernel))) {
             return fail(c, format!("kernel headers for the running kernel are missing (/lib/modules/{}/build): the module could not be built", g.kernel));
         }
+        default_headers(c, g);
         for (what, cmd) in [("extract", g.extract()), ("test build", g.make())] {
             match c.cx.host_cmd(&argv(&cmd), &cancelable(FETCH_S)) {
                 Ok(0) => {}
@@ -857,6 +863,15 @@ fn body(c: &mut Cx, cfg: &Config, g: &Grant, mode: Mode, host_needs: bool, libs:
 fn failed(c: &mut Cx, why: String) -> Res {
     c.cx.say(&format!("!! {why}"));
     ((Outcome::Failed, why), None)
+}
+
+/// `proxmox-default-headers`: así cada kernel nuevo llega con sus cabeceras. Un fallo solo avisa (el driver se instala igual con las del kernel en uso).
+fn default_headers(c: &mut Cx, g: &Grant) {
+    let Some(cmd) = g.apt_default_headers() else { return };
+    match c.cx.host_cmd(&argv(&cmd), &uninterrupted(SETUP_S)) {
+        Ok(0) => c.cx.say("proxmox-default-headers OK (every new -pve kernel will come with its headers)"),
+        r => c.cx.say(&format!("WARNING: cannot install proxmox-default-headers ({}): the driver install goes on, but a new kernel will arrive without headers", describe(&r))),
+    }
 }
 
 /// Las dos escrituras de la instalación desde cero (apt y `update-initramfs`): no se matan a mitad.

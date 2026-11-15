@@ -5,23 +5,23 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ● 402   ct-402           backup            00:00
 · 403   ct-403           pending
 ── live log · 402 ct-402 ───────────────────────────────────────────────────────────────────────────────────────────────
- 00:16:00  401 backup ready: snapshot pxu-20261108031600
- 00:16:00  401 NOTE: the backup and the rollback cover only the CT's rootfs (system disk); bind mounts and mount points…
- 00:16:00  401 == refresh+simulate
- 00:16:00  401 $ (refresh index + simulate)
  00:16:00  401 3 package(s) to upgrade
  00:16:00  401 == upgrade
  00:16:00  401 $ [CT 401] env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o Dpkg::Opt…
  00:16:00  401 Reading package lists...
  00:16:00  401 Calculating upgrade... Done
- 00:16:00  401 Unpacking pa┌ Cancel run? ───────────────────────────────────────────────────┐
- 00:16:00  401 Setting up p│ [Enter] stop now: abort CT 402's backup, clean up              │
- 00:16:00  401 Processing t│ [Esc] keep running                                             │
- 00:16:00  401 == verify   │                                                                │
- 00:16:00  401 $ [CT 401] d│ nothing installed yet, CT untouched · pending CTs become cancel│
- 00:16:00  401 dpkg --audit│                                                                │
- 00:16:00  401 $ [CT 401] s└────────────────────────────────────────────────────────────────┘
- 00:16:00  401 failed units: 0 before, 0 after
+ 00:16:00  401 Unpacking packages ...
+ 00:16:00  401 Setting up packages ...
+ 00:16:00  401 Processing triggers ...
+ 00:16:00  401 == verify
+ 00:16:00  401 $ [CT 401] d┌ Cancel run? ───────────────────────────────────────────────────┐
+ 00:16:00  401 dpkg --audit│ [Enter] stop now: abort CT 402's backup, clean up              │
+ 00:16:00  401 $ [CT 401] s│ [Esc] keep running                                             │
+ 00:16:00  401 failed units│                                                                │
+ 00:16:00  401 == cleanup  │ nothing installed yet, CT untouched · pending CTs become cancel│
+ 00:16:00  401 $ [CT 401] a│                                                                │
+ 00:16:00  401 autoremove: └────────────────────────────────────────────────────────────────┘
+ 00:16:00  401 $ [CT 401] apt-get clean
  00:16:00  401 $ pct delsnapshot 401 pxu-20261108031600
  00:16:00  401 OK
  00:16:00  401 backup deleted: snapshot pxu-20261108031600

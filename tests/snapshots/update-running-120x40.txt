@@ -5,8 +5,8 @@ ok 1 · warn 0 · fail 0 · skip 0 · canceled 0 · CT 1/3
 ● 402   ct-402           upgrade           00:00
 · 403   ct-403           pending
 ── live log · 402 ct-402 ───────────────────────────────────────────────────────────────────────────────────────────────
- 00:16:00  401 $ [CT 401] systemctl --failed --no-legend --plain
- 00:16:00  401 failed units: 0 before, 0 after
+ 00:16:00  401 autoremove: nothing to remove
+ 00:16:00  401 $ [CT 401] apt-get clean
  00:16:00  401 $ pct delsnapshot 401 pxu-20261108031600
  00:16:00  401 OK
  00:16:00  401 backup deleted: snapshot pxu-20261108031600

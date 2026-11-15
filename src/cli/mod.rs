@@ -133,8 +133,8 @@ fn host_text(h: &hostcheck::HostInfo) -> String {
     if let Some(b) = &h.blocked {
         let _ = writeln!(s, "  BLOCKED: {b}");
     }
-    if let Some(k) = &h.nvidia_missing_for {
-        let _ = writeln!(s, "  NVIDIA: no module for kernel {k}");
+    if let Some(d) = h.nvidia_missing_detail() {
+        let _ = writeln!(s, "  NVIDIA: {d}");
     }
     let cts = h.outdated_cts();
     if !cts.is_empty() {
@@ -621,8 +621,8 @@ fn update_host(host: &dyn Host, only: &[u32], json: bool, yes: bool, notify_flag
         if hu::has_kernel(pk) {
             println!("A new kernel is included: a REBOOT will be needed afterwards (pxu never reboots the host).");
         }
-        if let Some(k) = &info.nvidia_missing_for {
-            println!("NOTE: NVIDIA GPU, and there is no driver module for kernel {k} yet: install it before rebooting (pxu does not touch NVIDIA/DKMS).");
+        if let Some(d) = info.nvidia_missing_detail() {
+            println!("NOTE: NVIDIA GPU, {d}: fix it before rebooting.");
         }
     };
     install_signal_handlers();
