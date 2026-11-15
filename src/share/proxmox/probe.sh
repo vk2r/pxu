@@ -70,10 +70,14 @@ case $PM in
     ;;
   apk)
     OUT=$(apk --no-network list -u 2>/dev/null); RC=$?
+    # la version de apk no lleva "-": "-rN" es opcional (repos de terceros, p. ej. infisical-0.45.8).
+    # apk 3 lista una linea por cada version candidata: queda la ultima (la mas nueva) de cada paquete.
     echo "$OUT" | awk '/upgradable from:/{
       nw=$1; cur=$NF; sub(/\]$/, "", cur)
-      name=nw; sub(/-[0-9][^ ]*-r[0-9]+$/, "", name)
-      print "@@pkg " name " " substr(cur, length(name)+2) " " substr(nw, length(name)+2) " 0" }'
+      name=nw; sub(/-[0-9][^-]*(-r[0-9]+)?$/, "", name)
+      if (!(name in v)) o[++n]=name
+      v[name]=substr(cur, length(name)+2) " " substr(nw, length(name)+2) }
+      END { for (i=1;i<=n;i++) print "@@pkg " o[i] " " v[o[i]] " 0" }'
     ;;
   pacman)
     # -Qu devuelve 1 cuando no hay updates: no es un error

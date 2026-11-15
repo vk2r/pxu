@@ -541,6 +541,12 @@ mod tests {
         assert_eq!((p.pkgs[0].name.as_str(), p.pkgs[0].cur.as_str(), p.pkgs[0].new.as_str()), ("curl", "8.4.0-r1", "8.5.0-r0"));
         assert_eq!(calls, ["apk --no-network list -u"]);
 
+        // apk 3 con un repo de terceros: version sin "-rN" y una linea por cada version candidata
+        let infisical = "printf '%s\\n' 'infisical-0.45.7 x86_64 {infisical} (MIT) [upgradable from: infisical-0.45.6]' 'infisical-0.45.8 x86_64 {infisical} (MIT) [upgradable from: infisical-0.45.6]' 'py3-foo-2.1_rc1-r3 x86_64 {foo} (MIT) [upgradable from: py3-foo-2.0-r0]'";
+        let (p, _) = run_probe("apk3", &[("apk", infisical)], "0");
+        let got: Vec<_> = p.pkgs.iter().map(|k| (k.name.as_str(), k.cur.as_str(), k.new.as_str())).collect();
+        assert_eq!(got, [("infisical", "0.45.6", "0.45.8"), ("py3-foo", "2.0-r0", "2.1_rc1-r3")]);
+
         let (p, calls) = run_probe("pacman", &[("pacman", "echo 'linux 6.10.1-1 -> 6.10.2-1'; exit 1")], "0");
         assert_eq!((p.pm.as_str(), p.pkgs.len(), p.end), ("pacman", 1, Some(0)));
         assert_eq!(p.pkgs[0].new, "6.10.2-1");
